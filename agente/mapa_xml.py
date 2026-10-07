@@ -178,6 +178,53 @@ def ler(caminho):
     }
 
 
+def _parear_ms_trocado(divergencias):
+    """Casa o mesmo lote que saiu por um M.S. no Digifarma e por outro no XML.
+
+    Acontece quando o cadastro do produto foi corrigido depois da
+    transmissão: o movimento subiu com o M.S. que valia na hora, e hoje
+    o Digifarma mostra outro. São duas divergências que se anulam, não
+    dois erros. O XML já transmitido não se conserta.
+
+    Não precisa conferir se os dois M.S. são diferentes: a chave do
+    dicionário é (ms, lote) e é única, então duas entradas no mesmo lote
+    necessariamente vêm de M.S. distintos.
+    """
+    por_lote = {}
+    for d in divergencias:
+        if d['situacao'] in ('fora_do_xml', 'so_no_xml') and d['lote']:
+            por_lote.setdefault(d['lote'], []).append(d)
+
+    casados = []
+    usados = set()
+    for no_lote in por_lote.values():
+        faltam = [d for d in no_lote if d['situacao'] == 'fora_do_xml']
+        sobram = [d for d in no_lote if d['situacao'] == 'so_no_xml']
+        for um in faltam:
+            for outro in sobram:
+                if id(outro) in usados:
+                    continue
+                if abs(um['qtdBanco'] - outro['qtdXml']) >= 0.001:
+                    continue
+                usados.add(id(um))
+                usados.add(id(outro))
+                casados.append({
+                    'situacao': 'ms_trocado',
+                    'ms': um['ms'],
+                    'outroMs': outro['ms'],
+                    'lote': um['lote'],
+                    'descricao': um['descricao'] or outro['descricao'],
+                    'qtdBanco': um['qtdBanco'],
+                    'qtdXml': outro['qtdXml'],
+                    'vendas': um.get('vendas', [])[:20],
+                })
+                break
+
+    if not casados:
+        return divergencias
+    return [d for d in divergencias if id(d) not in usados] + casados
+
+
 def comparar(itens_xml, itens_banco):
     """
     Cruza o XML com as saídas do banco no mesmo período.
@@ -221,7 +268,7 @@ def comparar(itens_xml, itens_banco):
             'qtdXml': qtd_xml,
             'vendas': (no_banco or {}).get('vendas', [])[:20],
         })
-    return divergencias
+    return _parear_ms_trocado(divergencias)
 
 
 if __name__ == '__main__':

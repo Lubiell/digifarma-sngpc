@@ -189,6 +189,29 @@ def principal():
     conferir('mede há quanto tempo o Anvisa.exe não conclui',
              'precisaLogin' in dados['anvisa'], dados['anvisa'])
 
+    # --- mesmo lote em dois M.S.: o cadastro mudou depois da transmissao ---
+    banco = [{'ms': '1.1213.0443.003-4', 'lote': 'AB12', 'quantidade': 2,
+              'descricao': 'OLANZAPINA 10MG', 'venda': 46505}]
+    xml = {('1057306420030', 'AB12'): {'ms': '1057306420030', 'lote': 'AB12',
+                                       'quantidade': 2.0, 'descricao': 'OLANZAPINA 10MG'}}
+    casado = mapa_xml.comparar(xml, banco)
+    conferir('mesmo lote em dois M.S. vira um aviso, não duas divergências',
+             len(casado) == 1 and casado[0]['situacao'] == 'ms_trocado', casado)
+    conferir('o aviso de M.S. trocado diz qual é o outro M.S.',
+             casado and casado[0].get('outroMs') == '1057306420030', casado)
+
+    # quantidade diferente nao e troca de M.S.: e divergencia de verdade
+    banco_dif = [dict(banco[0], quantidade=3)]
+    soltas = mapa_xml.comparar(xml, banco_dif)
+    conferir('quantidade diferente no mesmo lote continua divergência',
+             len(soltas) == 2 and not any(c['situacao'] == 'ms_trocado' for c in soltas), soltas)
+
+    # lote diferente nao casa, mesmo com a quantidade igual
+    outro_lote = {('1057306420030', 'ZZ99'): dict(list(xml.values())[0], lote='ZZ99')}
+    separadas = mapa_xml.comparar(outro_lote, banco)
+    conferir('lote diferente não é casado como M.S. trocado',
+             len(separadas) == 2 and not any(c['situacao'] == 'ms_trocado' for c in separadas), separadas)
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0
