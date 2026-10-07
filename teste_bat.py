@@ -148,8 +148,56 @@ def conferir_gitignore():
     return falhas
 
 
+# A URL do repositorio estava em seis lugares, em quatro arquivos. Quando
+# a conta antiga foi bloqueada, cada um deles virou um 404 para consertar
+# a mao. Agora cada arquivo declara a base uma vez, e os quatro tem de
+# concordar: trocar de repositorio passa a ser quatro linhas, nao seis
+# lugares para procurar.
+ARQUIVOS_COM_URL = [
+    'agente/agente_auto.py',
+    'agente/ATUALIZAR_AGENTE.bat',
+    'agente/CONSERTAR_TUDO.bat',
+    'agente/SERVIDOR_AGORA.bat',
+]
+BASE = re.compile(r'raw\.githubusercontent\.com/([^/\s"\']+)/([^/\s"\']+)')
+
+
+def conferir_url_do_repositorio():
+    """Uma base por arquivo, e todas apontando para o mesmo repositorio."""
+    falhas = []
+    donos = {}
+    for nome in ARQUIVOS_COM_URL:
+        try:
+            bruto = open(nome, encoding='cp1252' if nome.endswith('.bat') else 'utf-8',
+                         newline='').read()
+        except FileNotFoundError:
+            falhas.append('%s nao existe' % nome)
+            continue
+        achados = []
+        for linha in bruto.replace('\r\n', '\n').split('\n'):
+            achados += BASE.findall(sem_comentario(linha))
+        if not achados:
+            falhas.append('%s nao declara a base do repositorio' % nome)
+            continue
+        if len(achados) > 1:
+            falhas.append('%s repete a base %d vezes; devia declarar uma' % (nome, len(achados)))
+        donos[nome] = achados[0]
+
+    distintos = set(donos.values())
+    if len(distintos) > 1:
+        falhas.append('arquivos apontando para repositorios diferentes: %s' % sorted(
+            '%s -> %s/%s' % (n, d[0], d[1]) for n, d in sorted(donos.items())))
+
+    for f in falhas:
+        print('  FALHA url do repositorio: %s' % f)
+    if not falhas:
+        dono = '/'.join(distintos.pop())
+        print('  OK    url do repositorio (%d arquivos, todos em %s)' % (len(donos), dono))
+    return falhas
+
+
 def conferir():
-    total = list(conferir_gitignore())
+    total = list(conferir_gitignore()) + list(conferir_url_do_repositorio())
     for nome in ALVOS:
         try:
             bruto = open(nome, encoding='cp1252', newline='').read()

@@ -3156,8 +3156,11 @@ def mudou(caminho, valor):
     return True
 
 
-URL_AGENTE = ('https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA'
-              '/main/agente/agente_auto.py')
+# Um lugar so. Trocar de repositorio e trocar esta linha; os .bat tem a
+# linha equivalente, e o teste confere que as quatro concordam.
+REPO_CRU = 'https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA/main/agente'
+
+URL_AGENTE = REPO_CRU + '/agente_auto.py'
 
 # quantos agente_auto_antes_de_*.py ficam na pasta depois de cada atualização
 BACKUPS_GUARDADOS = 3
@@ -3281,8 +3284,7 @@ def atualizar_agente(config):
                os.path.basename(backup), recado_regras))
 
 
-URL_REGRAS = ('https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA'
-              '/main/agente/regras-firebase.json')
+URL_REGRAS = REPO_CRU + '/regras-firebase.json'
 
 # Sem estes nós o arquivo baixado não é as regras deste projeto, e publicar
 # seria trocar a tranca da porta por um arquivo qualquer.

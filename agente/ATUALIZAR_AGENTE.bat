@@ -80,7 +80,8 @@ if exist agente_auto.py (
 
 REM ---------- 3. Baixar ----------
 echo [2/6] Baixando a versao mais nova do GitHub...
-set "URL=https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA/main/agente/agente_auto.py"
+set "CRU=https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA/main/agente"
+set "URL=%CRU%/agente_auto.py"
 curl -fsSL -o agente_auto_novo.py "%URL%"
 if errorlevel 1 (
   echo       curl falhou, tentando pelo PowerShell...
@@ -105,6 +106,10 @@ if errorlevel 1 (
 )
 move /y agente_auto_novo.py agente_auto.py >nul
 echo       arquivo conferido e instalado
+
+REM ---------- 4b. Os dois que acompanham o agente ----------
+call :COMPANHEIRO mapa_xml.py "def comparar("
+call :COMPANHEIRO teste_agente.py "def principal("
 
 REM ---------- 5. Configuracao ----------
 echo.
@@ -185,3 +190,25 @@ echo.
 echo  O resto do trabalho e pelo celular, na aba Servidor.
 echo ============================================================
 exit /b 0
+
+REM ---------- subrotina ----------
+REM  %1 nome do arquivo, %2 trecho que precisa existir dentro dele.
+REM  Baixa, confere e so entao troca. Falha aqui nao derruba o update:
+REM  o agente_auto.py ja esta instalado e o arquivo antigo continua
+REM  servindo, com aviso na tela.
+:COMPANHEIRO
+curl -fsSL -o "%~1.novo" "%CRU%/%~1"
+if errorlevel 1 (
+  echo       AVISO: nao baixei %~1, mantido o que ja estava
+  if exist "%~1.novo" del "%~1.novo" >nul 2>&1
+  goto :eof
+)
+%PY% -c "import sys;t=open(sys.argv[1],encoding='utf-8').read();sys.exit(0 if sys.argv[2] in t and compile(t,'a','exec') is not None else 1)" "%~1.novo" %2
+if errorlevel 1 (
+  echo       AVISO: %~1 baixado veio quebrado, mantido o que ja estava
+  del "%~1.novo" >nul 2>&1
+  goto :eof
+)
+move /y "%~1.novo" "%~1" >nul
+echo       %~1 conferido e instalado
+goto :eof
