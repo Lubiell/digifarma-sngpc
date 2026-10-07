@@ -1,2 +1,22 @@
 __pycache__/
 *.pyc
+
+# gerados em execucao: log, relatorio e estado do agente
+agente/*.log
+agente/ultimo_publicado.json
+agente/ajustes_*.json
+agente/tarefas_saldo_*.txt
+agente/negativos_*.txt
+agente/comparacao_*.html
+agente/agente_auto_antes_de_*.py
+agente/agente_auto_backup.py
+
+# credencial: nunca
+agente/agente_config.json
+agente/chave-firebase.json
+agente/*adminsdk*.json
+agente/*serviceaccount*.json
+agente/*service-account*.json
+
+# dado de paciente: nunca
+agente/sngpc_VisualizaArquivoXML.xml

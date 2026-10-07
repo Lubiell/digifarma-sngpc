@@ -6,10 +6,11 @@ verdade: .bat gravado com LF perdendo os rotulos de goto, parenteses
 dentro de bloco abortando o script, "^|" chegando literal dentro de
 aspas, e "(S/N)" fechando o if no meio da pergunta.
 """
+import glob
 import re
 import sys
 
-ALVOS = ['SALVAR_TUDO.bat', 'RECUPERAR_FARMACIA.bat', 'BACKUP_AGENTE.bat']
+ALVOS = sorted(glob.glob('agente/*.bat')) + sorted(glob.glob('*.bat'))
 
 
 def sem_comentario(linha):
@@ -104,8 +105,51 @@ def checar_ordem(bruto):
     return []
 
 
+# caminhos que nunca podem entrar no repositorio. O .gitignore que os
+# barrava ja se perdeu uma vez, por um comando que falhou antes de
+# grava-lo, e o commit seguinte afirmou uma protecao que nao existia.
+PROIBIDOS = [
+    'agente/agente_config.json',
+    'agente/chave-firebase.json',
+    'agente/estoque-remedios-7b785-firebase-adminsdk-fbsvc-46c4f55041.json',
+    'agente/sngpc_VisualizaArquivoXML.xml',
+    'agente/agente.log',
+]
+LIBERADOS = [
+    'agente/agente_auto.py',
+    'agente/mapa_xml.py',
+    'agente/regras-firebase.json',
+    'agente/exemplo_SNGPC.XML',
+]
+
+
+def conferir_gitignore():
+    """Credencial e dado de paciente barrados; codigo passando."""
+    import subprocess
+    falhas = []
+
+    def barrado(caminho):
+        # --no-index e obrigatorio: sem ele o check-ignore cala sobre
+        # arquivo ja rastreado, e a metade 'liberados' deste teste
+        # nunca acusaria nada.
+        return subprocess.run(
+            ['git', 'check-ignore', '-q', '--no-index', caminho]).returncode == 0
+
+    for caminho in PROIBIDOS:
+        if not barrado(caminho):
+            falhas.append('o .gitignore NAO barra %s' % caminho)
+    for caminho in LIBERADOS:
+        if barrado(caminho):
+            falhas.append('o .gitignore barra o codigo %s' % caminho)
+    for f in falhas:
+        print('  FALHA .gitignore: %s' % f)
+    if not falhas:
+        print('  OK    .gitignore (%d barrados, %d liberados)' % (len(PROIBIDOS), len(LIBERADOS)))
+    return falhas
+
+
 def conferir():
-    total = []
+    total = list(conferir_gitignore())
     for nome in ALVOS:
         try:
             bruto = open(nome, encoding='cp1252', newline='').read()
