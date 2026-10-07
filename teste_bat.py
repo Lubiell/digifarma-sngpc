@@ -37,10 +37,18 @@ def checar(nome, bruto):
             if '^|' in trecho:
                 falhas.append('linha %d: ^| dentro de aspas' % n)
 
-    # 4. (S/N) fecha o bloco do if no meio da pergunta
+    # 4. (S/N) fecha o bloco do if no meio da pergunta. Entre aspas e no
+    #    nivel de cima o CMD aguenta; dentro de bloco, ou solto, quebra.
+    pergunta = re.compile(r'\(\s*[SsNn]\s*/\s*[SsNn]\s*\)')
+    prof_sn = 0
     for n, linha in enumerate(linhas, 1):
-        if re.search(r'\(\s*[SsNn]\s*/\s*[SsNn]\s*\)', sem_comentario(linha)):
-            falhas.append('linha %d: usa (S/N) em vez de [S/N]' % n)
+        limpa = sem_comentario(linha)
+        if pergunta.search(limpa):
+            protegida = not pergunta.search(re.sub(r'"[^"]*"', '', limpa))
+            if prof_sn > 0 or not protegida:
+                falhas.append('linha %d: (S/N) em lugar que quebra o CMD' % n)
+        fora = re.sub(r'"[^"]*"', '', re.sub(r'\^.', '', limpa))
+        prof_sn = max(prof_sn + fora.count('(') - fora.count(')'), 0)
 
     # 5. ! exige delayed expansion ligado
     if re.search(r'![A-Za-z_]\w*!', bruto) and 'enabledelayedexpansion' not in bruto.lower():
@@ -58,17 +66,28 @@ def checar(nome, bruto):
         profundidade += fora_de_aspas.count('(') - fora_de_aspas.count(')')
         profundidade = max(profundidade, 0)
 
-    # 7. del/rmdir so na pasta e no zip que o proprio script cria
+    # 7. apagar com curinga, ou rmdir /s em caminho fixo, varre o que
+    #    nao era para varrer. Apagar arquivo proprio, nomeado, pode.
     for n, linha in enumerate(linhas, 1):
         limpa = sem_comentario(linha)
-        if re.search(r'(?i)\b(del|rmdir|rd)\b', limpa):
-            if '%DESTINO%' not in limpa and '%ZIP%' not in limpa and '%%A' not in limpa:
-                falhas.append('linha %d: del/rmdir fora do destino' % n)
+        if not re.search(r'(?im)^\s*(if\s+[^&|]*?\s)?(del|rmdir|rd)\s', limpa):
+            continue
+        alvo = limpa[re.search(r'(?i)\b(del|rmdir|rd)\s', limpa).end():]
+        if re.search(r'[*?]', alvo):
+            falhas.append('linha %d: apaga com curinga' % n)
+        elif re.search(r'(?i)\b(rmdir|rd)\b', limpa) and '/s' in limpa.lower() and '%' not in alvo:
+            falhas.append('linha %d: rmdir /s em caminho fixo' % n)
 
-    # 8. curl sempre com -f, senao erro de HTTP passa como sucesso
+    # 8. curl sempre com -f, senao pagina de erro do GitHub passa como
+    #    sucesso e sobrescreve o agente. So vale para curl INVOCADO: a
+    #    palavra dentro de um echo e texto na tela, nao comando.
     for n, linha in enumerate(linhas, 1):
         limpa = sem_comentario(linha)
-        if re.search(r'(?i)\bcurl\b', limpa) and not re.search(r'(?i)curl[^\r\n]*\s-[a-zA-Z]*f', limpa):
+        chamada = re.search(r'(?i)(?:^|[&|(]|\bcall\s+|\bdo\s+)\s*"?curl"?\s', limpa)
+        if not chamada:
+            continue
+        flags = re.findall(r'(?<!\S)-{1,2}([a-zA-Z-]+)', limpa[chamada.end():])
+        if not any('f' in g or g == 'fail' for g in flags):
             falhas.append('linha %d: curl sem -f' % n)
 
     return falhas
