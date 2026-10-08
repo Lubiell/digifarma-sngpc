@@ -851,7 +851,10 @@ function pintarAgente() {
    ['Última passagem', estado.inventario?.vistoEm ? dataHora(estado.inventario.vistoEm) : '—'],
    ['Último resultado', estado.inventario?.atualizadoEm ? dataHora(estado.inventario.atualizadoEm) : '—'],
    ['Conta de serviço', a.chave?.conta],
-   ['Projeto', a.chave?.projeto]
+   ['Projeto', a.chave?.projeto],
+   // Qual das chaves do console este agente usa. Sem isto, apagar as
+   // chaves vazadas vira adivinhacao: apagar a errada derruba o agente.
+   ['Chave em uso', a.chave?.id]
   ].forEach(([k, v]) => {
     if (v === undefined || v === null || v === '') return;
     const dt = criar('dt'); dt.textContent = k;
