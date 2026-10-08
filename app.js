@@ -45,6 +45,8 @@ const estado = {
   vista: 'painel',
   buscaSaldo: '',
   buscaXml: '',
+  relatorios: {},       // farmacia/relatorios
+  relatorioPedido: null,
   abertos: new Set()
 };
 
@@ -324,6 +326,10 @@ function ligarEscutas() {
   escutar('farmacia/aceites', (v) => { estado.aceites = v || {}; if (estado.vista === 'aceites') pintarAceites(); });
   escutar('farmacia/comando', (v) => { estado.comando = v; pintarComando(); });
   escutar('farmacia/config', (v) => { estado.config = v || {}; });
+  escutar('farmacia/relatorios', (v) => {
+    estado.relatorios = v || {};
+    if (estado.vista === 'servidor') pintarRelatorio();
+  });
   escutar('farmacia/operadores', (v) => {
     estado.operadores = Array.isArray(v) ? v.filter(Boolean) : Object.values(v || {});
     pintarOperadores();
@@ -880,7 +886,85 @@ function pintarAgente() {
   }
 }
 
+/* Cada botao manda um pedido que o agente JA atende. Nenhuma acao
+   inventada aqui: acao que o agente nao conhece vira botao que nao faz
+   nada, e o teste_bat.py cruza as duas listas por isso. */
+const ACOES_SERVIDOR = [
+  ['atualizar_agente', 'Atualizar o agente', 'Baixa a versao mais nova do GitHub e troca, conferindo antes. E o ATUALIZAR_AGENTE.bat.'],
+  ['anvisa', 'Abrir o Anvisa.exe', 'Abre o programa da ANVISA no servidor. Ele para na tela de login do SNGPC, por desenho da ANVISA.'],
+  ['arrumar_tarefa_anvisa', 'Arrumar a tarefa do Anvisa', 'Reescreve a tarefa agendada AnvisaSNGPC_Login quando ela aponta para caminho errado.']
+];
+
+const RELATORIOS_SERVIDOR = [
+  ['resumo', 'Resumo'], ['pendentes', 'Pendentes'], ['ponteiro', 'Ponteiro'],
+  ['tarefas', 'Tarefas'], ['negativos', 'Negativos'], ['inventario', 'Inventario'],
+  ['login_sngpc', 'Login SNGPC'], ['retorno_anvisa', 'Retorno ANVISA'],
+  ['log_anvisa', 'Log do Anvisa'], ['colunas', 'Colunas do banco']
+];
+
+function pedirRelatorio(acao, rotulo) {
+  estado.relatorioPedido = acao;
+  return db.ref('farmacia/comando').set({
+    acao, pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+  }).then(() => avisar(rotulo + ' pedido. O agente atende em ate 5 minutos.'));
+}
+
+function pintarFerramentas() {
+  const alvo = $('ferramentas');
+  alvo.innerHTML = '';
+
+  ACOES_SERVIDOR.forEach(([acao, rotulo, explica]) => {
+    const b = criar('button', 'botao botao-secundario');
+    b.textContent = rotulo;
+    b.title = explica;
+    b.onclick = async () => {
+      if (!(await confirmar(rotulo, explica, 'Pedir'))) return;
+      await pedirRelatorio(acao, rotulo);
+    };
+    alvo.appendChild(b);
+  });
+
+  // Desligar a escrita e de mao unica: o app fecha a porta, nunca abre.
+  // Ligar continua sendo ato local no servidor, que e a direcao perigosa.
+  if (estado.inventario?.escrita?.ligada) {
+    const b = criar('button', 'botao botao-perigo');
+    b.textContent = 'Desligar a escrita agora';
+    b.onclick = async () => {
+      if (!(await confirmar('Desligar a escrita no Digifarma',
+        'Fecha a porta que permite zerar lote negativo e gravar contagem. '
+        + 'Religar so no servidor.', 'Desligar', 'botao-perigo'))) return;
+      await db.ref('farmacia/comando').set({
+        acao: 'config', chave: 'permitir_ajuste_estoque', valor: 'false',
+        pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+      });
+      avisar('Pedido de desligar enviado.');
+    };
+    alvo.appendChild(b);
+  }
+
+  RELATORIOS_SERVIDOR.forEach(([acao, rotulo]) => {
+    const b = criar('button', 'botao botao-fantasma');
+    b.textContent = rotulo;
+    b.onclick = () => pedirRelatorio(acao, 'Relatorio ' + rotulo);
+    alvo.appendChild(b);
+  });
+}
+
+function pintarRelatorio() {
+  const bloco = $('bloco-relatorio');
+  const acao = estado.relatorioPedido;
+  const r = acao && estado.relatorios?.[acao];
+  if (!r || !r.texto) { bloco.hidden = true; return; }
+  $('relatorio-titulo').textContent = 'Resposta do servidor — ' + acao;
+  $('relatorio-em').textContent = 'gerado em ' + dataHora(r.em)
+    + (r.cortado ? ' · texto cortado por ser muito longo' : '');
+  $('relatorio').textContent = r.texto;
+  bloco.hidden = false;
+}
+
 function pintarServidor() {
+  pintarFerramentas();
+  pintarRelatorio();
   pintarAgenteParado();
   pintarPonteiroSugerido();
   pintarEscrita();

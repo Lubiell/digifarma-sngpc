@@ -227,3 +227,24 @@ main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
 }
 .barra-aviso strong { font-weight: 600; }
 .barra-aviso.grave { border-color: #e9b4b4; background: #fdeeee; color: #7d2626; }
+
+/* Botoes das ferramentas do servidor, em grade que cabe no celular. */
+.grade-botoes { display: flex; flex-wrap: wrap; gap: 8px; }
+.grade-botoes .botao { flex: 1 1 auto; min-width: 46%; }
+
+/* Saida crua do agente: texto de terminal, com rolagem propria.
+   Nao quebra linha a esmo porque relatorio em colunas fica ilegivel. */
+.saida {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--linha, #ddd);
+  background: #0f1115;
+  color: #e6e6e6;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre;
+}

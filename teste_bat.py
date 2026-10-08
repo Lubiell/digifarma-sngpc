@@ -227,12 +227,30 @@ def conferir_protocolo_do_app():
     aceitas = set(re.findall(r"acao == '([a-z_]+)'", agente))
     for grupo in re.findall(r"acao in \(([^)]+)\)", agente):
         aceitas |= set(re.findall(r"'([a-z_]+)'", grupo))
+    # Os botoes das ferramentas declaram a acao dentro de um array, nao
+    # num campo acao:. Sem ler ACOES_SERVIDOR esta checagem fica cega
+    # justamente para os botoes novos - foi o que aconteceu.
+    def da_lista(nome):
+        m = re.search(r"const %s = \[(.*?)\n\];" % nome, app, re.S)
+        return set(re.findall(r"\[\s*'([a-z_]+)'", m.group(1))) if m else set()
+
     mandadas = (set(re.findall(r"acao: '([a-z_]+)'", app))
-                | set(re.findall(r"pedirAoAgente\('([a-z_]+)'", app)))
+                | set(re.findall(r"pedirAoAgente\('([a-z_]+)'", app))
+                | da_lista('ACOES_SERVIDOR'))
+    relatorios_app = da_lista('RELATORIOS_SERVIDOR')
+    relatorios_agente = set(re.findall(r"^\s+'([a-z_]+)': lambda config, alvo",
+                                       agente, re.M))
+    for fora in sorted(relatorios_app - relatorios_agente):
+        falhas.append("o app pede o relatorio '%s' e o agente nao tem" % fora)
     for orfa in sorted(mandadas - aceitas):
         falhas.append("o app manda a acao '%s' e o agente nao atende" % orfa)
 
-    permitidas = set(re.findall(r"'([a-z_]+)': '(?:inteiro|texto|modo)'", agente))
+    # CONFIG_REMOTO nao e a lista toda: aplicar_config trata
+    # permitir_ajuste_estoque num caso proprio, que retorna antes de
+    # consultar o dicionario. Exigir so o dicionario acusaria o app por
+    # usar um caminho que o agente tem de proposito.
+    permitidas = (set(re.findall(r"'([a-z_]+)': '(?:inteiro|texto|modo)'", agente))
+                  | set(re.findall(r"if chave == '([a-z_]+)'", agente)))
     pedidas = set(re.findall(r"chave: '([a-z_]+)'", app))
     for fora in sorted(pedidas - permitidas):
         falhas.append("o app pede a chave de config '%s', fora de CONFIG_REMOTO" % fora)
@@ -240,8 +258,8 @@ def conferir_protocolo_do_app():
     for f in falhas:
         print('  FALHA protocolo do app: %s' % f)
     if not falhas:
-        print('  OK    protocolo do app (%d acao(oes), %d chave(s) de config)'
-              % (len(mandadas), len(pedidas)))
+        print('  OK    protocolo do app (%d acao(oes), %d relatorio(s), %d chave(s))'
+              % (len(mandadas), len(relatorios_app), len(pedidas)))
     return falhas
 
 
