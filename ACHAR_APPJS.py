@@ -18,6 +18,7 @@ plausivel, e grava o que contiver as marcas do nosso app.
 import gzip
 import io
 import os
+import struct
 import re
 import sys
 import zlib
@@ -31,54 +32,121 @@ TETO = 12 * 1024 * 1024
 
 # O corpo da resposta vem depois do cabecalho e da chave do cache, que
 # cabem nos primeiros kilobytes. Procurar mais longe so custa tempo.
-LIMITE_CABECALHO = 2048
+LIMITE_CABECALHO = 1024
+
+# Quanto descomprimir so para sondar se vale descomprimir o resto.
+SONDA = 64 * 1024
+
+# Blob menor que isto nao cabe um app.js, nem comprimido.
+PISO = 2048
+
+# Cabecalho do Simple Cache do Chrome: uint64 magico, uint32 versao,
+# uint32 tamanho da chave, uint32 hash. A chave e a URL, e logo depois
+# dela comeca o corpo. Com isso o inicio do corpo e uma conta, nao uma
+# adivinhacao - foi tentar adivinhar que travou a maquina da loja.
+MAGICO_CHROME = 0xfcfb6d1ba7725c30
+LIMITE_CEGO = 256
 
 
 def tem_marca(dados):
     return any(m in dados for m in MARCAS)
 
 
-def descomprimir(bruto, pos, janela):
-    """Descomprime tolerando lixo antes e depois do fluxo.
+def descomprimir(vista, pos, janela, teto=None):
+    """Descomprime a partir de pos, tolerando lixo antes e depois.
 
-    O flush() no fim e obrigatorio: sem ele o objeto guarda o ultimo
+    Recebe memoryview, nao bytes: fatiar bytes copia o buffer inteiro a
+    cada chamada, e com milhares de posicoes por arquivo isso nunca
+    termina. Foi o que travou a primeira versao na maquina da loja.
+
+    O flush() no fim e obrigatorio: sem ele o objeto segura o ultimo
     bloco e o arquivo sai truncado, o que e pior que nao achar nada.
+    Com teto, so descomprime o inicio, para sondar barato.
     """
     obj = zlib.decompressobj(janela)
     try:
-        saida = obj.decompress(bruto[pos:]) + obj.flush()
+        if teto:
+            return obj.decompress(vista[pos:], teto)
+        return obj.decompress(vista[pos:]) + obj.flush()
     except zlib.error:
-        saida = obj.unconsumed_tail and b'' or b''
         try:
-            saida = obj.flush()
+            return obj.flush()
         except zlib.error:
             return b''
-    return saida
 
 
-def tentativas(bruto):
-    """Cada leitura possivel do blob: crua, gzip, zlib e deflate cru."""
-    yield bruto
-
-    # gzip: o magico 1f 8b 08 acha o inicio sem adivinhacao. Janela 31
-    # para o cabecalho gzip, e nao GzipFile, que estoura no lixo do fim.
+def posicoes_com_magico(vista):
+    """Onde comeca um fluxo gzip ou zlib. Barato e confiavel."""
+    bruto = bytes(vista[:LIMITE_CABECALHO + 64])
     for m in re.finditer(b'\x1f\x8b\x08', bruto):
-        saida = descomprimir(bruto, m.start(), 16 + zlib.MAX_WBITS)
+        yield m.start(), 16 + zlib.MAX_WBITS
+    for pos in range(len(bruto) - 1):
+        if bruto[pos] == 0x78 and (bruto[pos] * 256 + bruto[pos + 1]) % 31 == 0:
+            yield pos, zlib.MAX_WBITS
+
+
+def corpo_pelo_cabecalho(bruto):
+    """Onde o corpo comeca, segundo o cabecalho do Simple Cache."""
+    if len(bruto) < 24:
+        return []
+    magico, versao, tam_chave, _ = struct.unpack_from('<QIII', bruto, 0)
+    if magico != MAGICO_CHROME or not 0 < tam_chave < 8192:
+        return []
+    # o cabecalho tem 20 bytes de campos; o compilador costuma alinhar
+    # em 24. Devolvo os dois, que custam uma tentativa cada.
+    return [p for p in (20 + tam_chave, 24 + tam_chave) if p < len(bruto)]
+
+
+def url_do_cache(bruto):
+    """A chave guardada e a URL. Util para dizer de onde veio."""
+    if len(bruto) < 24:
+        return ''
+    magico, _, tam_chave, _ = struct.unpack_from('<QIII', bruto, 0)
+    if magico != MAGICO_CHROME or not 0 < tam_chave < 8192:
+        return ''
+    for inicio in (20, 24):
+        try:
+            chave = bruto[inicio:inicio + tam_chave].decode('utf-8')
+        except UnicodeDecodeError:
+            continue
+        if chave.startswith('http') or '://' in chave:
+            return chave
+    return ''
+
+
+def tentativas(bruto, vista, fundo):
+    """Leituras possiveis do blob.
+
+    Sem fundo: o blob cru, os fluxos com magico, e o inicio do corpo que
+    o cabecalho do Chrome aponta. Com fundo: tambem tentativa cega, em
+    alcance curto, para o caso de o arquivo nao ter cabecalho conhecido.
+    """
+    # o blob cru vai como bytes: memoryview nao faz busca de
+    # subsequencia, entao 'marca in vista' nao procura nada. Quando o
+    # cabecalho diz onde o corpo comeca, corto antes: senao a chave,
+    # que e a URL, entra colada no inicio do arquivo recuperado.
+    inicio = corpo_pelo_cabecalho(bruto)
+    yield bruto[inicio[0]:] if inicio else bruto
+
+    for pos, janela in posicoes_com_magico(vista):
+        saida = descomprimir(vista, pos, janela)
         if len(saida) > 1024:
             yield saida
 
-    # zlib: o magico e um 78 seguido de byte que fecha o resto 31
-    for pos, b in enumerate(bruto[:LIMITE_CABECALHO]):
-        if b == 0x78 and pos + 1 < len(bruto) and (b * 256 + bruto[pos + 1]) % 31 == 0:
-            saida = descomprimir(bruto, pos, zlib.MAX_WBITS)
+    for pos in corpo_pelo_cabecalho(bruto):
+        for janela in (-zlib.MAX_WBITS, zlib.MAX_WBITS, 16 + zlib.MAX_WBITS):
+            saida = descomprimir(vista, pos, janela)
             if len(saida) > 1024:
                 yield saida
 
-    # deflate cru nao tem magico nenhum: nao da para detectar, so tentar.
-    # O corpo do cache do Chrome vem depois do cabecalho e da chave, que
-    # cabem nos primeiros kilobytes, entao o alcance e limitado.
-    for pos in range(LIMITE_CABECALHO):
-        saida = descomprimir(bruto, pos, -zlib.MAX_WBITS)
+    if not fundo:
+        return
+
+    for pos in range(min(LIMITE_CEGO, len(vista))):
+        sonda = descomprimir(vista, pos, -zlib.MAX_WBITS, teto=SONDA)
+        if len(sonda) < 512 or not tem_marca(sonda):
+            continue
+        saida = descomprimir(vista, pos, -zlib.MAX_WBITS)
         if len(saida) > 1024:
             yield saida
 
@@ -86,9 +154,9 @@ def tentativas(bruto):
         import brotli
     except ImportError:
         return
-    for pos in range(LIMITE_CABECALHO):
+    for pos in list(corpo_pelo_cabecalho(bruto)) + list(range(32)):
         try:
-            saida = brotli.decompress(bruto[pos:])
+            saida = brotli.decompress(vista[pos:])
         except Exception:
             continue
         if len(saida) > 1024:
@@ -130,25 +198,41 @@ def pastas_padrao():
     return achadas
 
 
-def procurar(pastas):
-    achados = []
-    vistos = 0
+def listar(pastas):
+    todos = []
     for pasta in pastas:
         for raiz, _, arquivos in os.walk(pasta):
             for nome in arquivos:
                 caminho = os.path.join(raiz, nome)
                 try:
-                    if os.path.getsize(caminho) > TETO:
-                        continue
-                    bruto = open(caminho, 'rb').read()
+                    tamanho = os.path.getsize(caminho)
                 except OSError:
                     continue
-                vistos += 1
-                for leitura in tentativas(bruto):
-                    if tem_marca(leitura):
-                        achados.append((caminho, recortar_js(leitura)))
-                        break
-    return achados, vistos
+                if PISO <= tamanho <= TETO:
+                    todos.append(caminho)
+    return todos
+
+
+def procurar(arquivos, fundo, rotulo):
+    """Varre os arquivos. fundo=False e a passada barata."""
+    achados = []
+    total = len(arquivos)
+    marco = max(total // 20, 1)
+    print('  %s: %d arquivo(s)' % (rotulo, total))
+    for i, caminho in enumerate(arquivos, 1):
+        if i % marco == 0 or i == total:
+            print('    %d%%  (%d de %d)' % (i * 100 // total, i, total))
+            sys.stdout.flush()
+        try:
+            bruto = open(caminho, 'rb').read()
+        except OSError:
+            continue
+        vista = memoryview(bruto)
+        for leitura in tentativas(bruto, vista, fundo):
+            if tem_marca(leitura):
+                achados.append((caminho, recortar_js(leitura)))
+                break
+    return achados
 
 
 def principal(argumentos):
@@ -165,8 +249,18 @@ def principal(argumentos):
     print('Isto le arquivo por arquivo e pode levar alguns minutos.')
     print()
 
-    achados, vistos = procurar(pastas)
-    print('%d arquivo(s) de cache lidos.' % vistos)
+    arquivos = listar(pastas)
+    if not arquivos:
+        print('Nenhum arquivo de cache nessas pastas.')
+        return 1
+
+    print('Passada 1 de 2 - a rapida, que resolve quase sempre.')
+    achados = procurar(arquivos, False, 'lendo cru e os fluxos com magico')
+
+    if not achados:
+        print()
+        print('Passada 2 de 2 - a lenta, tentando deflate sem magico.')
+        achados = procurar(arquivos, True, 'tentativa posicao por posicao')
 
     if not achados:
         print()
