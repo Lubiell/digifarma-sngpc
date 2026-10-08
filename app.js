@@ -431,6 +431,7 @@ function pintar() {
   if (estado.vista === 'vendas') pintarVendas();
   if (estado.vista === 'aceites') pintarAceites();
   pintarAgenteParado();
+  avisarDadoVelho();
   if (estado.vista === 'servidor') pintarServidor();
 }
 
@@ -764,6 +765,10 @@ function pintarVendas() {
    11b. SERVIDOR
    ============================================================ */
 const MINUTOS_ATE_PARADO = 30;
+/* Acima disto o dado deixa de servir para conferir prateleira: o
+   Digifarma andou e a tela nao. Um dia ja e muito num sistema que
+   transmite todo dia. */
+const HORAS_ATE_VELHO = 24;
 
 function minutosDesde(iso) {
   if (!iso || typeof iso !== 'string') return null;
@@ -776,6 +781,26 @@ function minutosDesde(iso) {
    atualizadoEm so muda quando o RESULTADO muda, e num dia sem movimento
    ele fica parado de proposito: usa-lo aqui acusava agente morto com o
    agente vivo. vistoEm e gravado a cada volta, mude o que mudar. */
+/* O numero velho e pior que numero nenhum: ele parece atual.
+   Em 08/10 a tela mostrava Saldo 5, XML 8 e Vendas 27 que eram de
+   10/09 - quase um mes de vendas e entradas que o app nao sabia que
+   existiam, sem nada na tela dizendo isso. */
+function avisarDadoVelho() {
+  const barra = $('barra-estado');
+  const quando = estado.inventario?.atualizadoEm;
+  const min = minutosDesde(quando);
+  if (min === null || min < HORAS_ATE_VELHO * 60) return false;
+
+  const dias = Math.floor(min / 1440);
+  const idade = dias >= 1 ? dias + ' dia(s)' : Math.floor(min / 60) + ' hora(s)';
+  barra.textContent = 'ATENÇÃO: estes números são de ' + dataHora(quando)
+    + ' — ' + idade + ' atrás. O agente não publicou desde então, então as '
+    + 'vendas e entradas desse período NÃO estão aqui. Não use para conferir '
+    + 'prateleira nem para decidir transmissão.';
+  barra.hidden = false;
+  return true;
+}
+
 function pintarAgenteParado() {
   const barra = $('agente-parado');
   const selo = $('selo-servidor');
@@ -1051,7 +1076,11 @@ window.addEventListener('offline', () => {
   $('barra-estado').textContent = 'Sem internet — os números na tela são os últimos que chegaram.';
   $('barra-estado').hidden = false;
 });
-window.addEventListener('online', () => { $('barra-estado').hidden = true; });
+window.addEventListener('online', () => {
+  $('barra-estado').hidden = true;
+  // voltar a internet nao torna o dado recente: se estava velho, continua.
+  avisarDadoVelho();
+});
 
 /* ============================================================
    AVISO DE file://
