@@ -176,6 +176,7 @@ ARQUIVOS_COM_URL = [
     'agente/SERVIDOR_AGORA.bat',
     'agente/APONTAR_SERVIDOR.bat',
     'ACHAR_APPJS.bat',
+    'agente/INSTALAR_CHAVE.bat',
 ]
 BASE = re.compile(r'raw\.githubusercontent\.com/([^/\s"\']+)/([^/\s"\']+)')
 
