@@ -21,7 +21,39 @@ echo Endereco novo:
 echo   %CRU%
 echo.
 
-if not exist "agente_auto.py" goto PASTA_ERRADA
+REM  Achar a pasta do agente em vez de exigir que o arquivo esteja nela.
+REM  As copias de backup na area de trabalho ficam de fora: atualizar uma
+REM  delas daria "deu certo" sem o servidor mudar nada.
+if exist "agente_auto.py" goto TEM_AGENTE
+
+echo ------------------------------------------------------------
+echo  procurando a pasta do agente
+echo ------------------------------------------------------------
+set "ACHADAS=0"
+set "PASTA="
+for %%D in (C D E F G H) do (
+  if exist "%%D:\" (
+    for /f "delims=" %%A in ('dir /b /s "%%D:\agente_auto.py" 2^>nul') do (
+      echo %%~dpA| findstr /i /c:"SALVAR_FARMACIA" /c:"RECUPERAR_FARMACIA" /c:"PEGAR_APPJS" /c:"BACKUP_FARMACIA" >nul 2>&1
+      if errorlevel 1 (
+        set /a ACHADAS+=1
+        set "PASTA=%%~dpA"
+        echo   %%~dpA
+      )
+    )
+  )
+)
+
+if "!ACHADAS!"=="0" goto PASTA_ERRADA
+if not "!ACHADAS!"=="1" goto VARIAS
+
+echo.
+echo   usando: !PASTA!
+REM  o ponto no fim evita a barra final escapar a aspas de fechamento
+cd /d "!PASTA!."
+echo.
+
+:TEM_AGENTE
 
 echo ------------------------------------------------------------
 echo  1 de 2 - trocando os .bat
@@ -75,10 +107,23 @@ echo ------------------------------------------------------------
 echo  PARE
 echo ------------------------------------------------------------
 echo.
-echo Nao achei o agente_auto.py nesta pasta, entao este nao e o
-echo lugar certo. Nada foi alterado.
+echo Nao achei o agente_auto.py em disco nenhum, fora as copias de
+echo backup. Nada foi alterado.
 echo.
-echo Copie este arquivo para a pasta do agente e rode de novo.
+echo Rode este arquivo na maquina onde o agente esta instalado, ou
+echo copie-o para a pasta do agente e rode de novo.
+goto FIM
+
+:VARIAS
+echo ------------------------------------------------------------
+echo  PARE
+echo ------------------------------------------------------------
+echo.
+echo Achei mais de uma pasta com agente_auto.py, listadas acima, e
+echo nao sei qual e a que roda. Nada foi alterado.
+echo.
+echo Copie este arquivo para a pasta certa e rode de novo: estando
+echo na pasta, ele nao procura.
 goto FIM
 
 :NADA_TROCADO
