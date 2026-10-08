@@ -833,7 +833,7 @@ function pintarEscrita() {
   const e = estado.inventario?.escrita || {};
   const dl = $('dados-escrita');
   dl.innerHTML = '';
-  [['Escrita', e.ligada ? 'LIGADA' : 'desligada'],
+  [['Escrita', estado.inventario?.escrita ? (e.ligada ? 'LIGADA' : 'desligada') : 'o agente não publicou'],
    ['Prazo', e.ligada ? (e.semPrazo ? 'sem prazo' : (e.ate ? 'até ' + dataHora(e.ate) : '—')) : '—']
   ].forEach(([k, v]) => {
     const dt = criar('dt'); dt.textContent = k;
@@ -842,25 +842,42 @@ function pintarEscrita() {
   });
 }
 
+/* Campo sem valor NAO some: some vira painel em branco, que nao
+   distingue "o agente nao publicou isto" de "o app esta quebrado".
+   Cada linha ausente diz o que falta e o que destrava. */
 function pintarAgente() {
   const a = estado.inventario?.agente || {};
   const dl = $('dados-agente');
   dl.innerHTML = '';
-  [['Arquivo do agente', a.bytes ? a.bytes + ' bytes · ' + (a.hash || '') : ''],
-   ['Agente gravado em', a.em ? dataHora(a.em) : ''],
-   ['Última passagem', estado.inventario?.vistoEm ? dataHora(estado.inventario.vistoEm) : '—'],
-   ['Último resultado', estado.inventario?.atualizadoEm ? dataHora(estado.inventario.atualizadoEm) : '—'],
-   ['Conta de serviço', a.chave?.conta],
-   ['Projeto', a.chave?.projeto],
-   // Qual das chaves do console este agente usa. Sem isto, apagar as
-   // chaves vazadas vira adivinhacao: apagar a errada derruba o agente.
-   ['Chave em uso', a.chave?.id]
-  ].forEach(([k, v]) => {
-    if (v === undefined || v === null || v === '') return;
+
+  const semNada = !estado.inventario || !Object.keys(estado.inventario).length;
+  const linhas = semNada
+    ? [['Situação', 'Não chegou nada de farmacia/inventario. Ou o agente nunca publicou, ou este login não tem permissão de leitura.']]
+    : [
+      ['Arquivo do agente', a.bytes ? a.bytes + ' bytes · ' + (a.hash || '') : 'o agente não publicou — versão antiga no servidor'],
+      ['Agente gravado em', a.em ? dataHora(a.em) : '—'],
+      ['Última passagem', estado.inventario?.vistoEm ? dataHora(estado.inventario.vistoEm) : 'o agente não publicou vistoEm — versão antiga no servidor'],
+      ['Último resultado', estado.inventario?.atualizadoEm ? dataHora(estado.inventario.atualizadoEm) : '—'],
+      ['Conta de serviço', a.chave?.conta || '—'],
+      ['Projeto', a.chave?.projeto || '—'],
+      // Qual das chaves do console este agente usa. Sem isto, apagar as
+      // chaves vazadas vira adivinhacao: apagar a errada derruba o agente.
+      ['Chave em uso', a.chave?.id || 'o agente não publicou a identidade da chave']
+    ];
+
+  linhas.forEach(([k, v]) => {
     const dt = criar('dt'); dt.textContent = k;
     const dd = criar('dd'); dd.textContent = esc(v);
     dl.append(dt, dd);
   });
+
+  if (!semNada && !a.chave?.id) {
+    const nota = criar('p', 'motivo');
+    nota.textContent = 'Para estes campos aparecerem, o servidor precisa estar com o agente '
+      + 'atualizado. Rode o APONTAR_SERVIDOR.bat na pasta do agente: os .bat que estão lá '
+      + 'ainda baixam do repositório antigo, que saiu do ar.';
+    dl.parentNode.appendChild(nota);
+  }
 }
 
 function pintarServidor() {
