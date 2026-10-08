@@ -46,10 +46,14 @@ def checar(nome, bruto):
         limpa = sem_comentario(linha)
         if pergunta.search(limpa):
             protegida = not pergunta.search(re.sub(r'"[^"]*"', '', limpa))
-            if prof_sn > 0 or not protegida:
+            # no nivel de cima um echo so imprime: nao ha bloco para
+            # fechar. Dentro de bloco, ou num set /p solto, quebra.
+            so_texto = prof_sn == 0 and re.match(r'\s*echo\b', limpa, re.I)
+            if not so_texto and (prof_sn > 0 or not protegida):
                 falhas.append('linha %d: (S/N) em lugar que quebra o CMD' % n)
-        fora = re.sub(r'"[^"]*"', '', re.sub(r'\^.', '', limpa))
-        prof_sn = max(prof_sn + fora.count('(') - fora.count(')'), 0)
+        if not re.match(r'\s*echo\b', limpa, re.I):
+            fora = re.sub(r'"[^"]*"', '', re.sub(r'\^.', '', limpa))
+            prof_sn = max(prof_sn + fora.count('(') - fora.count(')'), 0)
 
     # 5. ! exige delayed expansion ligado
     if re.search(r'![A-Za-z_]\w*!', bruto) and 'enabledelayedexpansion' not in bruto.lower():
@@ -63,9 +67,13 @@ def checar(nome, bruto):
             cru = re.sub(r'\^.', '', limpa)
             if '(' in cru or ')' in cru:
                 falhas.append('linha %d: parentese cru em echo dentro de bloco' % n)
-        fora_de_aspas = re.sub(r'"[^"]*"', '', re.sub(r'\^.', '', limpa))
-        profundidade += fora_de_aspas.count('(') - fora_de_aspas.count(')')
-        profundidade = max(profundidade, 0)
+        # echo consome o resto da linha: no nivel de cima os parenteses
+        # dele sao texto e nao abrem bloco. Contar faria a profundidade
+        # das linhas seguintes andar errada.
+        if not re.match(r'\s*echo\b', limpa, re.I):
+            fora_de_aspas = re.sub(r'"[^"]*"', '', re.sub(r'\^.', '', limpa))
+            profundidade += fora_de_aspas.count('(') - fora_de_aspas.count(')')
+            profundidade = max(profundidade, 0)
 
     # 7. apagar com curinga, ou rmdir /s em caminho fixo, varre o que
     #    nao era para varrer. Apagar arquivo proprio, nomeado, pode.
