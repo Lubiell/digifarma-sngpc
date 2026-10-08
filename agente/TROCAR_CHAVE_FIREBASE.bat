@@ -416,7 +416,13 @@ REM  instalaria a chave vazada e mandaria apagar a boa.
 REM
 REM  Quem acabou de clicar em "Gerar nova chave privada" tem um
 REM  arquivo de segundos atras. Quinze minutos e folga de sobra.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$corte = (Get-Date).AddMinutes(-15); $p = @((Join-Path $env:USERPROFILE 'Downloads'), (Join-Path $env:USERPROFILE 'Desktop'), (Get-Location).Path); $b = $null; foreach ($f in @(Get-ChildItem -Path $p -Filter *.json -ErrorAction SilentlyContinue)) { if ($f.Name -like 'chave-firebase*') { continue }; if ($f.LastWriteTime -lt $corte) { continue }; if ($b -eq $null -or $f.LastWriteTime -gt $b.LastWriteTime) { $b = $f } }; if ($b -ne $null) { $b.FullName }" > "%FICHA%" 2>nul
+REM
+REM  Ser .json recente nao basta para ser candidato. O passo 1 e o 3
+REM  deste mesmo fluxo reescrevem o agente_config.json, que entao
+REM  aparece como "achei" e so cai na conferencia seguinte - dizendo
+REM  ao usuario que ele baixou do projeto errado, o que nao e
+REM  verdade. Candidato agora precisa conter service_account.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$corte = (Get-Date).AddMinutes(-15); $p = @((Join-Path $env:USERPROFILE 'Downloads'), (Join-Path $env:USERPROFILE 'Desktop'), (Get-Location).Path); $b = $null; foreach ($f in @(Get-ChildItem -Path $p -Filter *.json -ErrorAction SilentlyContinue)) { if ($f.Name -like 'chave-firebase*') { continue }; if ($f.Name -like 'agente_config*') { continue }; if (-not (Select-String -Path $f.FullName -Pattern service_account -Quiet)) { continue }; if ($f.LastWriteTime -lt $corte) { continue }; if ($b -eq $null -or $f.LastWriteTime -gt $b.LastWriteTime) { $b = $f } }; if ($b -ne $null) { $b.FullName }" > "%FICHA%" 2>nul
 if exist "%FICHA%" for /f "usebackq delims=" %%A in ("%FICHA%") do set "BAIXADA=%%A"
 del "%FICHA%" >nul 2>&1
 goto :eof
