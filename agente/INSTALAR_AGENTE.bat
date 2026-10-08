@@ -127,7 +127,11 @@ schtasks /Create /TN "AgenteSNGPC" /SC HOURLY /RL HIGHEST /RU SYSTEM /F ^
   /TR "\"%PYEXE%\" \"%~dp0agente_auto.py\" --auto" >nul
 if errorlevel 1 ( echo       Nao consegui criar a tarefa AgenteSNGPC. & pause & exit /b 1 )
 
-schtasks /Create /TN "AgenteSNGPC_Fila" /SC MINUTE /MO 5 /RL HIGHEST /RU SYSTEM /F ^
+REM  De minuto em minuto: a fila so le farmacia/comando e sai quando
+REM  nao ha pedido, entao o custo e uma leitura. Cinco minutos era o
+REM  tempo que a pessoa ficava olhando a tela depois de apertar um
+REM  botao, sem saber se tinha funcionado.
+schtasks /Create /TN "AgenteSNGPC_Fila" /SC MINUTE /MO 1 /RL HIGHEST /RU SYSTEM /F ^
   /TR "\"%PYEXE%\" \"%~dp0agente_auto.py\" --fila" >nul
 if errorlevel 1 ( echo       Nao consegui criar a tarefa AgenteSNGPC_Fila. & pause & exit /b 1 )
 

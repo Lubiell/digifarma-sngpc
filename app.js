@@ -351,7 +351,7 @@ async function pedirAoAgente(acao, rotulo) {
     pedidoPor: estado.operador,
     estado: 'pendente'
   });
-  avisar(rotulo + ' pedido. O agente atende em até 5 minutos.');
+  avisar(rotulo + ' pedido. O agente atende na próxima passagem dele.');
 }
 
 $('btn-sincronizar').onclick = () => pedirAoAgente('sincronizar_vendas', 'Sincronizar vendas');
@@ -372,7 +372,8 @@ function pintarComando() {
   if (c.estado === 'erro') {
     barra.textContent = `O agente não conseguiu atender “${c.acao}”: ${c.mensagem || 'sem detalhe'}.`;
   } else {
-    barra.textContent = `Pedido “${c.acao}” na fila desde ${dataHora(c.pedidoEm)} — o agente roda de 5 em 5 minutos.`;
+    barra.textContent = `Pedido “${c.acao}” na fila desde ${dataHora(c.pedidoEm)}`
+      + (estado.inventario?.vistoEm ? ` — o agente passou por aqui ${dataHora(estado.inventario.vistoEm)}.` : '.');
   }
   barra.hidden = false;
 }
@@ -812,8 +813,8 @@ function pintarAgenteParado() {
     barra.hidden = false;
   } else if (parado) {
     barra.className = 'barra-aviso grave';
-    barra.textContent = 'O agente não dá sinal há ' + min + ' minuto(s). Ele roda de 5 em 5; '
-      + 'passando de ' + MINUTOS_ATE_PARADO + ', vale conferir se o servidor está ligado.';
+    barra.textContent = 'O agente não dá sinal há ' + min + ' minuto(s). '
+      + 'Passando de ' + MINUTOS_ATE_PARADO + ', vale conferir se o servidor está ligado.';
     barra.hidden = false;
   } else {
     barra.hidden = true;
@@ -855,7 +856,7 @@ function pintarPonteiroSugerido() {
       acao: 'config', chave: 'transmitido_ate_venda', valor: String(p.corte),
       pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
     });
-    avisar('Pedido enviado. O agente atende em até 5 minutos.');
+    avisar('Pedido enviado. O agente atende na próxima passagem dele.');
   };
   alvo.appendChild(b);
 }
@@ -931,7 +932,7 @@ function pedirRelatorio(acao, rotulo) {
   estado.relatorioPedido = acao;
   return db.ref('farmacia/comando').set({
     acao, pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-  }).then(() => avisar(rotulo + ' pedido. O agente atende em ate 5 minutos.'));
+  }).then(() => avisar(rotulo + ' pedido. O agente atende na proxima passagem dele.'));
 }
 
 function pintarFerramentas() {
