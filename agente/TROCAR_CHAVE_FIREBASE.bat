@@ -28,11 +28,30 @@ REM  alguem que podia nem estar na frente da tela.
 set "AUTO="
 if /i "%~1"=="/auto" set "AUTO=1"
 
+REM  Onde a chave esta de verdade: quem manda e o agente_config.json,
+REM  nao o palpite de que ela fica ao lado deste arquivo. Na maquina da
+REM  loja a pasta do agente veio do repositorio, onde a chave nunca
+REM  esteve de proposito, e este .bat parou dizendo que nao achou - com
+REM  a chave existindo em outro caminho, apontada pela configuracao.
 set "CHAVE=%~dp0chave-firebase.json"
+set "CFG=%~dp0agente_config.json"
+if not exist "%CFG%" goto CAMINHO_PRONTO
+
+set "PYCFG="
+where py >nul 2>&1 && set "PYCFG=py -3"
+if not defined PYCFG ( where python >nul 2>&1 && set "PYCFG=python" )
+if not defined PYCFG goto CAMINHO_PRONTO
+
+for /f "usebackq delims=" %%K in (`%PYCFG% -c "import json,sys;print(json.load(open(sys.argv[1],encoding='utf-8')).get('chave_firebase') or '')" "%CFG%" 2^>nul`) do set "DOCFG=%%K"
+if defined DOCFG if exist "!DOCFG!" set "CHAVE=!DOCFG!"
+if defined DOCFG if not exist "!DOCFG!" echo  AVISO: o agente_config.json aponta para !DOCFG!, que nao existe.
+
+:CAMINHO_PRONTO
+for %%C in ("!CHAVE!") do set "PASTACHAVE=%%~dpC"
 set "CARIMBO=%DATE:~6,4%-%DATE:~3,2%-%DATE:~0,2%_%TIME:~0,2%%TIME:~3,2%"
 set "CARIMBO=%CARIMBO: =0%"
-set "BACKUP=%~dp0chave-firebase_antes_de_%CARIMBO%.json"
-set "NOVA=%~dp0chave-firebase_nova.json"
+set "BACKUP=!PASTACHAVE!chave-firebase_antes_de_%CARIMBO%.json"
+set "NOVA=!PASTACHAVE!chave-firebase_nova.json"
 
 echo.
 echo  ============================================================
