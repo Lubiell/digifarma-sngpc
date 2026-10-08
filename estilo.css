@@ -210,3 +210,20 @@ main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
 .aviso-erro{color:var(--vermelho);font-size:14px;margin:8px 0 0;font-weight:600}
 .barra-estado{background:var(--vermelho-claro);color:var(--vermelho);padding:8px 16px;font-size:13px;font-weight:600;text-align:center}
 .vazio{color:var(--tinta-fraca);text-align:center;padding:40px 20px;font-size:15px;border:1px dashed var(--linha);border-radius:var(--raio)}
+
+/* Aviso dentro de uma aba: mesma caixa da barra-estado, tom de atencao.
+   Usado quando o numero na tela existe mas nao e confiavel - a conta
+   comparou coisas de datas diferentes, e dizer isso vale mais do que
+   mostrar "+3" como se fosse falta de mercadoria. */
+.barra-aviso {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e4c893;
+  background: #fdf6e7;
+  color: #6b4e11;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.barra-aviso strong { font-weight: 600; }
+.barra-aviso.grave { border-color: #e9b4b4; background: #fdeeee; color: #7d2626; }

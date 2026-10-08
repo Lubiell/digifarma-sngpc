@@ -424,6 +424,8 @@ function pintar() {
   if (estado.vista === 'xml') pintarXml();
   if (estado.vista === 'vendas') pintarVendas();
   if (estado.vista === 'aceites') pintarAceites();
+  pintarAgenteParado();
+  if (estado.vista === 'servidor') pintarServidor();
 }
 
 const ROTULO_PENDENTE = {
@@ -526,12 +528,95 @@ function definicoes(pares) {
   return d;
 }
 
+/* O motivo diz o que se OBSERVA, nunca a causa: um lote ausente do
+   inventario da ANVISA quer dizer saldo zero la, e zero tanto pode ser
+   entrada que nao subiu quanto saldo errado no Digifarma. Afirmar a causa
+   na etiqueta manda gente conferir prateleira a toa. */
+const MOTIVO_SALDO = {
+  negativo: ['Saldo negativo no Digifarma', 'Lote com saldo abaixo de zero. Isso e erro de escrituracao, nao de prateleira.'],
+  lote_em_dois_ms: ['Mesmo lote em dois registros M.S.', 'Lote e numeracao de fabricante: dois fabricantes podem usar o mesmo numero. Confira o fabricante na caixa antes de mexer em cadastro.'],
+  so_na_anvisa: ['So aparece na ANVISA', 'A ANVISA tem saldo deste lote e o Digifarma nao o conhece.'],
+  quantidade: ['Quantidade diferente', 'Os dois lados conhecem o lote, com saldos diferentes.'],
+  anvisa_zerada_lote: ['Lote zerado na ANVISA', 'O M.S. esta no inventario, este lote nao. Costuma ser entrada ainda nao transmitida.'],
+  anvisa_zerada_produto: ['Produto zerado na ANVISA', 'O M.S. inteiro esta fora do inventario da ANVISA.'],
+  sem_ms: ['Produto sem registro M.S.', 'Sem M.S. cadastrado nao da para comparar com a ANVISA.']
+};
+const ORDEM_MOTIVO = ['negativo', 'lote_em_dois_ms', 'so_na_anvisa', 'quantidade',
+                      'anvisa_zerada_lote', 'anvisa_zerada_produto', 'sem_ms'];
+
+/* Por que a comparacao de saldo pode nao valer. A chave vem do agente;
+   a frase e daqui, porque quem escreve frase e a tela. */
+const MOTIVO_CONFIANCA = {
+  sem_inventario: 'O inventario da ANVISA nunca foi baixado, entao nao ha com o que comparar.',
+  foto_anterior_ao_envio: 'O inventario da ANVISA e anterior ao ultimo envio. O que subiu nesse meio ja passou do ponteiro e nao entra em "falta transmitir" — fica contado em lugar nenhum e aparece como sobra.',
+  lote_recusado: 'Um lote foi recusado pela ANVISA. A recusa derruba o envio inteiro, mas o ponteiro do Digifarma andou assim mesmo: ele considera transmitido o que a ANVISA nao registrou.',
+  pendente_sem_lote: 'Ha movimento pendente sem numero de lote. Sem lote ele nao soma a lote nenhum e some da conta.',
+  pendente_sem_casar: 'Ha movimento pendente com M.S. ou lote grafado diferente do cadastro, que nao casou com nenhum lote dos dois lados.'
+};
+
+function pintarConfiancaDoSaldo() {
+  const barra = $('saldo-confianca');
+  const foto = $('saldo-foto');
+  const c = estado.inventario?.inventario?.confianca;
+  const inv = estado.inventario?.inventario || {};
+
+  foto.hidden = !inv.data;
+  if (inv.data) {
+    foto.textContent = 'O inventario da ANVISA e uma foto, de '
+      + dataBR(inv.data) + '. A conta e: essa foto mais o que ainda nao subiu.';
+  }
+
+  if (!c || c.confiavel) { barra.hidden = true; return; }
+  const frases = (c.motivos || []).map((m) => MOTIVO_CONFIANCA[m] || m);
+  barra.innerHTML = '<strong>Estes numeros podem nao ser divergencia de estoque.</strong><br>'
+    + frases.map(esc).join('<br>');
+  barra.hidden = false;
+}
+
+function detalheDoSaldo(i, dif) {
+  const pares = [
+    ['Código', i.codigo],
+    ['Saldo Digifarma', i.saldoDigifarma],
+    ['Saldo do inventário SNGPC', i.saldoSngpc],
+    ['Diferença', (dif > 0 ? '+' : '') + dif],
+    ['Registro M.S.', i.ms],
+    ['Código de barras', i.ean],
+    ['Lote', i.lote],
+    ['Validade', i.validade],
+    ['Classe', i.classe]
+  ];
+  if (i.motivo === 'lote_em_dois_ms') {
+    pares.push(['Outro M.S. com este lote', i.outroMs]);
+    pares.push(['Total do lote no Digifarma', i.totalDigifarmaLote]);
+    pares.push(['Total do lote na ANVISA', i.totalSngpcLote]);
+  }
+  const d = definicoes(pares);
+  const nota = criar('p', 'motivo');
+  if (i.motivo === 'lote_em_dois_ms') {
+    // Os totais batendo mudam o que a farmacia tem de fazer: nao e conferir
+    // prateleira, e ver em qual cadastro a entrada foi lancada.
+    nota.textContent = i.totaisBatem
+      ? 'Os totais do lote batem nos dois lados: a farmacia tem a quantidade certa, repartida entre os cadastros de um jeito diferente. E lancamento no cadastro errado, nao falta de mercadoria.'
+      : MOTIVO_SALDO.lote_em_dois_ms[1];
+  } else {
+    nota.textContent = MOTIVO_SALDO[i.motivo]?.[1] || '';
+  }
+  if (nota.textContent) d.appendChild(nota);
+  return d;
+}
+
 function pintarSaldo() {
   const alvo = $('lista-saldo');
   alvo.innerHTML = '';
+  pintarConfiancaDoSaldo();
+  const peso = (i) => {
+    const p = ORDEM_MOTIVO.indexOf(i.motivo);
+    return p < 0 ? ORDEM_MOTIVO.length : p;
+  };
   const itens = divergenciasDeSaldo()
     .filter((i) => combina(i, estado.buscaSaldo, ['descricao', 'ms', 'ean', 'lote', 'codigo']))
-    .sort((a, b) => Math.abs(Number(b.diferenca || 0)) - Math.abs(Number(a.diferenca || 0)));
+    .sort((a, b) => peso(a) - peso(b)
+      || Math.abs(Number(b.diferenca || 0)) - Math.abs(Number(a.diferenca || 0)));
   $('saldo-vazio').hidden = itens.length > 0 || !!estado.buscaSaldo;
 
   itens.forEach((i, n) => {
@@ -545,19 +630,10 @@ function pintarSaldo() {
         i.lote && 'Lote ' + i.lote,
         i.validade && 'Val. ' + i.validade
       ],
-      tarja: [dif < 0 ? 'Falta no Digifarma' : 'Sobra no Digifarma', (dif > 0 ? '+' : '') + dif],
+      tarja: [MOTIVO_SALDO[i.motivo]?.[0] || (dif < 0 ? 'Falta no Digifarma' : 'Sobra no Digifarma'),
+              (dif > 0 ? '+' : '') + dif],
       tarjaClasse: dif < 0 ? 'falta' : 'sobra',
-      detalhe: definicoes([
-        ['Código', i.codigo],
-        ['Saldo Digifarma', i.saldoDigifarma],
-        ['Saldo do inventário SNGPC', i.saldoSngpc],
-        ['Diferença', (dif > 0 ? '+' : '') + dif],
-        ['Registro M.S.', i.ms],
-        ['Código de barras', i.ean],
-        ['Lote', i.lote],
-        ['Validade', i.validade],
-        ['Classe', i.classe]
-      ])
+      detalhe: detalheDoSaldo(i, dif)
     }));
   });
 
@@ -568,9 +644,45 @@ function pintarSaldo() {
   }
 }
 
+/* "0 divergencias" tanto pode ser conferencia limpa quanto conferencia que
+   nao aconteceu - sem XML, sem periodo, ou sem venda no periodo. O mesmo
+   zero enganoso que fez 4135 sobras parecerem divergencia. */
+function pintarConfiancaDoXml() {
+  const barra = $('xml-confianca');
+  const r = estado.inventario?.conferenciaXmlResumo;
+  if (!r || r.conferiu !== false) { barra.hidden = true; return; }
+  barra.innerHTML = '<strong>A conferência do XML não aconteceu.</strong><br>'
+    + esc(r.porque || 'o agente não disse por quê')
+    + '<br>Então a lista vazia abaixo não quer dizer que está tudo certo.';
+  barra.hidden = false;
+}
+
+function detalheDoXml(c) {
+  const pares = [
+    ['Registro M.S.', c.ms],
+    ['Lote', c.lote],
+    ['Quantidade no banco', c.qtdBanco],
+    ['Quantidade no XML', c.qtdXml],
+    ['Período conferido', c.periodo],
+    ['Arquivo XML', c.arquivo],
+    ['Vendas envolvidas', Array.isArray(c.vendas) ? c.vendas.join(', ') : c.vendas]
+  ];
+  if (c.situacao === 'ms_trocado') pares.splice(1, 0, ['M.S. que subiu no XML', c.outroMs]);
+  const d = definicoes(pares);
+  if (c.situacao === 'ms_trocado') {
+    const nota = criar('p', 'motivo');
+    nota.textContent = 'O mesmo lote saiu por um M.S. no Digifarma e por outro no XML. '
+      + 'Acontece quando o cadastro foi corrigido depois da transmissão: o movimento subiu '
+      + 'com o M.S. que valia na hora. O XML já transmitido não se conserta.';
+    d.appendChild(nota);
+  }
+  return d;
+}
+
 function pintarXml() {
   const alvo = $('lista-xml');
   alvo.innerHTML = '';
+  pintarConfiancaDoXml();
   const itens = pendenciasXml()
     .filter((c) => combina(c, estado.buscaXml, ['descricao', 'ms', 'lote']));
   $('xml-vazio').hidden = itens.length > 0 || !!estado.buscaXml;
@@ -578,7 +690,8 @@ function pintarXml() {
   const ROTULO = {
     fora_do_xml: ['Saiu no banco e não está no XML', 'falta'],
     so_no_xml: ['Está no XML e não achei no banco', 'sobra'],
-    quantidade: ['Quantidade diferente', 'sobra']
+    quantidade: ['Quantidade diferente', 'sobra'],
+    ms_trocado: ['Mesmo lote, M.S. diferente no XML', 'sobra']
   };
 
   itens.forEach((c, n) => {
@@ -593,15 +706,7 @@ function pintarXml() {
       ],
       tarja: [rotulo, `banco ${c.qtdBanco ?? 0} · xml ${c.qtdXml ?? 0}`],
       tarjaClasse: classe,
-      detalhe: definicoes([
-        ['Registro M.S.', c.ms],
-        ['Lote', c.lote],
-        ['Quantidade no banco', c.qtdBanco],
-        ['Quantidade no XML', c.qtdXml],
-        ['Período conferido', c.periodo],
-        ['Arquivo XML', c.arquivo],
-        ['Vendas envolvidas', Array.isArray(c.vendas) ? c.vendas.join(', ') : c.vendas]
-      ])
+      detalhe: detalheDoXml(c)
     }));
   });
 
@@ -647,6 +752,119 @@ function pintarVendas() {
       detalhe
     }));
   });
+}
+
+/* ============================================================
+   11b. SERVIDOR
+   ============================================================ */
+const MINUTOS_ATE_PARADO = 30;
+
+function minutosDesde(iso) {
+  if (!iso || typeof iso !== 'string') return null;
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return Math.floor((Date.now() - d.getTime()) / 60000);
+}
+
+/* O aviso de agente parado olha vistoEm, nao atualizadoEm.
+   atualizadoEm so muda quando o RESULTADO muda, e num dia sem movimento
+   ele fica parado de proposito: usa-lo aqui acusava agente morto com o
+   agente vivo. vistoEm e gravado a cada volta, mude o que mudar. */
+function pintarAgenteParado() {
+  const barra = $('agente-parado');
+  const selo = $('selo-servidor');
+  const min = minutosDesde(estado.inventario?.vistoEm);
+  const parado = min !== null && min >= MINUTOS_ATE_PARADO;
+  if (min === null) {
+    barra.className = 'barra-aviso';
+    barra.textContent = 'O agente ainda não registrou passagem. Se acabou de atualizar, espere alguns minutos.';
+    barra.hidden = false;
+  } else if (parado) {
+    barra.className = 'barra-aviso grave';
+    barra.textContent = 'O agente não dá sinal há ' + min + ' minuto(s). Ele roda de 5 em 5; '
+      + 'passando de ' + MINUTOS_ATE_PARADO + ', vale conferir se o servidor está ligado.';
+    barra.hidden = false;
+  } else {
+    barra.hidden = true;
+  }
+  selo.hidden = !parado;
+}
+
+function pintarPonteiroSugerido() {
+  const alvo = $('ponteiro-sugerido');
+  alvo.innerHTML = '';
+  const p = estado.inventario?.ponteiroSugerido;
+  if (!p || p.corte === undefined || p.corte === null) {
+    const txt = criar('p', 'sublinha');
+    txt.textContent = 'Nada a acertar: o ponteiro do Digifarma bate com o que a ANVISA já recebeu.';
+    alvo.appendChild(txt);
+    return;
+  }
+  alvo.appendChild(definicoes([
+    ['Número sugerido', p.corte],
+    ['Cobre movimentos até', dataBR(p.ate)],
+    ['Vendas que ficariam presas', p.presas]
+  ]));
+  const nota = criar('p', 'motivo');
+  nota.textContent = 'O ponteiro do Digifarma está atrás do que o site já recebeu. '
+    + 'Sem acertar, as mesmas vendas sobem de novo no próximo envio.';
+  alvo.appendChild(nota);
+
+  const b = criar('button', 'botao botao-principal');
+  b.textContent = 'Acertar o ponteiro para ' + p.corte;
+  b.onclick = async () => {
+    if (!(await confirmar('Acertar o ponteiro',
+      'Isto manda o agente gravar ' + p.corte + ' como última venda transmitida. '
+      + 'Só faça se o site da ANVISA já aceitou tudo até ' + dataBR(p.ate) + '.',
+      'Acertar'))) return;
+    // acao 'config' com chave de CONFIG_REMOTO: e o protocolo que o agente
+    // ja atende. Nao inventar acao nova - acao que o agente nao conhece
+    // vira botao que nao faz nada, e ninguem descobre.
+    await db.ref('farmacia/comando').set({
+      acao: 'config', chave: 'transmitido_ate_venda', valor: String(p.corte),
+      pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+    });
+    avisar('Pedido enviado. O agente atende em até 5 minutos.');
+  };
+  alvo.appendChild(b);
+}
+
+function pintarEscrita() {
+  const e = estado.inventario?.escrita || {};
+  const dl = $('dados-escrita');
+  dl.innerHTML = '';
+  [['Escrita', e.ligada ? 'LIGADA' : 'desligada'],
+   ['Prazo', e.ligada ? (e.semPrazo ? 'sem prazo' : (e.ate ? 'até ' + dataHora(e.ate) : '—')) : '—']
+  ].forEach(([k, v]) => {
+    const dt = criar('dt'); dt.textContent = k;
+    const dd = criar('dd'); dd.textContent = esc(v);
+    dl.append(dt, dd);
+  });
+}
+
+function pintarAgente() {
+  const a = estado.inventario?.agente || {};
+  const dl = $('dados-agente');
+  dl.innerHTML = '';
+  [['Arquivo do agente', a.bytes ? a.bytes + ' bytes · ' + (a.hash || '') : ''],
+   ['Agente gravado em', a.em ? dataHora(a.em) : ''],
+   ['Última passagem', estado.inventario?.vistoEm ? dataHora(estado.inventario.vistoEm) : '—'],
+   ['Último resultado', estado.inventario?.atualizadoEm ? dataHora(estado.inventario.atualizadoEm) : '—'],
+   ['Conta de serviço', a.chave?.conta],
+   ['Projeto', a.chave?.projeto]
+  ].forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return;
+    const dt = criar('dt'); dt.textContent = k;
+    const dd = criar('dd'); dd.textContent = esc(v);
+    dl.append(dt, dd);
+  });
+}
+
+function pintarServidor() {
+  pintarAgenteParado();
+  pintarPonteiroSugerido();
+  pintarEscrita();
+  pintarAgente();
 }
 
 /* ============================================================

@@ -1,7 +1,11 @@
 /* FARMÁCIA — SNGPC: service worker
    Casca em cache para o app abrir offline. Dados nunca são cacheados:
    o Firebase cuida da fila offline e sincroniza quando a conexão volta. */
-const VERSAO = 'farmacia-sngpc-v1';
+/* Trocar esta versao e o que faz o navegador buscar a casca de novo: o
+   fetch aqui e cache-first, e o activate apaga todo cache cujo nome nao
+   seja este. Publicar sem trocar deixa quem ja abriu o app vendo a versao
+   antiga para sempre. */
+const VERSAO = 'farmacia-sngpc-v2';
 const CASCA = [
   './',
   './index.html',

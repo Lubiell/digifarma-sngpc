@@ -113,6 +113,8 @@
     <section id="v-saldo" class="vista" hidden>
       <div class="cabeca-vista"><h2>Divergências de saldo</h2></div>
       <p class="sublinha">Saldo do Digifarma comparado com o inventário SNGPC vigente.</p>
+      <div id="saldo-confianca" class="barra-aviso" hidden></div>
+      <p id="saldo-foto" class="nota" hidden></p>
       <input id="busca-saldo" class="busca" type="search" placeholder="Buscar por descrição, M.S., código de barras ou lote" autocomplete="off">
       <div id="lista-saldo" class="pilha"></div>
       <p id="saldo-vazio" class="vazio" hidden>Nenhuma divergência de saldo. Digifarma e inventário batem.</p>
@@ -122,6 +124,7 @@
     <section id="v-xml" class="vista" hidden>
       <div class="cabeca-vista"><h2>Conferência do XML</h2></div>
       <p class="sublinha">O que saiu no banco cruzado com o que subiu no XML, por registro M.S. + lote.</p>
+      <div id="xml-confianca" class="barra-aviso" hidden></div>
       <input id="busca-xml" class="busca" type="search" placeholder="Buscar por descrição, M.S. ou lote" autocomplete="off">
       <div id="lista-xml" class="pilha"></div>
       <p id="xml-vazio" class="vazio" hidden>Tudo que saiu no período está no XML.</p>
@@ -143,6 +146,30 @@
       <div id="lista-aceites" class="pilha"></div>
       <p id="aceites-vazio" class="vazio" hidden>Nenhum envio registrado ainda.</p>
     </section>
+    <!-- SERVIDOR -->
+    <section id="v-servidor" class="vista" hidden>
+      <div class="cabeca-vista"><h2>Servidor</h2></div>
+      <p class="sublinha">O que o agente que roda na farmácia está reportando.</p>
+
+      <div id="agente-parado" class="barra-aviso" hidden></div>
+
+      <div class="bloco">
+        <h3>Acertar o ponteiro</h3>
+        <div id="ponteiro-sugerido"></div>
+      </div>
+
+      <div class="bloco">
+        <h3>Escrita no Digifarma</h3>
+        <dl id="dados-escrita" class="dados"></dl>
+        <p class="nota">O agente faz <strong>SELECT</strong> em tudo. As duas únicas escritas são
+        zerar lote negativo e gravar contagem, e só enquanto esta janela estiver aberta.</p>
+      </div>
+
+      <div class="bloco">
+        <h3>O agente</h3>
+        <dl id="dados-agente" class="dados"></dl>
+      </div>
+    </section>
   </main>
 
   <nav class="navegacao">
@@ -151,6 +178,7 @@
     <button class="nav-item" data-vista="xml">XML<span id="selo-xml" class="selo" hidden>0</span></button>
     <button class="nav-item" data-vista="vendas">Vendas<span id="selo-vendas" class="selo" hidden>0</span></button>
     <button class="nav-item" data-vista="aceites">Aceites</button>
+    <button class="nav-item" data-vista="servidor">Servidor<span id="selo-servidor" class="selo" hidden>!</span></button>
   </nav>
 </div>
 

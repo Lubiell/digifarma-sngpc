@@ -206,8 +206,48 @@ def conferir_url_do_repositorio():
     return falhas
 
 
+def conferir_protocolo_do_app():
+    """O que o app pede, o agente atende?
+
+    Quase entrou um botao "Acertar o ponteiro" mandando acao
+    'acertar_ponteiro', que o agente nao conhece: o pedido ficaria para
+    sempre em farmacia/comando e a tela diria "na fila" sem nada
+    acontecer. Botao que nao faz nada e pior que botao nenhum, porque
+    ninguem descobre. O certo era acao 'config' com chave
+    'transmitido_ate_venda', que ja existia.
+    """
+    falhas = []
+    try:
+        agente = open('agente/agente_auto.py', encoding='utf-8').read()
+        app = open('app.js', encoding='utf-8').read()
+    except FileNotFoundError as e:
+        print('  -- protocolo do app: %s, pulando' % e.filename)
+        return []
+
+    aceitas = set(re.findall(r"acao == '([a-z_]+)'", agente))
+    for grupo in re.findall(r"acao in \(([^)]+)\)", agente):
+        aceitas |= set(re.findall(r"'([a-z_]+)'", grupo))
+    mandadas = (set(re.findall(r"acao: '([a-z_]+)'", app))
+                | set(re.findall(r"pedirAoAgente\('([a-z_]+)'", app)))
+    for orfa in sorted(mandadas - aceitas):
+        falhas.append("o app manda a acao '%s' e o agente nao atende" % orfa)
+
+    permitidas = set(re.findall(r"'([a-z_]+)': '(?:inteiro|texto|modo)'", agente))
+    pedidas = set(re.findall(r"chave: '([a-z_]+)'", app))
+    for fora in sorted(pedidas - permitidas):
+        falhas.append("o app pede a chave de config '%s', fora de CONFIG_REMOTO" % fora)
+
+    for f in falhas:
+        print('  FALHA protocolo do app: %s' % f)
+    if not falhas:
+        print('  OK    protocolo do app (%d acao(oes), %d chave(s) de config)'
+              % (len(mandadas), len(pedidas)))
+    return falhas
+
+
 def conferir():
-    total = list(conferir_gitignore()) + list(conferir_url_do_repositorio())
+    total = (list(conferir_gitignore()) + list(conferir_url_do_repositorio())
+             + list(conferir_protocolo_do_app()))
     for nome in ALVOS:
         try:
             bruto = open(nome, encoding='cp1252', newline='').read()
