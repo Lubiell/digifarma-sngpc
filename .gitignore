@@ -20,3 +20,22 @@ agente/*service-account*.json
 
 # dado de paciente: nunca
 agente/sngpc_VisualizaArquivoXML.xml
+
+# --- vindas do .gitignore original do repositorio ---
+# banco do Digifarma
+*.fdb
+*.FDB
+
+# XML do SNGPC tem dado de paciente, em qualquer pasta
+*.XML
+*.xml
+sngpc.zip
+enviados/
+# excecao: o exemplo anonimizado E para versionar
+!agente/exemplo_SNGPC.XML
+
+# lixo de sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+.venv/
