@@ -212,6 +212,49 @@ def principal():
     conferir('lote diferente não é casado como M.S. trocado',
              len(separadas) == 2 and not any(c['situacao'] == 'ms_trocado' for c in separadas), separadas)
 
+    # --- o relogio da atualizacao automatica ---
+    carimbo = os.path.join(os.path.dirname(os.path.abspath(ag.__file__)),
+                           ag.ARQUIVO_ULTIMA_ATUALIZACAO)
+    guardado = open(carimbo, encoding='utf-8').read() if os.path.exists(carimbo) else None
+    try:
+        if os.path.exists(carimbo):
+            os.remove(carimbo)
+        conferir('sem carimbo, procura atualizacao', ag.hora_da_atualizacao()[1])
+
+        agora_txt = datetime.datetime.now().isoformat(timespec='seconds')
+        open(carimbo, 'w', encoding='utf-8').write(agora_txt)
+        conferir('carimbo de agora, NAO procura', not ag.hora_da_atualizacao()[1])
+
+        velho = datetime.datetime.now() - datetime.timedelta(
+            hours=ag.HORAS_ENTRE_ATUALIZACOES + 1)
+        open(carimbo, 'w', encoding='utf-8').write(velho.isoformat(timespec='seconds'))
+        conferir('carimbo velho, procura de novo', ag.hora_da_atualizacao()[1])
+
+        open(carimbo, 'w', encoding='utf-8').write('isto nao e data')
+        conferir('carimbo ilegivel nao trava, procura', ag.hora_da_atualizacao()[1])
+
+        # Atualizacao que falha tem de carimbar assim mesmo: sem isso, uma
+        # falha persistente vira uma tentativa de download por hora.
+        if os.path.exists(carimbo):
+            os.remove(carimbo)
+        guardado_fn = ag.atualizar_agente
+        try:
+            def explodir(_config):
+                raise RuntimeError('sem rede')
+            ag.atualizar_agente = explodir
+            ag.atualizar_sozinho({})
+        finally:
+            ag.atualizar_agente = guardado_fn
+        conferir('atualizacao que falha ainda carimba', os.path.exists(carimbo))
+        conferir('e carimbada, nao tenta de novo na volta seguinte',
+                 os.path.exists(carimbo) and not ag.hora_da_atualizacao()[1])
+    finally:
+        if guardado is None:
+            if os.path.exists(carimbo):
+                os.remove(carimbo)
+        else:
+            open(carimbo, 'w', encoding='utf-8').write(guardado)
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0

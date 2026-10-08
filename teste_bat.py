@@ -7,6 +7,7 @@ dentro de bloco abortando o script, "^|" chegando literal dentro de
 aspas, e "(S/N)" fechando o if no meio da pergunta.
 """
 import glob
+import os
 import re
 import sys
 
@@ -177,6 +178,7 @@ ARQUIVOS_COM_URL = [
     'agente/APONTAR_SERVIDOR.bat',
     'ACHAR_APPJS.bat',
     'agente/INSTALAR_CHAVE.bat',
+    'FARMACIA.bat',
 ]
 BASE = re.compile(r'raw\.githubusercontent\.com/([^/\s"\']+)/([^/\s"\']+)')
 
@@ -272,9 +274,46 @@ def conferir_protocolo_do_app():
     return falhas
 
 
+def conferir_menu_do_farmacia():
+    """Todo item do menu baixa um arquivo que existe no repositorio.
+
+    O FARMACIA.bat nao guarda as ferramentas: baixa cada uma na hora. Um
+    nome errado ali vira opcao de menu que baixa 404, e o usuario descobre
+    no servidor, na hora em que precisava dela.
+    """
+    falhas = []
+    try:
+        menu = open('FARMACIA.bat', encoding='cp1252', newline='').read()
+    except FileNotFoundError:
+        print('  -- FARMACIA.bat nao existe, pulando')
+        return []
+
+    pedidos = [(n, p) for n, p in re.findall(r'call :RODAR (\S+) (\S+)', menu)]
+    for pasta, nome in re.findall(r'-o "%TMPD%\\(\S+?)" "%CRU%/(\S+?)/\1"', menu):
+        pedidos.append((pasta, nome))
+    for m in re.finditer(r'%CRU%/([\w./-]+)/([\w.-]+)"', menu):
+        pedidos.append((m.group(2), m.group(1)))
+
+    vistos = set()
+    for nome, pasta in pedidos:
+        caminho = os.path.join(pasta, nome)
+        if caminho in vistos:
+            continue
+        vistos.add(caminho)
+        if not os.path.exists(caminho):
+            falhas.append('o menu baixa %s, que nao existe no repositorio' % caminho)
+
+    for f in falhas:
+        print('  FALHA menu do FARMACIA.bat: %s' % f)
+    if not falhas:
+        print('  OK    menu do FARMACIA.bat (%d arquivo(s))' % len(vistos))
+    return falhas
+
+
 def conferir():
     total = (list(conferir_gitignore()) + list(conferir_url_do_repositorio())
-             + list(conferir_protocolo_do_app()))
+             + list(conferir_protocolo_do_app())
+             + list(conferir_menu_do_farmacia()))
     for nome in ALVOS:
         try:
             bruto = open(nome, encoding='cp1252', newline='').read()

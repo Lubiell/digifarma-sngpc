@@ -2781,6 +2781,51 @@ def tentar_anvisa_sozinho(config, dados):
     return recado
 
 
+# Uma vez por dia basta: o agente roda de hora em hora, e procurar
+# atualizacao a cada volta seria vinte e quatro downloads por dia para
+# trocar o arquivo no maximo uma vez.
+HORAS_ENTRE_ATUALIZACOES = 20
+ARQUIVO_ULTIMA_ATUALIZACAO = 'ultima_atualizacao.txt'
+
+
+def hora_da_atualizacao():
+    """Ja passou tempo suficiente desde a ultima procura por versao nova?"""
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           ARQUIVO_ULTIMA_ATUALIZACAO)
+    try:
+        with open(caminho, encoding='utf-8') as f:
+            quando = datetime.datetime.fromisoformat(f.read().strip())
+    except Exception:
+        return caminho, True
+    passou = datetime.datetime.now() - quando
+    return caminho, passou >= datetime.timedelta(hours=HORAS_ENTRE_ATUALIZACOES)
+
+
+def atualizar_sozinho(config):
+    """Procura versao nova uma vez por dia, sem ninguem pedir.
+
+    Ate aqui o agente so se atualizava quando alguem apertava um botao ou
+    ia ate o servidor. Foi assim que a maquina da loja ficou com um agente
+    de 02/09 rodando em 08/10, cinco semanas atras de todas as correcoes.
+
+    Falhar aqui nao pode derrubar a volta: a atualizacao e conveniencia, e
+    o trabalho do agente e que importa. O carimbo e gravado mesmo quando a
+    troca falha, senao uma falha persistente vira uma tentativa por hora."""
+    caminho, na_hora = hora_da_atualizacao()
+    if not na_hora:
+        return
+    try:
+        with open(caminho, 'w', encoding='utf-8') as f:
+            f.write(datetime.datetime.now().isoformat(timespec='seconds'))
+    except Exception as e:
+        registrar('Nao consegui gravar o carimbo da atualizacao: %s' % e)
+        return
+    try:
+        registrar(atualizar_agente(config))
+    except Exception as e:
+        registrar('Atualizacao automatica falhou: %s' % e)
+
+
 def modo_auto(config, data_inventario=None, usar_envio=False):
     db = conectar_firebase(config)
     conexao = conectar_firebird(config)
@@ -5029,6 +5074,10 @@ def atender_pedido(config, db, pedido):
 def modo_fila(config):
     """Atende os botões do app E atualiza as vendas. Roda de 5 em 5 minutos."""
     db = conectar_firebase(config)
+
+    # uma vez por dia, antes de qualquer outra coisa: se houver versao nova,
+    # o resto desta volta ja roda com ela na proxima.
+    atualizar_sozinho(config)
 
     # antes da fila: as vendas sobem toda vez, mesmo sem ninguém pedir nada.
     # É isto que faz o acompanhamento ser de 5 em 5 minutos sem obrigar a
