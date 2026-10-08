@@ -87,6 +87,14 @@ def checar(nome, bruto):
         elif re.search(r'(?i)\b(rmdir|rd)\b', limpa) and '/s' in limpa.lower() and '%' not in alvo:
             falhas.append('linha %d: rmdir /s em caminho fixo' % n)
 
+    # 7b. skip=0 nao existe: o for /f exige 1 ou mais e aborta a linha
+    #     com "delims=" foi inesperado neste momento". Quebrou de verdade
+    #     no LIMPAR.bat, e o efeito era silencioso: os padroes que
+    #     guardam zero arquivos nunca eram listados.
+    for n, linha in enumerate(linhas, 1):
+        if re.search(r'(?i)skip=0\b', sem_comentario(linha)):
+            falhas.append('linha %d: for /f com skip=0, que o CMD recusa' % n)
+
     # 8. curl sempre com -f, senao pagina de erro do GitHub passa como
     #    sucesso e sobrescreve o agente. So vale para curl INVOCADO: a
     #    palavra dentro de um echo e texto na tela, nao comando.

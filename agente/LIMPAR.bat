@@ -124,7 +124,16 @@ REM  O skip do for pula os mais NOVOS: o /o-d ordena do mais
 REM  recente para o mais antigo, entao o que sobra e o velho.
 REM ============================================================
 :ACHAR
+REM  skip=0 nao existe: o for /f exige 1 ou mais e aborta com
+REM  "delims=" foi inesperado neste momento". Guardar zero arquivos e
+REM  justamente o caso de *.tmp, *.pyc e do download interrompido, que
+REM  por causa disso nunca chegavam a ser listados para limpeza.
+if "%~2"=="0" goto ACHAR_TODOS
 for /f "skip=%~2 delims=" %%A in ('dir /b /a-d /o-d %1 2^>nul') do call :ANOTAR "%%A" %3
+goto :eof
+
+:ACHAR_TODOS
+for /f "delims=" %%A in ('dir /b /a-d /o-d %1 2^>nul') do call :ANOTAR "%%A" %3
 goto :eof
 
 :ANOTAR
