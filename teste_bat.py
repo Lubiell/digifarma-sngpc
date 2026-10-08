@@ -294,6 +294,18 @@ def conferir_menu_do_farmacia():
     for m in re.finditer(r'%CRU%/([\w./-]+)/([\w.-]+)"', menu):
         pedidos.append((m.group(2), m.group(1)))
 
+    # o menu.ps1 roda direto do GitHub e nao da para executar aqui para
+    # testar; o que da para garantir e que todo arquivo que ele busca
+    # existe no repositorio.
+    try:
+        ps = open('menu.ps1', encoding='utf-8').read()
+    except FileNotFoundError:
+        ps = ''
+    for nome, pasta in re.findall(r"Rodar-Bat '([\w.-]+)'\s+'([\w.-]+)'", ps):
+        pedidos.append((nome, pasta))
+    for pasta, nome in re.findall(r'\$CRU/([\w./-]+)/([\w.-]+)"', ps):
+        pedidos.append((nome, pasta))
+
     vistos = set()
     for nome, pasta in pedidos:
         caminho = os.path.join(pasta, nome)
