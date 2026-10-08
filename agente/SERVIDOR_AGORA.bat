@@ -13,7 +13,7 @@ REM
 REM  Para o proximo, so baixar este arquivo de novo: ele traz a
 REM  lista do dia junto.
 REM
-REM     curl -fL -o SERVIDOR_AGORA.bat https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA/main/agente/SERVIDOR_AGORA.bat
+REM     curl -fL -o SERVIDOR_AGORA.bat https://raw.githubusercontent.com/Lubiell/digifarma-sngpc/main/agente/SERVIDOR_AGORA.bat
 REM
 REM  So para na TROCA DA CHAVE, e so quando a maquina nao tem o
 REM  gcloud: ali o Google exige que uma pessoa autorize o
@@ -24,7 +24,7 @@ REM ============================================================
 
 cd /d "%~dp0"
 
-set "CRU=https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA/main/agente"
+set "CRU=https://raw.githubusercontent.com/Lubiell/digifarma-sngpc/main/agente"
 set "PY=python"
 where python >nul 2>&1
 if errorlevel 1 set "PY=py"

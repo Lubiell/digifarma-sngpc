@@ -3158,7 +3158,7 @@ def mudou(caminho, valor):
 
 # Um lugar so. Trocar de repositorio e trocar esta linha; os .bat tem a
 # linha equivalente, e o teste confere que as quatro concordam.
-REPO_CRU = 'https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA/main/agente'
+REPO_CRU = 'https://raw.githubusercontent.com/Lubiell/digifarma-sngpc/main/agente'
 
 URL_AGENTE = REPO_CRU + '/agente_auto.py'
 

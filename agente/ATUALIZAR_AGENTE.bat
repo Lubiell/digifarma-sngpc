@@ -80,7 +80,7 @@ if exist agente_auto.py (
 
 REM ---------- 3. Baixar ----------
 echo [2/6] Baixando a versao mais nova do GitHub...
-set "CRU=https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA/main/agente"
+set "CRU=https://raw.githubusercontent.com/Lubiell/digifarma-sngpc/main/agente"
 set "URL=%CRU%/agente_auto.py"
 curl -fsSL -o agente_auto_novo.py "%URL%"
 if errorlevel 1 (

@@ -32,7 +32,7 @@ REM ============================================================
 
 cd /d "%~dp0"
 
-set "CRU=https://raw.githubusercontent.com/jeffersontete-ui/FARMACIA/main/agente"
+set "CRU=https://raw.githubusercontent.com/Lubiell/digifarma-sngpc/main/agente"
 set "PY=python"
 where python >nul 2>&1
 if errorlevel 1 set "PY=py"
