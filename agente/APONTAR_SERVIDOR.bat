@@ -30,20 +30,27 @@ echo ------------------------------------------------------------
 echo  procurando a pasta do agente
 echo ------------------------------------------------------------
 set "ACHADAS=0"
+set "NA_LIXEIRA=0"
 set "PASTA="
 for %%D in (C D E F G H) do (
   if exist "%%D:\" (
     for /f "delims=" %%A in ('dir /b /s "%%D:\agente_auto.py" 2^>nul') do (
-      echo %%~dpA| findstr /i /c:"SALVAR_FARMACIA" /c:"RECUPERAR_FARMACIA" /c:"PEGAR_APPJS" /c:"BACKUP_FARMACIA" >nul 2>&1
-      if errorlevel 1 (
-        set /a ACHADAS+=1
-        set "PASTA=%%~dpA"
-        echo   %%~dpA
+      echo %%~dpA| findstr /i /c:"$RECYCLE.BIN" >nul 2>&1
+      if not errorlevel 1 (
+        set /a NA_LIXEIRA+=1
+      ) else (
+        echo %%~dpA| findstr /i /c:"SALVAR_FARMACIA" /c:"RECUPERAR_FARMACIA" /c:"PEGAR_APPJS" /c:"BACKUP_FARMACIA" >nul 2>&1
+        if errorlevel 1 (
+          set /a ACHADAS+=1
+          set "PASTA=%%~dpA"
+          echo   %%~dpA
+        )
       )
     )
   )
 )
 
+if "!ACHADAS!"=="0" if not "!NA_LIXEIRA!"=="0" goto SO_NA_LIXEIRA
 if "!ACHADAS!"=="0" goto PASTA_ERRADA
 if not "!ACHADAS!"=="1" goto VARIAS
 
@@ -112,6 +119,29 @@ echo backup. Nada foi alterado.
 echo.
 echo Rode este arquivo na maquina onde o agente esta instalado, ou
 echo copie-o para a pasta do agente e rode de novo.
+goto FIM
+
+:SO_NA_LIXEIRA
+echo ------------------------------------------------------------
+echo  PARE - O AGENTE FOI APAGADO
+echo ------------------------------------------------------------
+echo.
+echo As unicas copias do agente neste computador estao na LIXEIRA
+echo ^(!NA_LIXEIRA! encontrada^(s^)^). Nenhuma pasta viva do agente
+echo existe no disco. Nada foi alterado.
+echo.
+echo Por isso o aplicativo nao mostra nada: nao ha agente rodando.
+echo.
+echo O QUE FAZER, nesta ordem:
+echo.
+echo  1. Abra a Lixeira do Windows.
+echo  2. Ache a pasta do agente ^(ou a FARMACIA-SNGPC que a contem^).
+echo  3. Clique com o botao direito e escolha RESTAURAR.
+echo  4. Rode este arquivo de novo.
+echo.
+echo Restaurar e melhor do que reinstalar: a pasta guarda o
+echo agente_config.json, com a senha do banco, e o arquivo da chave
+echo do Firebase. Nenhum dos dois esta no repositorio, de proposito.
 goto FIM
 
 :VARIAS
