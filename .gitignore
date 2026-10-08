@@ -4,6 +4,7 @@ __pycache__/
 # gerados em execucao: log, relatorio e estado do agente
 agente/*.log
 agente/ultimo_publicado.json
+agente/ultima_atualizacao.txt
 agente/ajustes_*.json
 agente/tarefas_saldo_*.txt
 agente/negativos_*.txt
