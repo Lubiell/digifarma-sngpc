@@ -9,6 +9,7 @@ agente/ajustes_*.json
 agente/tarefas_saldo_*.txt
 agente/negativos_*.txt
 agente/comparacao_*.html
+agente/acesso_remoto_*.txt
 agente/agente_auto_antes_de_*.py
 agente/agente_auto_backup.py
 
