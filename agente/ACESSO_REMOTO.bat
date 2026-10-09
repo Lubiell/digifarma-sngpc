@@ -27,16 +27,18 @@ echo  Configura o que passar: SSH, firewall da porta 22 so para a
 echo  rede local e a VPN, PowerShell no SSH, e RDP se for Pro.
 echo.
 
-set "FARM_ADMIN=0"
-net session >nul 2>&1
-if not errorlevel 1 set "FARM_ADMIN=1"
 set "FARM_ARQ=%~f0"
 set "FARM_PASTA=%~dp0"
 
 where powershell >nul 2>&1
 if errorlevel 1 goto SEM_POWERSHELL
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:FARM_ARQ); $m='#'+'== POWERSHELL =='; $i=$t.IndexOf($m); if ($i -lt 0) { exit 9 }; iex $t.Substring($i)"
+REM  CMD de 32 bits abriria o PowerShell de 32 bits: o registro do SSH
+REM  cairia no WOW6432Node e o Add-WindowsCapability falharia.
+set "PSEXE=powershell"
+if defined PROCESSOR_ARCHITEW6432 set "PSEXE=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+
+"%PSEXE%" -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:FARM_ARQ); $m='#'+'== POWERSHELL =='; $i=$t.IndexOf($m); if ($i -lt 0) { exit 9 }; iex $t.Substring($i)"
 if errorlevel 9 goto VEIO_QUEBRADO
 goto FIM
 
@@ -62,10 +64,10 @@ goto :eof
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$admin = ($env:FARM_ADMIN -eq '1')
+$admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $log = New-Object System.Collections.Generic.List[string]
 $resumo = New-Object System.Collections.Generic.List[string]
-$reVpn = 'TAP-Windows|OpenVPN|ovpn-dco'
+$reVpn = 'TAP-Windows|OpenVPN|ovpn-dco|Wintun'
 $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 function Dizer([string]$t) { Write-Host $t; $log.Add($t) }
@@ -95,7 +97,38 @@ function Privada([string]$faixa) {
     return (($o[0] -eq 10) -or ($o[0] -eq 172 -and $o[1] -ge 16 -and $o[1] -le 31) -or ($o[0] -eq 192 -and $o[1] -eq 168))
 }
 
-function Aberta([string]$remoto) { return ($remoto -eq 'Any' -or $remoto -match '0\.0\.0\.0' -or $remoto -eq '*') }
+function IpPrivado([string]$ip) {
+    if ($ip -notmatch '^(\d+)\.(\d+)\.\d+\.\d+$') { return $false }
+    $a = [int]$matches[1]; $b = [int]$matches[2]
+    return (($a -eq 10) -or ($a -eq 172 -and $b -ge 16 -and $b -le 31) -or ($a -eq 192 -and $b -eq 168))
+}
+
+# Aberta = algum item do RemoteAddress sai da faixa privada: Any,
+# Internet, IPv6, IP publico, ou mascara que estoura o bloco privado.
+# Item a item, porque '10.0.0.0/24' contem '0.0.0.0' e nao e aberta.
+function Aberta([string]$remoto) {
+    foreach ($x in ($remoto -split ',')) {
+        $x = $x.Trim()
+        if ($x -in 'LocalSubnet', 'LocalSubnet4', 'DefaultGateway', 'DHCP', 'DNS', 'WINS') { continue }
+        if ($x -match '^([\d.]+)-([\d.]+)$') {
+            $de = $matches[1]; $ate = $matches[2]
+            if (-not (IpPrivado $de) -or -not (IpPrivado $ate) -or $de.Split('.')[0] -ne $ate.Split('.')[0]) { return $true }
+            continue
+        }
+        $partes = $x.Split('/')
+        if (-not (IpPrivado $partes[0])) { return $true }
+        if ($partes.Count -gt 1) {
+            if ($partes[1] -match '\.') {
+                $pref = 0
+                foreach ($o in $partes[1].Split('.')) { $pref += ([Convert]::ToString([int]$o, 2) -replace '0', '').Length }
+            } else { $pref = [int]$partes[1] }
+            $a = [int]$partes[0].Split('.')[0]
+            $minimo = if ($a -eq 10) { 8 } elseif ($a -eq 172) { 12 } else { 16 }
+            if ($pref -lt $minimo) { return $true }
+        }
+    }
+    return $false
+}
 
 function Escutando([int]$porta) {
     $quem = @()
@@ -136,19 +169,41 @@ function MostrarRegras([int]$porta) {
 }
 
 # Recria a regra da farmacia com a faixa de hoje (a VPN pode ter
-# entrado ou saido desde a ultima vez) e prende a faixa nas regras de
-# outros que estejam ligadas para qualquer endereco: a do proprio
-# OpenSSH e as da Area de Trabalho Remota ja nascem assim.
+# entrado ou saido desde a ultima vez) e prende a faixa em toda regra de
+# outros que esteja aberta, ligada ou nao: a do proprio OpenSSH e as da
+# Area de Trabalho Remota ja nascem para qualquer endereco, e uma
+# desligada pode ser religada por uma atualizacao.
+# Devolve $true so se, no fim, nada nesta porta ficou aberto. Quem chama
+# so liga o servico com $true: com firewall desligado ou regra que nao
+# deu para prender, ligar o servico seria abrir para a internet.
 function Liberar([string]$id, [string]$nome, [int]$porta, [string[]]$faixas) {
-    Remove-NetFirewallRule -Name $id -ErrorAction SilentlyContinue
-    New-NetFirewallRule -Name $id -DisplayName $nome -Direction Inbound -Action Allow `
-        -Protocol TCP -LocalPort $porta -RemoteAddress $faixas -Profile Any -ErrorAction Stop | Out-Null
-    Dizer "  regra '$nome' criada: porta $porta so para $($faixas -join ', ')"
-    foreach ($r in @(RegrasDaPorta $porta)) {
-        if ($r.Id -eq $id -or -not $r.Ligada -or -not (Aberta $r.Remoto)) { continue }
-        Set-NetFirewallRule -Name $r.Id -RemoteAddress $faixas -ErrorAction Stop
-        Dizer "  regra '$($r.Nome)' restringida: era $($r.Remoto), agora $($faixas -join ', ')"
+    $perfis = @(Get-NetFirewallProfile -ErrorAction SilentlyContinue)
+    $desligados = @($perfis | Where-Object { "$($_.Enabled)" -ne 'True' })
+    if (-not $perfis -or $desligados) {
+        Dizer "  o firewall do Windows esta DESLIGADO ($(@($desligados | ForEach-Object { $_.Name }) -join ', ')). Nao ligo o firewall sozinho, para nao derrubar o Digifarma na rede."
+        return $false
     }
+    $criada = $false
+    try {
+        Remove-NetFirewallRule -Name $id -ErrorAction SilentlyContinue
+        New-NetFirewallRule -Name $id -DisplayName $nome -Direction Inbound -Action Allow `
+            -Protocol TCP -LocalPort $porta -RemoteAddress $faixas -Profile Any -ErrorAction Stop | Out-Null
+        Dizer "  regra '$nome' criada: porta $porta so para $($faixas -join ', ')"
+        $criada = $true
+    } catch { Dizer "  FALHOU ao criar a regra '$nome': $($_.Exception.Message)" }
+    foreach ($r in @(RegrasDaPorta $porta)) {
+        if ($r.Id -eq $id -or -not (Aberta $r.Remoto)) { continue }
+        try {
+            Set-NetFirewallRule -Name $r.Id -RemoteAddress $faixas -ErrorAction Stop
+            Dizer "  regra '$($r.Nome)' restringida: era $($r.Remoto), agora $($faixas -join ', ')"
+        } catch {
+            Disable-NetFirewallRule -Name $r.Id -ErrorAction SilentlyContinue
+            Dizer "  nao consegui restringir a regra '$($r.Nome)' ($($_.Exception.Message)); desliguei ela"
+        }
+    }
+    $sobra = @(RegrasDaPorta $porta | Where-Object { $_.Ligada -and (Aberta $_.Remoto) })
+    foreach ($r in $sobra) { Dizer "  CONTINUA ABERTA para fora da rede: '$($r.Nome)' de $($r.Remoto)" }
+    return ($criada -and -not $sobra)
 }
 
 # ------------------------------------------------------------------
@@ -294,7 +349,8 @@ foreach ($nome in 'AgenteSNGPC', 'AgenteSNGPC_Fila', 'AnvisaSNGPC_Login') {
     $problema = ''
     foreach ($a in @($t.Actions)) {
         $exe = [Environment]::ExpandEnvironmentVariables(("" + $a.Execute).Trim().Trim('"'))
-        Dizer "    executa: $exe $($a.Arguments)"
+        $args2 = "$($a.Arguments)" -replace '(?i)((chave|token|senha|key|password|secret)\S*?[=\s]+)("[^"]*"|\S+)', '$1***'
+        Dizer "    executa: $exe $args2"
         if ($exe -and (Test-Path -LiteralPath $exe -PathType Container)) {
             $problema = 'aponta para uma PASTA, nao um programa'
         } elseif ($exe -and -not (Test-Path -LiteralPath $exe -PathType Leaf) -and -not (Get-Command $exe -ErrorAction SilentlyContinue)) {
@@ -347,17 +403,24 @@ if (-not $admin) {
         }
         if ($svc) {
             try {
-                Set-Service sshd -StartupType Automatic -ErrorAction Stop
-                Start-Service sshd -ErrorAction Stop
-                Dizer '  servico sshd ligado, partida automatica.'
-            } catch { Dizer "  FALHOU ao ligar o sshd: $($_.Exception.Message)" }
-            try {
                 if (-not (Test-Path 'HKLM:\SOFTWARE\OpenSSH')) { New-Item -Path 'HKLM:\SOFTWARE\OpenSSH' -ErrorAction Stop | Out-Null }
                 New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value $psExe -PropertyType String -Force -ErrorAction Stop | Out-Null
                 Dizer "  shell do SSH: $psExe"
             } catch { Dizer "  FALHOU ao trocar o shell: $($_.Exception.Message)" }
-            try { Liberar 'FARMACIA-SSH-22' 'FARMACIA - SSH (porta 22)' 22 $faixas }
+            $seguro = $false
+            try { $seguro = Liberar 'FARMACIA-SSH-22' 'FARMACIA - SSH (porta 22)' 22 $faixas }
             catch { Dizer "  FALHOU no firewall da porta 22: $($_.Exception.Message)" }
+            if ($seguro) {
+                try {
+                    Set-Service sshd -StartupType Automatic -ErrorAction Stop
+                    Start-Service sshd -ErrorAction Stop
+                    Dizer '  servico sshd ligado, partida automatica.'
+                } catch { Dizer "  FALHOU ao ligar o sshd: $($_.Exception.Message)" }
+            } else {
+                Stop-Service sshd -ErrorAction SilentlyContinue
+                Set-Service sshd -StartupType Disabled -ErrorAction SilentlyContinue
+                Dizer '  SSH DESLIGADO: o firewall nao ficou preso a rede local e a VPN. Veja acima.'
+            }
         }
         Start-Sleep -Seconds 2
         $svc = Get-Service sshd -ErrorAction SilentlyContinue
@@ -370,12 +433,20 @@ if (-not $admin) {
         Dizer "  PULADO: edicao $edicao nao recebe RDP."
         Resumo 'RDP' 'PULADO - Windows Home'
     } else {
+        $seguro = $false
+        try { $seguro = Liberar 'FARMACIA-RDP-3389' 'FARMACIA - RDP (porta 3389)' 3389 $faixas }
+        catch { Dizer "  FALHOU no firewall da porta 3389: $($_.Exception.Message)" }
+        $ts = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
         try {
-            Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0 -ErrorAction Stop
-            Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name UserAuthentication -Value 1 -ErrorAction Stop
-            Start-Service TermService -ErrorAction SilentlyContinue
-            Dizer '  RDP ligado, com autenticacao de rede (NLA).'
-            Liberar 'FARMACIA-RDP-3389' 'FARMACIA - RDP (porta 3389)' 3389 $faixas
+            if ($seguro) {
+                Set-ItemProperty "$ts\WinStations\RDP-Tcp" -Name UserAuthentication -Value 1 -ErrorAction Stop
+                Set-ItemProperty $ts -Name fDenyTSConnections -Value 0 -ErrorAction Stop
+                Start-Service TermService -ErrorAction SilentlyContinue
+                Dizer '  RDP ligado, com autenticacao de rede (NLA).'
+            } else {
+                Set-ItemProperty $ts -Name fDenyTSConnections -Value 1 -ErrorAction Stop
+                Dizer '  RDP DESLIGADO: o firewall nao ficou preso a rede local e a VPN. Veja acima.'
+            }
         } catch { Dizer "  FALHOU: $($_.Exception.Message)" }
         Start-Sleep -Seconds 2
         $rdpOk = [bool](@(Escutando 3389))
