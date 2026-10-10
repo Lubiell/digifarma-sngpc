@@ -725,7 +725,59 @@ function pintarXml() {
   }
 }
 
+/* As vendas de controlado de hoje, com a receita lancada ou nao. O agente
+   publica isto a cada passagem da fila (vendasRecentes, 7 dias, uma linha
+   por lote), mas a tela so mostrava as vendas com problema: venda certa,
+   com receita ja lancada, nao aparecia em lugar nenhum, e quem conferia o
+   dia nao tinha como ver que ela tinha entrado. */
+function hojeLocal() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function vendasDeHoje() {
+  const hoje = hojeLocal();
+  return lista('vendasRecentes')
+    .filter((v) => String(v.quando || '').slice(0, 10) === hoje)
+    .sort((a, b) => String(b.quando || '').localeCompare(String(a.quando || '')));
+}
+
+function pintarVendasDeHoje() {
+  const alvo = $('lista-vendas-hoje');
+  alvo.innerHTML = '';
+  const publicado = Boolean(estado.inventario?.vendasRecentes);
+  const em = estado.inventario?.vendasRecentesEm;
+  $('vendas-hoje-quando').textContent = !publicado
+    ? 'O agente ainda não publicou as vendas recentes.'
+    : 'Uma linha por lote vendido.' + (em ? ' Lista atualizada em ' + dataHora(em) + '.' : '');
+  const itens = vendasDeHoje();
+  $('vendas-hoje-vazio').hidden = itens.length > 0 || !publicado;
+
+  itens.forEach((v, n) => {
+    const hora = String(v.quando || '').slice(11, 16);
+    alvo.appendChild(linha({
+      chave: 'hoje:' + (v.venda ?? n) + ':' + (v.lote || n),
+      titulo: v.descricao || ('Venda ' + (v.venda ?? '?')),
+      meta: [hora, v.venda && 'Venda ' + v.venda, v.lote ? 'Lote ' + v.lote : 'Sem lote', v.vendedor],
+      tarja: [v.receita ? 'Receita lançada' : 'Falta lançar a receita', 'Qtd ' + (v.quantidade ?? '—')],
+      tarjaClasse: v.receita ? 'ok' : 'sobra',
+      detalhe: definicoes([
+        ['Venda', v.venda],
+        ['Hora', hora],
+        ['Produto', v.descricao],
+        ['Registro M.S.', v.ms],
+        ['Lote', v.lote],
+        ['Quantidade', v.quantidade],
+        ['Atendeu', v.vendedor],
+        ['Receita', v.receita ? 'lançada no Digifarma' : 'ainda não lançada']
+      ])
+    }));
+  });
+}
+
 function pintarVendas() {
+  pintarVendasDeHoje();
   const alvo = $('lista-vendas');
   alvo.innerHTML = '';
   const itens = vendasProblema();
@@ -1134,5 +1186,5 @@ if (location.protocol === 'file:') {
 
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido };
+  module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje };
 }

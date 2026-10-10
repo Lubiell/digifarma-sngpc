@@ -275,5 +275,24 @@ if (exportado.pintarPonteiroSugerido) {
   });
 }
 
+if (exportado.vendasDeHoje) {
+  conferir('vendas de hoje: so as de hoje, com e sem receita, a mais nova primeiro', () => {
+    const d = new Date();
+    const hoje = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getDate()).padStart(2, '0');
+    exportado.estado.inventario = { vendasRecentes: [
+      { venda: 1, quando: '2000-01-01T10:00:00', receita: true },
+      { venda: 2, quando: hoje + 'T09:00:00', receita: true },
+      { venda: 3, quando: hoje + 'T11:30:00', receita: false }
+    ] };
+    try {
+      const v = exportado.vendasDeHoje();
+      igual(v.map((x) => x.venda).join(','), '3,2', 'vendas de hoje');
+    } finally {
+      exportado.estado.inventario = {};
+    }
+  });
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou.\n');
 process.exit(falhas ? 1 : 0);
