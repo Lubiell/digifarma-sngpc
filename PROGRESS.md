@@ -25,10 +25,11 @@ servidor de longe, ainda não executado no Windows.
 ## Pendências no servidor
 - 10/10: chave nova do Firebase (código 4107a7…) instalada; INSTALAR_AGENTE
   testou Firebird e Firebase, sincronizou e recriou AgenteSNGPC (hora em
-  hora) e AgenteSNGPC_Fila (5 min). Falta: conferir a fila pelo app;
-  excluir no console as chaves sem uso (b111d4f8… no estoque-remedios-7b785
-  e 7376ea2a2a… no projeto estoque-remedios); apagar a cópia
-  estoque-remedios-7b785-firebase-adminsdk-*.json que sobrou na pasta.
+  hora) e AgenteSNGPC_Fila (5 min). Chaves sem uso excluídas no console
+  (b111d4f8… em FARMACIA/estoque-remedios-7b785, 7376ea2a2a… em
+  estoque-remedios); só a 4107a7… está ativa. Falta: conferir a fila pelo
+  app; apagar a cópia estoque-remedios-7b785-firebase-adminsdk-*.json que
+  sobrou na pasta do agente.
 - A senha do SNGPC apareceu na tela do --teste (corrigido neste PR) e foi
   copiada para a conversa: trocar a senha do SNGPC/ANVISA.
 - Acesso de fora: a VPN (15.228.76.94, AWS) é de fornecedor; SSH só na
