@@ -18,8 +18,9 @@ servidor de longe, ainda não executado no Windows.
   DHCP). Sintaxe ok. Achados: firewall do Windows DESLIGADO nos 3 perfis,
   então o SSH foi instalado mas ficou desligado; a VPN usa faixa pública
   /24 (agora entra presa à placa da VPN); a conta parece não ter senha.
-  Esperando decisão: ligar o firewall com rede local e VPN liberadas?
-  Definir senha na conta?
+  Decidido (opção A): `agente/LIGAR_FIREWALL.bat` liga o firewall com a
+  rede local e a VPN liberadas; depois rodar o ACESSO_REMOTO.bat de novo.
+  Ainda pendente: a conta precisa de senha para SSH/RDP (decisão do usuário).
 
 ## Pendências no servidor (agente parado desde 10/09)
 1. `chave-firebase.json` não existe na pasta do agente (sumiu com uma pasta

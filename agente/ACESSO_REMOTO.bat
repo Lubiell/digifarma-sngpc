@@ -217,7 +217,7 @@ function Liberar([string]$id, [string]$nome, [int]$porta, [string[]]$lan, $vpns)
     $perfis = @(Get-NetFirewallProfile -ErrorAction SilentlyContinue)
     $desligados = @($perfis | Where-Object { "$($_.Enabled)" -ne 'True' })
     if (-not $perfis -or $desligados) {
-        Dizer "  o firewall do Windows esta DESLIGADO ($(@($desligados | ForEach-Object { $_.Name }) -join ', ')): as regras acima nao valem nada enquanto ele estiver assim. Nao ligo o firewall sozinho."
+        Dizer "  o firewall do Windows esta DESLIGADO ($(@($desligados | ForEach-Object { $_.Name }) -join ', ')): as regras acima nao valem nada enquanto ele estiver assim. Para ligar sem quebrar a rede: LIGAR_FIREWALL.bat."
         return $false
     }
     return ($criada -and -not $sobra)

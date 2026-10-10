@@ -30,9 +30,10 @@ echo   7 - Limpar as sobras desta pasta
 echo   8 - Desmarcar psicotropico/antimicrobiano no Digifarma
 echo   9 - Instalar o agente nesta maquina
 echo   R - Acesso remoto: testar e ligar SSH/RDP ^(administrador^)
+echo   F - Ligar o firewall com a rede local e a VPN liberadas ^(administrador^)
 echo   0 - Sair
 echo.
-choice /c 1234567890R /n /m "  Opcao: "
+choice /c 1234567890RF /n /m "  Opcao: "
 set "OP=%ERRORLEVEL%"
 if "%OP%"=="10" goto FIM
 if "%OP%"=="1" call :RODAR CONSERTAR_TUDO.bat agente
@@ -45,6 +46,7 @@ if "%OP%"=="7" call :RODAR LIMPAR.bat agente
 if "%OP%"=="8" call :DESMARCAR
 if "%OP%"=="9" call :RODAR INSTALAR_AGENTE.bat agente
 if "%OP%"=="11" call :RODAR ACESSO_REMOTO.bat agente
+if "%OP%"=="12" call :RODAR LIGAR_FIREWALL.bat agente
 echo.
 pause
 goto MENU
