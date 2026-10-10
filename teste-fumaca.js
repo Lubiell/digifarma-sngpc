@@ -252,5 +252,47 @@ conferir('busca ignora acento e maiúscula', () => {
   if (!teste) throw new Error('não achou "solucao" em "Solução"');
 });
 
+if (exportado.pintarPonteiroSugerido) {
+  conferir('ponteiro acertado a mao mostra o botao de desfazer, e so entao', () => {
+    const criados = [];
+    const original = documento.createElement;
+    documento.createElement = (t) => { const e = original(t); criados.push(e); return e; };
+    try {
+      const botao = () => criados.find((e) => e.textContent === 'Desfazer o acerto');
+      exportado.estado.inventario = { envio: { ponteiroForcado: true,
+        ULT_SAIDA_VENDA_NOTA_ID: 48307, ponteiroDoDigifarma: 48251 } };
+      exportado.pintarPonteiroSugerido();
+      if (!botao()) throw new Error('com acerto ativo, sem botao de desfazer');
+      if (typeof botao().onclick !== 'function') throw new Error('botao sem acao');
+      criados.length = 0;
+      exportado.estado.inventario = { envio: { ponteiroForcado: false } };
+      exportado.pintarPonteiroSugerido();
+      if (botao()) throw new Error('sem acerto, o botao de desfazer nao devia aparecer');
+    } finally {
+      documento.createElement = original;
+      exportado.estado.inventario = {};
+    }
+  });
+}
+
+if (exportado.vendasDeHoje) {
+  conferir('vendas de hoje: so as de hoje, com e sem receita, a mais nova primeiro', () => {
+    const d = new Date();
+    const hoje = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getDate()).padStart(2, '0');
+    exportado.estado.inventario = { vendasRecentes: [
+      { venda: 1, quando: '2000-01-01T10:00:00', receita: true },
+      { venda: 2, quando: hoje + 'T09:00:00', receita: true },
+      { venda: 3, quando: hoje + 'T11:30:00', receita: false }
+    ] };
+    try {
+      const v = exportado.vendasDeHoje();
+      igual(v.map((x) => x.venda).join(','), '3,2', 'vendas de hoje');
+    } finally {
+      exportado.estado.inventario = {};
+    }
+  });
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou.\n');
 process.exit(falhas ? 1 : 0);

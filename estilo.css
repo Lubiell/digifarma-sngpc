@@ -167,6 +167,7 @@ main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
 }
 .linha-tarja.falta{background:var(--vermelho)}
 .linha-tarja.sobra{background:var(--ambar)}
+.linha-tarja.ok{background:var(--verde)}
 .linha-detalhe{padding:12px 14px;border-top:1px solid var(--linha);font-size:14px;background:#FBFAF8}
 .linha-detalhe dl{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;margin:0}
 .linha-detalhe dt{color:var(--tinta-fraca);font-size:12px;text-transform:uppercase;letter-spacing:.05em}

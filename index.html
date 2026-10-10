@@ -130,9 +130,15 @@
       <p id="xml-vazio" class="vazio" hidden>Tudo que saiu no período está no XML.</p>
     </section>
 
-    <!-- VENDAS COM PROBLEMA -->
+    <!-- VENDAS: as de hoje e as com problema -->
     <section id="v-vendas" class="vista" hidden>
-      <div class="cabeca-vista"><h2>Vendas com problema</h2></div>
+      <div class="cabeca-vista"><h2>Vendas</h2></div>
+      <h3>Vendas de hoje</h3>
+      <p id="vendas-hoje-quando" class="sublinha"></p>
+      <div id="lista-vendas-hoje" class="pilha"></div>
+      <p id="vendas-hoje-vazio" class="vazio" hidden>Nenhuma venda de controlado hoje.</p>
+
+      <h3>Com problema</h3>
       <p class="sublinha">Controlado vendido sem receita escriturada ou sem lote — a causa clássica de recusa.</p>
       <div id="lista-vendas" class="pilha"></div>
       <p id="vendas-vazio" class="vazio" hidden>Nenhuma venda pendente de correção.</p>

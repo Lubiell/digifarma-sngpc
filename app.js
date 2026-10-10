@@ -725,7 +725,59 @@ function pintarXml() {
   }
 }
 
+/* As vendas de controlado de hoje, com a receita lancada ou nao. O agente
+   publica isto a cada passagem da fila (vendasRecentes, 7 dias, uma linha
+   por lote), mas a tela so mostrava as vendas com problema: venda certa,
+   com receita ja lancada, nao aparecia em lugar nenhum, e quem conferia o
+   dia nao tinha como ver que ela tinha entrado. */
+function hojeLocal() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function vendasDeHoje() {
+  const hoje = hojeLocal();
+  return lista('vendasRecentes')
+    .filter((v) => String(v.quando || '').slice(0, 10) === hoje)
+    .sort((a, b) => String(b.quando || '').localeCompare(String(a.quando || '')));
+}
+
+function pintarVendasDeHoje() {
+  const alvo = $('lista-vendas-hoje');
+  alvo.innerHTML = '';
+  const publicado = Boolean(estado.inventario?.vendasRecentes);
+  const em = estado.inventario?.vendasRecentesEm;
+  $('vendas-hoje-quando').textContent = !publicado
+    ? 'O agente ainda não publicou as vendas recentes.'
+    : 'Uma linha por lote vendido.' + (em ? ' Lista atualizada em ' + dataHora(em) + '.' : '');
+  const itens = vendasDeHoje();
+  $('vendas-hoje-vazio').hidden = itens.length > 0 || !publicado;
+
+  itens.forEach((v, n) => {
+    const hora = String(v.quando || '').slice(11, 16);
+    alvo.appendChild(linha({
+      chave: 'hoje:' + (v.venda ?? n) + ':' + (v.lote || n),
+      titulo: v.descricao || ('Venda ' + (v.venda ?? '?')),
+      meta: [hora, v.venda && 'Venda ' + v.venda, v.lote ? 'Lote ' + v.lote : 'Sem lote', v.vendedor],
+      tarja: [v.receita ? 'Receita lançada' : 'Falta lançar a receita', 'Qtd ' + (v.quantidade ?? '—')],
+      tarjaClasse: v.receita ? 'ok' : 'sobra',
+      detalhe: definicoes([
+        ['Venda', v.venda],
+        ['Hora', hora],
+        ['Produto', v.descricao],
+        ['Registro M.S.', v.ms],
+        ['Lote', v.lote],
+        ['Quantidade', v.quantidade],
+        ['Atendeu', v.vendedor],
+        ['Receita', v.receita ? 'lançada no Digifarma' : 'ainda não lançada']
+      ])
+    }));
+  });
+}
+
 function pintarVendas() {
+  pintarVendasDeHoje();
   const alvo = $('lista-vendas');
   alvo.innerHTML = '';
   const itens = vendasProblema();
@@ -825,6 +877,39 @@ function pintarAgenteParado() {
 function pintarPonteiroSugerido() {
   const alvo = $('ponteiro-sugerido');
   alvo.innerHTML = '';
+
+  /* Acerto feito: mostrar e deixar desfazer. Em 10/10 o acerto para 48307
+     estava errado - as vendas nao tinham subido - e o Saldo foi de 10 para
+     25 divergencias. Nao havia botao para voltar: so editando o Firebase
+     na mao ou indo ao servidor. Acerto que nao se desfaz de longe fica. */
+  const envio = estado.inventario?.envio || {};
+  if (envio.ponteiroForcado) {
+    alvo.appendChild(definicoes([
+      ['Tratando como enviado até a venda', envio.ULT_SAIDA_VENDA_NOTA_ID],
+      ['O Digifarma diz', envio.ponteiroDoDigifarma]
+    ]));
+    const nota = criar('p', 'motivo');
+    nota.textContent = 'O ponteiro foi acertado à mão. Se o site da ANVISA não recebeu '
+      + 'essas vendas, elas saem da conta e cada lote vendido aparece como divergência '
+      + 'no Saldo. Desfazer só muda a conta do agente; nada é gravado no Digifarma.';
+    alvo.appendChild(nota);
+    const desfazer = criar('button', 'botao botao-secundario');
+    desfazer.textContent = 'Desfazer o acerto';
+    desfazer.onclick = async () => {
+      if (!(await confirmar('Desfazer o acerto do ponteiro',
+        'O agente volta a usar o ponteiro do próprio Digifarma'
+        + (envio.ponteiroDoDigifarma ? ' (' + envio.ponteiroDoDigifarma + ')' : '')
+        + ' e recalcula o Saldo.', 'Desfazer'))) return;
+      await db.ref('farmacia/comando').set({
+        acao: 'config', chave: 'transmitido_ate_venda', valor: '0',
+        pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+      });
+      avisar('Pedido enviado. O agente atende na próxima passagem dele.');
+    };
+    alvo.appendChild(desfazer);
+    return;
+  }
+
   const p = estado.inventario?.ponteiroSugerido;
   if (!p || p.corte === undefined || p.corte === null) {
     const txt = criar('p', 'sublinha');
@@ -1101,5 +1186,5 @@ if (location.protocol === 'file:') {
 
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { normalizar, combina, dataBR };
+  module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje };
 }
