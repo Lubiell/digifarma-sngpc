@@ -22,15 +22,20 @@ servidor de longe, ainda não executado no Windows.
   para o login remoto; testar de fora pela VPN (o celular precisa alcançar
   12.4.29.2 pelo túnel); reservar o IP 192.168.100.8 no roteador (DHCP).
 
-## Pendências no servidor (agente parado desde 10/09)
-1. `chave-firebase.json` não existe na pasta do agente (sumiu com uma pasta
-   apagada): é o "Último resultado: 1" da fila. Chave nova já criada no
-   console; instalar: Downloads -> chave-firebase.json na pasta do agente.
-2. Tarefa `AgenteSNGPC` aponta para uma pasta
-   (`C:\Digifarma\Aplicativos\VerificaXML --auto`), erro -2147024891.
-   Conserto: INSTALAR_AGENTE.bat como admin dentro da pasta do agente.
-3. Anvisa.exe nunca completou: sem anvisa.log, última tentativa 08/09.
-4. Mover a pasta do Desktop para `C:\FARMACIA-SNGPC` (já sumiu 2x).
+## Pendências no servidor
+- 10/10: chave nova do Firebase (código 4107a7…) instalada; INSTALAR_AGENTE
+  testou Firebird e Firebase, sincronizou e recriou AgenteSNGPC (hora em
+  hora) e AgenteSNGPC_Fila (5 min). Falta: conferir a fila pelo app;
+  excluir no console as chaves sem uso (b111d4f8… no estoque-remedios-7b785
+  e 7376ea2a2a… no projeto estoque-remedios); apagar a cópia
+  estoque-remedios-7b785-firebase-adminsdk-*.json que sobrou na pasta.
+- A senha do SNGPC apareceu na tela do --teste (corrigido neste PR) e foi
+  copiada para a conversa: trocar a senha do SNGPC/ANVISA.
+- Acesso de fora: a VPN (15.228.76.94, AWS) é de fornecedor; SSH só na
+  loja, por chave (conta continua sem senha). Fora da loja: app + fila.
+- Mover a pasta do Desktop para C:\FARMACIA-SNGPC (conferir antes o
+  caminho da chave no agente_config.json).
+- Anvisa.exe: AnvisaSNGPC_Login rodou com sucesso em 10/10 07:00.
 
 ## Tentado e não deu certo
 - Lógica de rede/firewall em CMD puro: frágil demais. O ACESSO_REMOTO.bat

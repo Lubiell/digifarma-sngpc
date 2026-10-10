@@ -9,7 +9,9 @@ validar uma alteração no agente_auto.py antes de levar ao servidor.
     python teste_agente.py
 """
 
+import contextlib
 import datetime
+import io
 import os
 import shutil
 import sys
@@ -254,6 +256,35 @@ def principal():
                 os.remove(carimbo)
         else:
             open(carimbo, 'w', encoding='utf-8').write(guardado)
+
+    # --teste imprimia a linha inteira da tabela SNGPC - EMAIL, SENHA e CPF
+    # do responsavel - na tela do INSTALAR_AGENTE.bat.
+    class RefFalsa:
+        def set(self, _valor):
+            pass
+
+    class DbFalso:
+        def reference(self, _caminho):
+            return RefFalsa()
+
+    guardados = (ag.conectar_firebird, ag.fechar, ag.conectar_firebase, ag.consultar)
+    saida = io.StringIO()
+    try:
+        ag.conectar_firebird = lambda _config: None
+        ag.fechar = lambda _conexao: None
+        ag.conectar_firebase = lambda _config: DbFalso()
+        ag.consultar = lambda _conexao, _sql, _parametros=(): [{
+            'ULT_SAIDA_VENDA_NOTA_ID': 8821, 'EMAIL': 'fulano@teste.invalid',
+            'SENHA': 'segredo-de-teste', 'CPF_RESPONSAVEL_SNGPC': '00000000191'}]
+        with contextlib.redirect_stdout(saida):
+            ag.modo_teste(dict(ag.CONFIG_PADRAO))
+    finally:
+        ag.conectar_firebird, ag.fechar, ag.conectar_firebase, ag.consultar = guardados
+    impresso = saida.getvalue()
+    conferir('o --teste nao imprime senha, e-mail nem CPF da tabela SNGPC',
+             not any(x in impresso for x in ('segredo-de-teste', 'fulano@teste.invalid',
+                                             '00000000191')))
+    conferir('o --teste ainda mostra os ponteiros', 'ULT_SAIDA_VENDA_NOTA_ID' in impresso)
 
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))

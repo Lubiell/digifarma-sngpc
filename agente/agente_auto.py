@@ -6632,7 +6632,12 @@ def modo_teste(config):
     conexao = conectar_firebird(config)
     linhas = consultar(conexao, CONSULTAS['ponteiros'])
     fechar(conexao)
-    print('  conectou. Ponteiros do SNGPC: %s' % (linhas[0] if linhas else 'tabela SNGPC vazia'))
+    # A tabela SNGPC guarda EMAIL, SENHA e o CPF do responsavel. Esta tela
+    # aparece no INSTALAR_AGENTE.bat e costuma ser copiada para conversa:
+    # mostra so o que ja e publico no diagnostico.
+    publicas = {k: v for k, v in (linhas[0] if linhas else {}).items()
+                if texto(k).upper() in COLUNAS_SNGPC_PUBLICAS}
+    print('  conectou. Ponteiros do SNGPC: %s' % (publicas if linhas else 'tabela SNGPC vazia'))
 
     print('Firebase: %s' % config['url_banco'])
     db = conectar_firebase(config)
