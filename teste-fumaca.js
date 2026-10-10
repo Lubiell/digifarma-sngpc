@@ -294,5 +294,38 @@ if (exportado.vendasDeHoje) {
   });
 }
 
+if (exportado.pintarComando && exportado.pintarRelatorio) {
+  conferir('pedido na fila e erro do agente aparecem tambem na aba Servidor', () => {
+    const barra = documento.getElementById('fila-comando-servidor');
+    try {
+      exportado.estado.comando = { acao: 'xml', estado: 'erro', mensagem: 'pasta nao encontrada' };
+      exportado.pintarComando();
+      if (barra.hidden) throw new Error('erro do agente escondido na aba Servidor');
+      if (!barra.textContent.includes('pasta nao encontrada')) throw new Error('sem a mensagem do erro');
+      exportado.estado.comando = null;
+      exportado.pintarComando();
+      if (!barra.hidden) throw new Error('sem pedido, a barra devia sumir');
+    } finally {
+      exportado.estado.comando = null;
+    }
+  });
+
+  conferir('app reaberto mostra a resposta do ultimo relatorio pedido', () => {
+    const bloco = documento.getElementById('bloco-relatorio');
+    try {
+      exportado.estado.relatorioPedido = null;
+      exportado.estado.comando = { acao: 'xml', estado: 'concluido', concluidoEm: '2026-10-10T16:40:00' };
+      exportado.estado.relatorios = { xml: { texto: 'BUSCA NOS XML', em: '2026-10-10T16:40:00' } };
+      bloco.hidden = true;
+      exportado.pintarRelatorio();
+      if (bloco.hidden) throw new Error('resposta do xml nao apareceu');
+      igual(documento.getElementById('relatorio').textContent, 'BUSCA NOS XML', 'texto do relatorio');
+    } finally {
+      exportado.estado.comando = null;
+      exportado.estado.relatorios = {};
+    }
+  });
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou.\n');
 process.exit(falhas ? 1 : 0);
