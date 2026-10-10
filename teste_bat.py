@@ -285,6 +285,15 @@ def conferir_protocolo_do_app():
             falhas.append("o app manda a acao '%s' e as regras do Firebase recusam" % fora)
         for fora in sorted(pedidas - chaves_regras):
             falhas.append("o app pede a chave '%s' e as regras do Firebase recusam" % fora)
+        # O agente le o Firebase como ele mesmo (databaseAuthVariableOverride),
+        # entao as regras valem para ele. Le no que so autorizados leem da
+        # "Permission denied" - foi o que derrubou o Buscar nos XML e o
+        # quadro de envios, que leem farmacia/inventario.
+        farmacia = regras['rules']['farmacia']
+        for no in sorted(set(re.findall(r"reference\('farmacia/([a-zA-Z]+)[^']*'\)\.get\(\)", agente))):
+            leitura = str(farmacia.get(no, {}).get('.read', ''))
+            if "farmacia/agentes" not in leitura:
+                falhas.append("o agente le farmacia/%s e as regras nao deixam o agente ler" % no)
 
     for f in falhas:
         print('  FALHA protocolo do app: %s' % f)
