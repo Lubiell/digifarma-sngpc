@@ -889,9 +889,10 @@ function pintarPonteiroSugerido() {
       ['O Digifarma diz', envio.ponteiroDoDigifarma]
     ]));
     const nota = criar('p', 'motivo');
-    nota.textContent = 'O ponteiro foi acertado à mão. Se o site da ANVISA não recebeu '
-      + 'essas vendas, elas saem da conta e cada lote vendido aparece como divergência '
-      + 'no Saldo. Desfazer só muda a conta do agente; nada é gravado no Digifarma.';
+    nota.textContent = 'O ponteiro foi acertado à mão. Se a foto do inventário da ANVISA '
+      + 'ainda não tem essas vendas (foto baixada antes do envio), elas saem da conta e cada '
+      + 'lote vendido aparece como divergência no Saldo. Desfazer só muda a conta do agente; '
+      + 'nada é gravado no Digifarma.';
     alvo.appendChild(nota);
     const desfazer = criar('button', 'botao botao-secundario');
     desfazer.textContent = 'Desfazer o acerto';
@@ -1059,6 +1060,37 @@ function pintarFerramentas() {
     b.onclick = () => pedirRelatorio(acao, 'Relatorio ' + rotulo);
     alvo.appendChild(b);
   });
+
+  /* Busca nos XML de transmissao: "essa entrada subiu? com que M.S.? com
+     que lote?". Vazio procura os lotes com divergencia no Saldo. */
+  const busca = criar('button', 'botao botao-fantasma');
+  busca.textContent = 'Buscar nos XML';
+  busca.onclick = () => {
+    const corpo = criar('div');
+    const p = criar('p', 'sublinha');
+    p.textContent = 'M.S. ou lote. Em branco, procura todos os lotes com divergência no Saldo.';
+    const campo = criar('input', 'busca');
+    campo.type = 'search';
+    campo.placeholder = 'Ex.: 1004313820110 ou DFG3073A';
+    corpo.append(p, campo);
+    abrirModal({
+      titulo: 'Buscar nos XML',
+      corpo,
+      acoes: [
+        { texto: 'Cancelar', aoClicar: fecharModal },
+        { texto: 'Buscar', estilo: 'botao-principal', aoClicar: () => {
+          fecharModal();
+          estado.relatorioPedido = 'xml';
+          db.ref('farmacia/comando').set({
+            acao: 'xml', texto: campo.value.trim(),
+            pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+          }).then(() => avisar('Busca pedida. O agente atende na proxima passagem dele.'))
+            .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
+        } }
+      ]
+    });
+  };
+  alvo.appendChild(busca);
 }
 
 function pintarRelatorio() {
