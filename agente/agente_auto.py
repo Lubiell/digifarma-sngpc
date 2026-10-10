@@ -1995,6 +1995,10 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
         'arquivoXml': os.path.basename(caminho_xml) if caminho_xml else None,
         'envioPorApi': texto(ponteiros.get('ENVIO_API')).upper() in ('S', 'T', '1', 'TRUE'),
         'ponteiroForcado': ponteiro_forcado,
+        # o que o Digifarma diz, mesmo com o remendo do config por cima:
+        # sem isto o app mostra so o numero remendado e nao da para ver
+        # quanto ele andou alem do banco.
+        'ponteiroDoDigifarma': int(numero(ponteiros.get('ULT_SAIDA_VENDA_NOTA_ID'))),
         # O aceite do INVENTÁRIO o Digifarma guarda — é o INVENTARIO_ACEITO.
         # O de cada envio de movimentação, não: para esse a aba Aceites
         # continua sendo marcada à mão. São coisas diferentes e o app
@@ -4111,18 +4115,31 @@ def corte_por_data(dados):
     lote bate ou não bate por vários motivos, e um deles é acaso — foi
     exatamente o que confundiu o diagnóstico duas vezes. Data não tem acaso.
 
+    O ÚLTIMO DIA DO PERÍODO NÃO VALE POR DATA. Em 10/10 o envio do período
+    09/10 saiu com o dia 09 ainda aberto: as vendas 48252 a 48307, feitas
+    depois do envio, têm data de 09/10 e não subiram. A regra "data dentro do
+    período" sugeriu 48307, alguém apertou o botão, e cada lote dessas vendas
+    virou divergência no Saldo - 10 viraram 25. Dia anterior ao fim é dia
+    fechado e conta pela data. O último dia só conta quando os lotes
+    confirmam (analisar_ponteiro diz 'atrasado'), e só até onde confirmam.
+
     Devolve (corte, fim, quantas) — corte é None quando não há venda na fila
     dentro de período já transmitido, que é o estado saudável."""
     fim = fim_do_ultimo_envio(dados)
     if not fim:
         return None, '', 0
-    dentro = []
+    dentro, no_ultimo_dia = [], []
     for venda in (dados.get('pendentes') or {}).get('vendas') or []:
         if not venda.get('id'):
             continue
         quando = texto(venda.get('data'))[:10]
-        if quando and quando <= fim:
+        if quando and quando < fim:
             dentro.append(int(numero(venda['id'])))
+        elif quando == fim:
+            no_ultimo_dia.append(int(numero(venda['id'])))
+    situacao, _, _, corte_lote = analisar_ponteiro(dados)
+    if situacao == 'atrasado' and corte_lote is not None:
+        dentro += [i for i in no_ultimo_dia if i <= corte_lote]
     if not dentro:
         return None, fim, 0
     return max(dentro), fim, len(set(dentro))

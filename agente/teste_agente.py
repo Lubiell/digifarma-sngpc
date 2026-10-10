@@ -257,6 +257,31 @@ def principal():
         else:
             open(carimbo, 'w', encoding='utf-8').write(guardado)
 
+    # --- sugestao de ponteiro: o ultimo dia do periodo nao vale por data ---
+    # Em 10/10 o envio do dia 09 saiu com o dia aberto; as vendas seguintes,
+    # tambem de 09/10, nao subiram, e a sugestao por data mandou acertar.
+    def dados_ponteiro(vendas, ja_na_anvisa=()):
+        return {'envio': {'movimentosAte': '2026-10-09'},
+                'pendentes': {'vendas': vendas},
+                'inventario': {'lotesJaNaAnvisa': [list(x) for x in ja_na_anvisa]}}
+
+    def venda(n, data, lote):
+        return {'id': n, 'data': data, 'ms': '1000000000001', 'lote': lote}
+
+    corte, _, _ = ag.corte_por_data(dados_ponteiro(
+        [venda(48252, '2026-10-09', 'A'), venda(48307, '2026-10-09', 'B')]))
+    conferir('venda do ultimo dia do periodo, sem lote que confirme, nao vira sugestao',
+             corte is None, corte)
+    corte, _, quantas = ag.corte_por_data(dados_ponteiro(
+        [venda(48200, '2026-10-08', 'A'), venda(48252, '2026-10-09', 'B')]))
+    conferir('venda de dia ja fechado ainda vira sugestao, so ate ela',
+             corte == 48200 and quantas == 1, (corte, quantas))
+    corte, _, _ = ag.corte_por_data(dados_ponteiro(
+        [venda(48252, '2026-10-09', 'A'), venda(48253, '2026-10-09', 'B')],
+        ja_na_anvisa=[('1000000000001', 'A')]))
+    conferir('ultimo dia entra quando os lotes confirmam, e so ate onde confirmam',
+             corte == 48252, corte)
+
     # --teste imprimia a linha inteira da tabela SNGPC - EMAIL, SENHA e CPF
     # do responsavel - na tela do INSTALAR_AGENTE.bat.
     class RefFalsa:

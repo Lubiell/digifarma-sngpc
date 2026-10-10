@@ -825,6 +825,39 @@ function pintarAgenteParado() {
 function pintarPonteiroSugerido() {
   const alvo = $('ponteiro-sugerido');
   alvo.innerHTML = '';
+
+  /* Acerto feito: mostrar e deixar desfazer. Em 10/10 o acerto para 48307
+     estava errado - as vendas nao tinham subido - e o Saldo foi de 10 para
+     25 divergencias. Nao havia botao para voltar: so editando o Firebase
+     na mao ou indo ao servidor. Acerto que nao se desfaz de longe fica. */
+  const envio = estado.inventario?.envio || {};
+  if (envio.ponteiroForcado) {
+    alvo.appendChild(definicoes([
+      ['Tratando como enviado até a venda', envio.ULT_SAIDA_VENDA_NOTA_ID],
+      ['O Digifarma diz', envio.ponteiroDoDigifarma]
+    ]));
+    const nota = criar('p', 'motivo');
+    nota.textContent = 'O ponteiro foi acertado à mão. Se o site da ANVISA não recebeu '
+      + 'essas vendas, elas saem da conta e cada lote vendido aparece como divergência '
+      + 'no Saldo. Desfazer só muda a conta do agente; nada é gravado no Digifarma.';
+    alvo.appendChild(nota);
+    const desfazer = criar('button', 'botao botao-secundario');
+    desfazer.textContent = 'Desfazer o acerto';
+    desfazer.onclick = async () => {
+      if (!(await confirmar('Desfazer o acerto do ponteiro',
+        'O agente volta a usar o ponteiro do próprio Digifarma'
+        + (envio.ponteiroDoDigifarma ? ' (' + envio.ponteiroDoDigifarma + ')' : '')
+        + ' e recalcula o Saldo.', 'Desfazer'))) return;
+      await db.ref('farmacia/comando').set({
+        acao: 'config', chave: 'transmitido_ate_venda', valor: '0',
+        pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+      });
+      avisar('Pedido enviado. O agente atende na próxima passagem dele.');
+    };
+    alvo.appendChild(desfazer);
+    return;
+  }
+
   const p = estado.inventario?.ponteiroSugerido;
   if (!p || p.corte === undefined || p.corte === null) {
     const txt = criar('p', 'sublinha');
@@ -1101,5 +1134,5 @@ if (location.protocol === 'file:') {
 
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { normalizar, combina, dataBR };
+  module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido };
 }
