@@ -399,6 +399,102 @@ def principal():
                                              '00000000191')))
     conferir('o --teste ainda mostra os ponteiros', 'ULT_SAIDA_VENDA_NOTA_ID' in impresso)
 
+    # --- foto do inventario gravada ANTES do envio da manha (10/10) ---
+    dt = datetime.datetime
+    xml_09 = {'cabecalho': {'dataInicio': '2026-10-09'}, 'datas': ['2026-10-09']}
+    xml_10 = {'cabecalho': {'dataInicio': '2026-10-10'}, 'datas': ['2026-10-10']}
+    foto_hora = dt(2026, 10, 10, 7, 18, 40)
+    conferir('foto 07:18 e envio 07:21: o movimento falta desde o dia anterior ao XML',
+             ag.foto_sem_o_ultimo_envio('2026-10-10', foto_hora,
+                                        [(dt(2026, 10, 10, 7, 21), xml_09)]) == '2026-10-08')
+    conferir('Anvisa.exe sem rodar no dia seguinte: conta desde o XML MAIS ANTIGO apos a foto',
+             ag.foto_sem_o_ultimo_envio('2026-10-10', foto_hora,
+                                        [(dt(2026, 10, 11, 7, 21), xml_10),
+                                         (dt(2026, 10, 10, 7, 21), xml_09)]) == '2026-10-08')
+    conferir('entrada com data atrasada no XML nao recua o inicio: vale o cabecalho',
+             ag.foto_sem_o_ultimo_envio('2026-10-10', foto_hora, [(
+                 dt(2026, 10, 10, 7, 21),
+                 {'cabecalho': {'dataInicio': '2026-10-09'},
+                  'datas': ['2026-10-05', '2026-10-09']})]) == '2026-10-08')
+    conferir('XML gerado antes da foto: a foto ja tem o envio',
+             ag.foto_sem_o_ultimo_envio('2026-10-10', foto_hora,
+                                        [(dt(2026, 10, 10, 7, 10), xml_09)]) is None)
+    conferir('hora do log de outro dia que nao o da foto: nao afirma nada',
+             ag.foto_sem_o_ultimo_envio('2026-10-10', dt(2026, 10, 9, 16, 33, 59),
+                                        [(dt(2026, 10, 10, 7, 21), xml_09)]) is None)
+    conferir('sem hora da foto ou sem data no XML: nao afirma nada',
+             ag.foto_sem_o_ultimo_envio('2026-10-10', None, [(dt(2026, 10, 10, 7, 21), xml_09)])
+             is None and ag.foto_sem_o_ultimo_envio(
+                 '2026-10-10', foto_hora, [(dt(2026, 10, 10, 7, 21), {})]) is None)
+
+    pedidos = []
+    original_desde = ag.movimento_desde_a_foto
+    try:
+        ag.movimento_desde_a_foto = lambda _c, desde: (pedidos.append(desde)
+                                                       or {('1642500090024', '26CQ145'): 1.0})
+        correcao, base = ag.correcao_do_saldo(None, '2026-10-10', {('X', 'Y'): -1.0},
+                                              '2026-10-09', '2026-10-08')
+    finally:
+        ag.movimento_desde_a_foto = original_desde
+    conferir('foto antes do envio: a correcao conta desde a data certa, nao a fila',
+             base == 'foto' and pedidos == ['2026-10-08']
+             and correcao == {('1642500090024', '26CQ145'): 1.0},
+             '%r %r %r' % (base, pedidos, correcao))
+    correcao, base = ag.correcao_do_saldo(None, '2026-10-10', {('X', 'Y'): -1.0}, '2026-10-09')
+    conferir('sem a hora, a foto em dia continua usando a fila', base == 'fila'
+             and correcao == {('X', 'Y'): -1.0})
+    try:
+        ag.movimento_desde_a_foto = lambda _c, _desde: {}
+        correcao, base = ag.correcao_do_saldo(None, '2026-10-10', {('X', 'Y'): -1.0},
+                                              '2026-10-09', '2026-10-08')
+    finally:
+        ag.movimento_desde_a_foto = original_desde
+    conferir('foto antes do envio sem movimento lido: nao volta para a fila errada',
+             base == 'foto' and correcao == {})
+
+    # xml_depois_da_foto com arquivos de verdade: so entra o gerado depois
+    pasta_xml = os.path.join(pasta, 'xml_foto')
+    os.makedirs(os.path.join(pasta_xml, 'enviados'))
+    antes = os.path.join(pasta_xml, 'enviados', 'sngpc_2026-10-09.xml')
+    depois = os.path.join(pasta_xml, 'SNGPC.XML')
+    for caminho, quando in ((antes, dt(2026, 10, 9, 7, 21)), (depois, dt(2026, 10, 10, 7, 21))):
+        shutil.copy('exemplo_SNGPC.XML', caminho)
+        os.utime(caminho, (quando.timestamp(), quando.timestamp()))
+    achados = ag.xml_depois_da_foto({'pasta_xml': pasta_xml}, foto_hora)
+    conferir('so o XML gerado depois da foto entra na conta',
+             [h for h, _ in achados] == [dt(2026, 10, 10, 7, 21)]
+             and achados[0][1].get('cabecalho', {}).get('dataInicio') == '2026-08-04',
+             repr([h for h, _ in achados]))
+
+    # --- Log do Anvisa: Latin-1 e conclusao pela ultima execucao ---
+    log = os.path.join(pasta, 'anvisa.log')
+    with open(log, 'w', encoding='latin-1') as f:
+        f.write('09/10/2026 16:33:26 - ============================Aplicação iniciada'
+                '============================\n'
+                '09/10/2026 16:33:31 - Site do SNGPC carregado, aguardando login\n'
+                '10/10/2026 07:17:38 - ============================Aplicação iniciada'
+                '============================\n'
+                '10/10/2026 07:17:43 - Site do SNGPC carregado, aguardando login\n'
+                '10/10/2026 07:18:35 - Listando o inventário\n'
+                '10/10/2026 07:18:40 - Processo de sincronização finalizado, encerrando a aplicação\n'
+                '10/10/2026 07:18:40 - processo finalizado - 07:18:40\n')
+    linhas = ag.ler_log_anvisa(log)
+    conclusao = ' '.join(ag.conclusao_log_anvisa(linhas))
+    conferir('log em Latin-1 lido com acento', any('sincronização' in l for l in linhas))
+    conferir('execucao que baixou o inventario nao vira "parou no login"',
+             'terminou' in conclusao and '10/10/2026 07:18:40' in conclusao
+             and 'PAROU' not in conclusao, conclusao)
+    parada = linhas[:4]
+    conferir('execucao que parou no site continua sendo dita como parada no login',
+             'PAROU' in ' '.join(ag.conclusao_log_anvisa(parada)))
+    original_achar = ag.achar_log_anvisa
+    try:
+        ag.achar_log_anvisa = lambda _config: log
+        conferir('hora da foto sai do ultimo "sincronizacao finalizado"',
+                 ag.hora_da_foto({}) == dt(2026, 10, 10, 7, 18, 40))
+    finally:
+        ag.achar_log_anvisa = original_achar
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0

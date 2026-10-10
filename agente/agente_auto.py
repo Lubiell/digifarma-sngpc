@@ -775,6 +775,9 @@ def numero(valor):
 # ============================================================
 # XML
 # ============================================================
+XML_DE_ENVIO = ('SNGPC.XML', 'MOVIMENTACAO.XML', 'sngpc.zip')
+
+
 def arquivar_xml(config):
     """Copia o XML da última transmissão para enviados\\sngpc_AAAA-MM-DD.xml.
 
@@ -785,9 +788,8 @@ def arquivar_xml(config):
         registrar('Pasta do XML não encontrada: %s' % pasta)
         return None
 
-    candidatos = ['SNGPC.XML', 'MOVIMENTACAO.XML', 'sngpc.zip']
     origem = None
-    for nome in candidatos:
+    for nome in XML_DE_ENVIO:
         caminho = os.path.join(pasta, nome)
         if os.path.exists(caminho):
             origem = caminho
@@ -1742,7 +1744,138 @@ def movimento_desde_a_foto(conexao, desde):
     return movimento
 
 
-def correcao_do_saldo(conexao, inventario_em, na_fila, ultimo_envio=None):
+def hora_no_log(linha):
+    """A hora no começo de uma linha do anvisa.log ("10/10/2026 07:18:40 - ..."),
+    ou None."""
+    try:
+        return datetime.datetime.strptime(texto_hora(linha)[:19], '%d/%m/%Y %H:%M:%S')
+    except ValueError:
+        return None
+
+
+def ler_log_anvisa(caminho):
+    """As linhas do anvisa.log. O Anvisa.exe grava em Latin-1: lido como
+    UTF-8, "sincronização" vira "sincroniza��o" e nenhuma busca por frase
+    acha nada - foi assim que o Log do Anvisa disse "parou no login" de uma
+    execução que tinha baixado o inventário."""
+    with open(caminho, encoding='latin-1', errors='replace') as f:
+        return f.read().splitlines()
+
+
+def ultima_execucao_anvisa(linhas):
+    """As linhas da última execução do Anvisa.exe, do último "Aplicação
+    iniciada" até o fim. Toda execução que dá certo também passa por
+    "aguardando login"; o que diz se ela terminou é o fim, não o meio."""
+    inicio = 0
+    for i, linha in enumerate(linhas):
+        if 'Aplicação iniciada' in linha:
+            inicio = i
+    return linhas[inicio:]
+
+
+def hora_da_foto(config):
+    """Quando o Anvisa.exe gravou o inventário da ANVISA no banco: a hora do
+    último "Processo de sincronização finalizado". A tabela INVENTARIO_SNGPC
+    só guarda a DATA da foto, e a hora é o que decide se o envio da manhã
+    entrou nela."""
+    caminho = achar_log_anvisa(config)
+    if not caminho:
+        return None
+    try:
+        linhas = ler_log_anvisa(caminho)
+    except Exception as e:
+        registrar('Não consegui ler o anvisa.log: %s' % e)
+        return None
+    for linha in reversed(linhas):
+        if 'sincronização finalizado' in linha:
+            return hora_no_log(linha)
+    return None
+
+
+def inicio_do_xml(dados_xml):
+    """O primeiro dia do período de um XML: o dataInicio do cabeçalho, e só
+    na falta dele a menor data de movimento - uma entrada lançada com data
+    atrasada puxaria o início para trás e faria contar de novo dias que já
+    estão na foto."""
+    dados_xml = dados_xml or {}
+    inicio = texto((dados_xml.get('cabecalho') or {}).get('dataInicio'))[:10]
+    if not inicio:
+        datas = sorted(d for d in dados_xml.get('datas') or [] if d)
+        inicio = texto(datas[0])[:10] if datas else ''
+    try:
+        return datetime.date.fromisoformat(inicio) if inicio else None
+    except ValueError:
+        registrar('Data de início do XML fora do formato AAAA-MM-DD: %r' % inicio)
+        return None
+
+
+def xml_depois_da_foto(config, foto_hora):
+    """Os XML de envio gerados DEPOIS da foto: o SNGPC.XML corrente e os
+    arquivados em enviados\\ (o copy2 preserva a data do arquivo).
+
+    Não basta o último. Se o Anvisa.exe não roda num dia, a foto continua
+    a de ontem e o SNGPC.XML já foi sobrescrito pelo envio de hoje: olhando
+    só ele, o período de ontem - que também subiu depois da foto - ficaria
+    contado em lugar nenhum.
+
+    A data do arquivo diz quando o XML foi GERADO, não transmitido. Um XML
+    regerado depois da foto para um período que já está nela contaria esse
+    período duas vezes; é raro, e a data do arquivo é o que existe.
+
+    Devolve [(hora do arquivo, dados do XML)]."""
+    if not foto_hora:
+        return []
+    import mapa_xml
+    pasta = config.get('pasta_xml') or ''
+    caminhos = [os.path.join(pasta, n) for n in XML_DE_ENVIO]
+    enviados = os.path.join(pasta, 'enviados')
+    if os.path.isdir(enviados):
+        nomes = sorted(n for n in os.listdir(enviados)
+                       if n.lower().startswith('sngpc_') and n.lower().endswith('.xml'))
+        caminhos += [os.path.join(enviados, n) for n in nomes[-15:]]
+    achados = []
+    for caminho in caminhos:
+        try:
+            hora = datetime.datetime.fromtimestamp(os.path.getmtime(caminho))
+        except OSError:
+            continue
+        if hora <= foto_hora:
+            continue
+        try:
+            achados.append((hora, mapa_xml.ler(caminho)))
+        except Exception as e:
+            registrar('Não consegui ler %s: %s' % (caminho, e))
+    return achados
+
+
+def foto_sem_o_ultimo_envio(inventario_em, foto_hora, depois_da_foto):
+    """Se houve envio DEPOIS da foto, a data a partir da qual o movimento
+    não está nela. None quando não dá para afirmar.
+
+    Em 10/10 o Anvisa.exe gravou a foto às 07:18:40 e o envio do dia 09/10
+    subiu às 07:21. As duas datas diziam "foto de 10/10, envio de 09/10", a
+    conta concluiu que a foto já tinha o 09/10 e usou só a fila - que não
+    tinha as entradas de 09/10, porque o ponteiro de entrada já tinha
+    andado. Haldol e os dois lotes do ZAP viraram divergência sem ter erro
+    nenhum na prateleira.
+
+    A data não responde isso; a hora responde. Só se afirma quando as pontas
+    existem: a hora da foto no log, do mesmo dia da foto no banco, e XML
+    gerado depois dela. O movimento que falta começa no primeiro dia do
+    XML mais antigo desses - a foto tem tudo até o dia anterior."""
+    foto = texto(inventario_em)[:10]
+    if not (foto and foto_hora) or foto_hora.date().isoformat() != foto:
+        return None
+    inicios = [inicio_do_xml(dados) for hora, dados in depois_da_foto or []
+               if hora > foto_hora]
+    inicios = [d for d in inicios if d]
+    if not inicios:
+        return None
+    return (min(inicios) - datetime.timedelta(days=1)).isoformat()
+
+
+def correcao_do_saldo(conexao, inventario_em, na_fila, ultimo_envio=None,
+                      sem_envio_desde=None):
     """A correção que a comparação de saldo usa, e de onde ela veio.
 
     Devolve (correção, base). As duas juntas de propósito: um plante que
@@ -1767,6 +1900,13 @@ def correcao_do_saldo(conexao, inventario_em, na_fila, ultimo_envio=None):
     hoje, não é MAIOR que hoje —, a correção ficava vazia e toda venda do dia
     virava divergência. Consertar a foto velha e quebrar a foto em dia é
     trocar um erro por outro."""
+    # A FOTO SAIU ANTES DO ENVIO DA MANHÃ (foto_sem_o_ultimo_envio): pelas
+    # datas ela parece em dia, mas não tem o período que subiu depois dela.
+    # Aí conta tudo que se moveu desde o dia anterior a esse período.
+    # Sem volta para a fila aqui: a fila é justamente a conta que errou em
+    # 10/10, e "foto" com correção vazia pelo menos diz de onde veio.
+    if sem_envio_desde:
+        return dict(movimento_desde_a_foto(conexao, sem_envio_desde)), 'foto'
     foto = texto(inventario_em)[:10]
     envio = texto(ultimo_envio)[:10]
     if foto and (not envio or foto >= envio):
@@ -2173,8 +2313,13 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
     #
     # Agora é tudo que se moveu DESDE A FOTO, transmitido ou não. Não depende
     # do ponteiro, e por isso continua certa mesmo com o ponteiro errado.
+    foto_hora = hora_da_foto(config)
+    sem_envio_desde = foto_sem_o_ultimo_envio(
+        inventario_em, foto_hora, xml_depois_da_foto(config, foto_hora))
+    if sem_envio_desde:
+        resultado['inventario']['fotoAntesDoEnvio'] = sem_envio_desde
     movimento_pendente, resultado['baseDaCorrecao'] = correcao_do_saldo(
-        conexao, inventario_em, movimento_pendente, ultimo_envio)
+        conexao, inventario_em, movimento_pendente, ultimo_envio, sem_envio_desde)
 
     ms_no_inventario = {chave[0] for chave in saldo_anvisa}
     # totais por medicamento, somando os lotes. A tela do Digifarma mostra o
@@ -3789,8 +3934,7 @@ def modo_log_anvisa(config, quantas=''):
         return False
 
     try:
-        with open(caminho, encoding='utf-8', errors='replace') as f:
-            linhas = f.read().splitlines()
+        linhas = ler_log_anvisa(caminho)
     except Exception as e:
         print('Não consegui ler %s: %s' % (caminho, e))
         return False
@@ -3811,14 +3955,31 @@ def modo_log_anvisa(config, quantas=''):
         print(linha)
     print('=' * 78)
 
-    # O "aguardando login" é a assinatura de sempre neste servidor: o
-    # programa chega até o site e para. Dizer isso poupa a leitura.
-    ultimas = ' '.join(linhas[-limite:]).lower()
-    if 'aguardando login' in ultimas or 'aguardando' in ultimas:
-        print('')
-        print('Ele chegou ao site e PAROU esperando o login. Não é defeito do')
-        print('programa nem do servidor: falta alguém entrar na conta.')
+    print('')
+    for frase in conclusao_log_anvisa(linhas):
+        print(frase)
     return True
+
+
+def conclusao_log_anvisa(linhas):
+    """O que a última execução do Anvisa.exe fez, em uma ou duas frases.
+
+    Antes bastava "aguardando" aparecer em qualquer das últimas linhas para
+    dizer "parou no login". Só que toda execução passa por "Site do SNGPC
+    carregado, aguardando login" - inclusive a que baixa o inventário. Em
+    10/10 o relatório mandou a farmácia logar numa execução que tinha
+    terminado às 07:18:40."""
+    ultima = ultima_execucao_anvisa(linhas)
+    for linha in reversed(ultima):
+        if 'sincronização finalizado' in linha:
+            return ['A última execução terminou: o inventário da ANVISA foi '
+                    'gravado no banco em %s.' % linha[:19]]
+    if any('aguardando login' in l.lower() for l in ultima) and \
+            not any('Listando o invent' in l for l in ultima):
+        return ['Ele chegou ao site e PAROU esperando o login. Não é defeito do',
+                'programa nem do servidor: falta alguém entrar na conta.']
+    return ['A última execução não chegou a "Processo de sincronização '
+            'finalizado". Veja nas linhas acima onde ela parou.']
 
 
 TAREFA_DIGIFARMA = 'Digifarma_Abrir'
