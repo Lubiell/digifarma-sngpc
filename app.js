@@ -357,25 +357,30 @@ async function pedirAoAgente(acao, rotulo) {
 $('btn-sincronizar').onclick = () => pedirAoAgente('sincronizar_vendas', 'Sincronizar vendas');
 $('btn-atualizar-envio').onclick = () => pedirAoAgente('atualizar_envio', 'Atualizar envio');
 
-function pintarComando() {
-  const barra = $('fila-comando');
+function textoDoComando() {
   const c = estado.comando;
-  if (!c || c.estado === 'concluido') {
-    if (c?.estado === 'concluido' && c.concluidoEm) {
-      barra.textContent = `Último pedido (${c.acao}) atendido em ${dataHora(c.concluidoEm)}.`;
-      barra.hidden = false;
-    } else {
-      barra.hidden = true;
-    }
-    return;
+  if (!c) return '';
+  if (c.estado === 'concluido') {
+    return c.concluidoEm ? `Último pedido (${c.acao}) atendido em ${dataHora(c.concluidoEm)}.` : '';
   }
   if (c.estado === 'erro') {
-    barra.textContent = `O agente não conseguiu atender “${c.acao}”: ${c.mensagem || 'sem detalhe'}.`;
-  } else {
-    barra.textContent = `Pedido “${c.acao}” na fila desde ${dataHora(c.pedidoEm)}`
-      + (estado.inventario?.vistoEm ? ` — o agente passou por aqui ${dataHora(estado.inventario.vistoEm)}.` : '.');
+    return `O agente não conseguiu atender “${c.acao}”: ${c.mensagem || 'sem detalhe'}.`;
   }
-  barra.hidden = false;
+  return `Pedido “${c.acao}” na fila desde ${dataHora(c.pedidoEm)}`
+    + (estado.inventario?.vistoEm ? ` — o agente passou por aqui ${dataHora(estado.inventario.vistoEm)}.` : '.');
+}
+
+/* A barra aparece tambem na aba Servidor: e la que os relatorios sao
+   pedidos, e so na Situacao ninguem via que o pedido estava na fila ou
+   tinha dado erro - parecia que o botao nao fazia nada. */
+function pintarComando() {
+  const t = textoDoComando();
+  ['fila-comando', 'fila-comando-servidor'].forEach((id) => {
+    const barra = $(id);
+    barra.textContent = t;
+    barra.hidden = !t;
+  });
+  if (estado.vista === 'servidor') pintarRelatorio();
 }
 
 /* ============================================================
@@ -1095,7 +1100,9 @@ function pintarFerramentas() {
 
 function pintarRelatorio() {
   const bloco = $('bloco-relatorio');
-  const acao = estado.relatorioPedido;
+  // Quem fechou e abriu o app perdeu o relatorioPedido, que fica so na
+  // memoria; o ultimo pedido da fila diz qual relatorio mostrar.
+  const acao = estado.relatorioPedido || estado.comando?.acao;
   const r = acao && estado.relatorios?.[acao];
   if (!r || !r.texto) { bloco.hidden = true; return; }
   $('relatorio-titulo').textContent = 'Resposta do servidor — ' + acao;
@@ -1218,5 +1225,6 @@ if (location.protocol === 'file:') {
 
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje };
+  module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
+    pintarComando, pintarRelatorio };
 }
