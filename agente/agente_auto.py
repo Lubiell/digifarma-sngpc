@@ -3117,6 +3117,32 @@ def publicar_vendas_recentes(config, db):
                   % (', '.join(escritos), len(linhas),
                      len(sem_receita) if sem_receita is not None else '?'))
 
+    # DUAS PERGUNTAS DIFERENTES, e por muito tempo só uma resposta:
+    #
+    #   atualizadoEm ... quando o DADO mudou pela última vez
+    #   vistoEm ........ quando o AGENTE passou por aqui pela última vez
+    #
+    # O carimbo de cima fica parado de propósito numa manhã sem venda —
+    # carimbo que anda sozinho a cada minuto mente sobre dado parado. Só
+    # que o alarme de "agente parado" olhava justamente ele, e numa
+    # quinta-feira calma acusou parada de 49 minutos com o agente vivo.
+    #
+    # Alarme que toca à toa vira alarme que se ignora, e o dia em que ele
+    # tiver razão será o dia em que ninguém vai olhar. Este carimbo anda
+    # SEMPRE, e é ele que responde "tem alguém rodando aí?".
+    #
+    # E vem ANTES do quadro, num try só dele. Em 10/10 ele morava no fim do
+    # bloco do quadro: a gravação em farmacia/publico falhava, a exceção
+    # pulava o carimbo, e o app passou o dia dizendo "o agente não publicou
+    # vistoEm — versão antiga" com o agente vivo, atendendo a fila de minuto
+    # em minuto. Falha no quadro é falha no quadro, não sinal de agente
+    # parado.
+    agora_iso = datetime.datetime.now().isoformat(timespec='seconds')
+    try:
+        db.reference('farmacia/inventario/vistoEm').set(agora_iso)
+    except Exception as e:
+        registrar('Não consegui registrar a passagem do agente: %s' % e)
+
     # O quadro do balcão é "ao vivo" porque acompanha ESTA fila, não a
     # sincronização de hora em hora.
     #
@@ -3132,23 +3158,7 @@ def publicar_vendas_recentes(config, db):
         if atualizar_envios_publicos(db) or escritos:
             db.reference('%s/atualizadoEm' % NO_PUBLICO).set(
                 datetime.datetime.now().isoformat(timespec='seconds'))
-
-        # DUAS PERGUNTAS DIFERENTES, e por muito tempo só uma resposta:
-        #
-        #   atualizadoEm ... quando o DADO mudou pela última vez
-        #   vistoEm ........ quando o AGENTE passou por aqui pela última vez
-        #
-        # O carimbo de cima fica parado de propósito numa manhã sem venda —
-        # carimbo que anda sozinho a cada minuto mente sobre dado parado. Só
-        # que o alarme de "agente parado" olhava justamente ele, e numa
-        # quinta-feira calma acusou parada de 49 minutos com o agente vivo.
-        #
-        # Alarme que toca à toa vira alarme que se ignora, e o dia em que ele
-        # tiver razão será o dia em que ninguém vai olhar. Este carimbo anda
-        # SEMPRE, e é ele que responde "tem alguém rodando aí?".
-        agora_iso = datetime.datetime.now().isoformat(timespec='seconds')
         db.reference('%s/vistoEm' % NO_PUBLICO).set(agora_iso)
-        db.reference('farmacia/inventario/vistoEm').set(agora_iso)
     except Exception as e:
         registrar('Não consegui atualizar o quadro do balcão: %s' % e)
     return linhas

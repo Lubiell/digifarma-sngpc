@@ -282,6 +282,50 @@ def principal():
     conferir('ultimo dia entra quando os lotes confirmam, e so ate onde confirmam',
              corte == 48252, corte)
 
+    # --- vistoEm sai mesmo quando o quadro do balcao falha ---
+    # Em 10/10 a gravacao em farmacia/publico falhava e levava junto o
+    # carimbo de passagem: o app dizia "agente nao publicou" com ele vivo.
+    gravados = []
+
+    class RefQuadro:
+        def __init__(self, caminho):
+            self.caminho = caminho
+
+        def set(self, valor):
+            if self.caminho.startswith('farmacia/publico'):
+                raise RuntimeError('Permission denied')
+            gravados.append(self.caminho)
+
+    class DbQuadro:
+        def reference(self, caminho):
+            return RefQuadro(caminho)
+
+    nomes = ('conectar_firebird', 'fechar', 'vendas_recentes', 'vendas_sem_receita_pendentes',
+             'snapshot_diagnostico', 'entradas_recentes', 'retorno_sngpc', 'mudou',
+             'vendas_publicas', 'notas_publicas', 'atualizar_envios_publicos', 'registrar')
+    guardadas = {n: getattr(ag, n) for n in nomes}
+    try:
+        ag.conectar_firebird = lambda _c: None
+        ag.fechar = lambda _c: None
+        ag.vendas_recentes = lambda _c: [{'venda': 1}]
+        ag.vendas_sem_receita_pendentes = lambda _c, _cfg: []
+        ag.snapshot_diagnostico = lambda _c: {}
+        ag.entradas_recentes = lambda _c, _p, config=None: []
+        ag.retorno_sngpc = lambda _c: {}
+        ag.mudou = lambda _caminho, _valor: True
+        ag.vendas_publicas = lambda linhas: linhas
+        ag.notas_publicas = lambda e: e
+        ag.atualizar_envios_publicos = lambda _db: False
+        ag.registrar = lambda _t: None
+        ag.publicar_vendas_recentes({}, DbQuadro())
+    finally:
+        for n, f in guardadas.items():
+            setattr(ag, n, f)
+    conferir('a passagem do agente fica registrada mesmo com o quadro do balcao falhando',
+             'farmacia/inventario/vistoEm' in gravados, gravados)
+    conferir('as vendas recentes continuam sendo publicadas',
+             'farmacia/inventario/vendasRecentes' in gravados, gravados)
+
     # --teste imprimia a linha inteira da tabela SNGPC - EMAIL, SENHA e CPF
     # do responsavel - na tela do INSTALAR_AGENTE.bat.
     class RefFalsa:
