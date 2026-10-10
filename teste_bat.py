@@ -251,6 +251,9 @@ def conferir_protocolo_do_app():
     relatorios_app = da_lista('RELATORIOS_SERVIDOR')
     relatorios_agente = set(re.findall(r"^\s+'([a-z_]+)': lambda config, alvo",
                                        agente, re.M))
+    # o agente atende qualquer chave de RELATORIOS (acao in RELATORIOS):
+    # um botao que manda acao de relatorio direto, com texto, tambem vale
+    aceitas |= relatorios_agente
     for fora in sorted(relatorios_app - relatorios_agente):
         falhas.append("o app pede o relatorio '%s' e o agente nao tem" % fora)
     for orfa in sorted(mandadas - aceitas):

@@ -4125,13 +4125,15 @@ def corte_por_data(dados):
     lote bate ou não bate por vários motivos, e um deles é acaso — foi
     exatamente o que confundiu o diagnóstico duas vezes. Data não tem acaso.
 
-    O ÚLTIMO DIA DO PERÍODO NÃO VALE POR DATA. Em 10/10 o envio do período
-    09/10 saiu com o dia 09 ainda aberto: as vendas 48252 a 48307, feitas
-    depois do envio, têm data de 09/10 e não subiram. A regra "data dentro do
-    período" sugeriu 48307, alguém apertou o botão, e cada lote dessas vendas
-    virou divergência no Saldo - 10 viraram 25. Dia anterior ao fim é dia
-    fechado e conta pela data. O último dia só conta quando os lotes
-    confirmam (analisar_ponteiro diz 'atrasado'), e só até onde confirmam.
+    O ÚLTIMO DIA DO PERÍODO NÃO VALE POR DATA. Em 10/10 o Digifarma baixou a
+    foto do inventário às 07:18 e transmitiu o período 09/10 às 07:21. As
+    vendas 48252 a 48307 subiram, mas não estavam na foto. A regra "data
+    dentro do período" sugeriu 48307, alguém apertou, elas saíram da conta
+    do Saldo sem estar na foto, e 10 divergências viraram 25. O que importa
+    aqui não é se a ANVISA recebeu, é se a FOTO já tem: e isso só os lotes
+    dizem. Dia anterior ao fim é dia fechado e conta pela data. O último dia
+    só conta quando os lotes confirmam (analisar_ponteiro diz 'atrasado'),
+    e só até onde confirmam.
 
     Devolve (corte, fim, quantas) — corte é None quando não há venda na fila
     dentro de período já transmitido, que é o estado saudável."""
@@ -4431,6 +4433,119 @@ SEGREDOS = ('SENHA', 'EMAIL', 'CPF', 'CNPJ', 'TOKEN', 'CHAVE', 'LOGIN',
 def pode_imprimir(coluna):
     return (any(p in coluna for p in VALORES_PERMITIDOS)
             and not any(s in coluna for s in SEGREDOS))
+
+
+def arquivos_xml(pasta, profundidade=3):
+    """Os XML da pasta do SNGPC e das subpastas (enviados\\ incluída)."""
+    achados = []
+    base = os.path.abspath(pasta)
+    for raiz, dirs, nomes in os.walk(base):
+        if raiz[len(base):].count(os.sep) >= profundidade:
+            dirs[:] = []
+        for nome in nomes:
+            if nome.lower().endswith('.xml'):
+                achados.append(os.path.join(raiz, nome))
+    return sorted(achados)
+
+
+def lote_parecido(a, b):
+    """Mesmo lote escrito de outro jeito: espaço, traço, letra a mais no fim."""
+    a = re.sub(r'[^0-9A-Z]', '', texto(a).upper())
+    b = re.sub(r'[^0-9A-Z]', '', texto(b).upper())
+    return bool(a and b and a != b and (a.startswith(b) or b.startswith(a)))
+
+
+def modo_buscar_xml(config, alvo=''):
+    """Procura M.S. e lote nos XML de transmissão que existem no servidor.
+
+    Responde "essa entrada subiu? com que M.S.? com que lote?" - a pergunta
+    que sobra de cada divergência do Saldo. Sem alvo, procura os lotes que
+    estão com divergência agora. Imprime só tipo, período, M.S., lote,
+    descrição e quantidade: nada de paciente, prescritor ou receita.
+
+    O limite vem dito: só existem os XML que o agente arquivou e o da última
+    transmissão, porque o Digifarma sobrescreve o SNGPC.XML a cada envio.
+    Não aparecer aqui não prova que não subiu."""
+    import mapa_xml
+    pasta = config['pasta_xml']
+    if not os.path.isdir(pasta):
+        print('Pasta do XML não encontrada: %s' % pasta)
+        return False
+
+    procurados = []
+    alvo = texto(alvo).strip()
+    if alvo:
+        digitos = so_digitos(alvo)
+        if len(digitos) >= 9 and not re.search(r'[A-Za-z]', alvo):
+            procurados.append({'ms': digitos, 'lote': '', 'descricao': ''})
+        else:
+            procurados.append({'ms': '', 'lote': alvo.upper(), 'descricao': ''})
+    else:
+        db = conectar_firebase(config)
+        itens = db.reference('farmacia/inventario/itens').get() or []
+        if isinstance(itens, dict):
+            itens = list(itens.values())
+        for i in itens:
+            if i and numero(i.get('diferenca')) != 0 and (i.get('ms') or i.get('lote')):
+                procurados.append({'ms': so_digitos(i.get('ms')),
+                                   'lote': texto(i.get('lote')).upper(),
+                                   'descricao': texto(i.get('descricao'))})
+        if not procurados:
+            print('Nenhum lote com divergência no Saldo agora. Para procurar um')
+            print('lote ou M.S. específico, informe-o no app.')
+            return True
+
+    lidos, ilegiveis, datas = [], 0, []
+    for caminho in arquivos_xml(pasta):
+        try:
+            dados = mapa_xml.ler(caminho)
+        except Exception:
+            ilegiveis += 1
+            continue
+        cab = dados.get('cabecalho') or {}
+        de = texto(cab.get('dataInicio'))[:10] or (dados.get('datas') or [''])[0]
+        ate = texto(cab.get('dataFim'))[:10] or (dados.get('datas') or [''])[-1]
+        datas += [d for d in (de, ate) if d]
+        lidos.append((os.path.relpath(caminho, pasta), de, ate, dados.get('movimentos') or {}))
+
+    print('BUSCA NOS XML DE TRANSMISSÃO')
+    print('=' * 78)
+    print('Pasta: %s' % pasta)
+    print('XML lidos: %d%s' % (len(lidos), (' (%d ilegível(is))' % ilegiveis) if ilegiveis else ''))
+    if datas:
+        print('Períodos cobertos: de %s a %s' % (br(min(datas)), br(max(datas))))
+    print('Só existem os XML arquivados pelo agente e o da última transmissão:')
+    print('o Digifarma sobrescreve o SNGPC.XML a cada envio. Não aparecer aqui')
+    print('não prova que não subiu.')
+
+    for p in procurados:
+        print()
+        rotulo = ' '.join(x for x in (
+            p['descricao'], p['ms'] and 'M.S. %s' % p['ms'], p['lote'] and 'lote %s' % p['lote']) if x)
+        print('-' * 78)
+        print(rotulo)
+        print('-' * 78)
+        exatos, outros = [], []
+        for arquivo, de, ate, movimentos in lidos:
+            for tipo, balde in movimentos.items():
+                for (ms, lote), reg in balde.items():
+                    mesmo_ms = not p['ms'] or ms == p['ms']
+                    mesmo_lote = not p['lote'] or lote == p['lote']
+                    linha = '  %s a %s  %-13s qtd %-6g M.S. %s  lote %s  (%s)' % (
+                        br(de), br(ate), tipo, numero(reg.get('quantidade')), ms, lote, arquivo)
+                    if mesmo_ms and mesmo_lote:
+                        exatos.append(linha)
+                    elif p['ms'] and p['lote'] and mesmo_lote:
+                        outros.append(linha + '  <- mesmo lote, OUTRO M.S.')
+                    elif p['ms'] and p['lote'] and mesmo_ms and lote_parecido(lote, p['lote']):
+                        outros.append(linha + '  <- mesmo M.S., lote escrito diferente')
+        for l in exatos:
+            print(l)
+        if not exatos:
+            print('  não aparece em nenhum dos %d XML lidos' % len(lidos))
+        for l in outros:
+            print(l)
+    return True
 
 
 def modo_retorno_anvisa(config):
@@ -5030,6 +5145,7 @@ RELATORIOS = {
     'login_sngpc': lambda config, alvo: texto_do_modo(modo_login_sngpc, config),
     'retorno_anvisa': lambda config, alvo: texto_do_modo(modo_retorno_anvisa, config),
     'log_anvisa': lambda config, alvo: texto_do_modo(modo_log_anvisa, config, alvo),
+    'xml': lambda config, alvo: texto_do_modo(modo_buscar_xml, config, alvo),
 }
 
 LIMITE_TEXTO = 120000    # o relatório inteiro cabe; o corte é rede de segurança
@@ -6762,6 +6878,8 @@ def principal():
                         help='diz se o Digifarma guarda o login do site do SNGPC')
     parser.add_argument('--retorno-anvisa', dest='retorno_anvisa', action='store_true',
                         help='procura onde o Digifarma guarda o aceite/recusa do site')
+    parser.add_argument('--buscar-xml', dest='buscar_xml', metavar='MS_OU_LOTE', nargs='?', const='',
+                        help='procura M.S./lote nos XML de transmissão (vazio: os lotes com divergência)')
     parser.add_argument('--config', metavar='CHAVE=VALOR',
                         help='muda uma chave do agente_config.json sem editar JSON à mão')
     args = parser.parse_args()
@@ -6812,6 +6930,8 @@ def principal():
             raise SystemExit(0 if modo_login_sngpc(config) else 1)
         if args.retorno_anvisa:
             raise SystemExit(0 if modo_retorno_anvisa(config) else 1)
+        if args.buscar_xml is not None:
+            raise SystemExit(0 if modo_buscar_xml(config, args.buscar_xml) else 1)
         if args.produto is not None:
             raise SystemExit(0 if modo_produto(config, args.produto) else 1)
         if args.comparacao is not None:

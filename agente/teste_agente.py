@@ -326,6 +326,50 @@ def principal():
     conferir('as vendas recentes continuam sendo publicadas',
              'farmacia/inventario/vendasRecentes' in gravados, gravados)
 
+    # --- busca nos XML: acha entrada por M.S., lote escrito diferente e outro M.S. ---
+    pasta_busca = tempfile.mkdtemp()
+    os.makedirs(os.path.join(pasta_busca, 'enviados'))
+    exemplo = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exemplo_SNGPC.XML')
+    shutil.copy(exemplo, os.path.join(pasta_busca, 'enviados', 'sngpc_2026-08-05.xml'))
+    cfg_busca = dict(ag.CONFIG_PADRAO, pasta_xml=pasta_busca)
+
+    def busca(alvo, itens=None):
+        guardado_fb = ag.conectar_firebase
+
+        class RefItens:
+            def get(self):
+                return itens
+
+        class DbItens:
+            def reference(self, _caminho):
+                return RefItens()
+        saida_busca = io.StringIO()
+        try:
+            ag.conectar_firebase = lambda _c: DbItens()
+            with contextlib.redirect_stdout(saida_busca):
+                ag.modo_buscar_xml(cfg_busca, alvo)
+        finally:
+            ag.conectar_firebase = guardado_fb
+        return saida_busca.getvalue()
+
+    achado = busca('1052500680092')
+    conferir('busca no XML acha a entrada pelo M.S.',
+             'entrada' in achado and 'CLV4N003' in achado and 'sngpc_2026-08-05.xml' in achado, achado)
+    conferir('busca no XML diz quando nao acha',
+             'não aparece em nenhum dos 1 XML' in busca('9999999999999'))
+    auto = busca('', itens=[
+        {'ms': '1052500680092', 'lote': 'CLV4N003A', 'descricao': 'TESTE', 'diferenca': 3},
+        {'ms': '1999999999999', 'lote': 'BRM6N009', 'descricao': 'OUTRO', 'diferenca': -1},
+        {'ms': '1052500680092', 'lote': 'XYZ', 'descricao': 'BATE', 'diferenca': 0}])
+    conferir('sem alvo, procura os lotes com divergencia e aponta lote escrito diferente',
+             'lote escrito diferente' in auto and 'CLV4N003' in auto, auto)
+    conferir('sem alvo, aponta o mesmo lote com outro M.S.',
+             'mesmo lote, OUTRO M.S.' in auto, auto)
+    conferir('sem alvo, lote sem divergencia fica de fora', 'BATE' not in auto, auto)
+    conferir('a busca nos XML nao imprime CPF nem CNPJ do cabecalho',
+             '00000000191' not in achado + auto, achado)
+    shutil.rmtree(pasta_busca, ignore_errors=True)
+
     # --teste imprimia a linha inteira da tabela SNGPC - EMAIL, SENHA e CPF
     # do responsavel - na tela do INSTALAR_AGENTE.bat.
     class RefFalsa:
