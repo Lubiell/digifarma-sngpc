@@ -14,13 +14,13 @@ servidor de longe, ainda não executado no Windows.
   Opção `R` no FARMACIA.bat e no menu.ps1.
 
 ## Em andamento
-- ACESSO_REMOTO.bat rodou no servidor em 10/10 (Windows 10 Pro 1909, cabo,
-  DHCP). Sintaxe ok. Achados: firewall do Windows DESLIGADO nos 3 perfis,
-  então o SSH foi instalado mas ficou desligado; a VPN usa faixa pública
-  /24 (agora entra presa à placa da VPN); a conta parece não ter senha.
-  Decidido (opção A): `agente/LIGAR_FIREWALL.bat` liga o firewall com a
-  rede local e a VPN liberadas; depois rodar o ACESSO_REMOTO.bat de novo.
-  Ainda pendente: a conta precisa de senha para SSH/RDP (decisão do usuário).
+- 10/10: LIGAR_FIREWALL.bat ligou o firewall (estava desligado nos 3 perfis)
+  com a rede local 192.168.100.0/24 e as duas placas TAP liberadas; o PC é
+  cliente da VPN (faixa 12.4.29.0/24). Em seguida o ACESSO_REMOTO.bat ligou
+  SSH (22, PowerShell) e RDP (3389, NLA), presos à rede local e à placa da
+  VPN. Falta: confirmar Digifarma nos terminais; a conta precisa de senha
+  para o login remoto; testar de fora pela VPN (o celular precisa alcançar
+  12.4.29.2 pelo túnel); reservar o IP 192.168.100.8 no roteador (DHCP).
 
 ## Pendências no servidor (agente parado desde 10/09)
 1. `chave-firebase.json` não existe na pasta do agente (sumiu com uma pasta
