@@ -163,46 +163,63 @@ function MostrarRegras([int]$porta) {
     }
     foreach ($r in $rs) {
         $estado = if ($r.Ligada) { 'ligada' } else { 'desligada' }
-        $alerta = if ($r.Ligada -and (Aberta $r.Remoto)) { '  <-- ABERTA PARA QUALQUER ENDERECO' } else { '' }
+        $alerta = ''
+        if ($r.Id -like 'FARMACIA-*-VPN*') { $alerta = '  (so pela placa da VPN)' }
+        elseif ($r.Ligada -and (Aberta $r.Remoto)) { $alerta = '  <-- ABERTA PARA FORA DA REDE' }
         Dizer "  firewall $porta : '$($r.Nome)' $($r.Protocolo) $estado, de: $($r.Remoto)$alerta"
     }
 }
 
-# Recria a regra da farmacia com a faixa de hoje (a VPN pode ter
-# entrado ou saido desde a ultima vez) e prende a faixa em toda regra de
-# outros que esteja aberta, ligada ou nao: a do proprio OpenSSH e as da
-# Area de Trabalho Remota ja nascem para qualquer endereco, e uma
-# desligada pode ser religada por uma atualizacao.
-# Devolve $true so se, no fim, nada nesta porta ficou aberto. Quem chama
-# so liga o servico com $true: com firewall desligado ou regra que nao
-# deu para prender, ligar o servico seria abrir para a internet.
-function Liberar([string]$id, [string]$nome, [int]$porta, [string[]]$faixas) {
-    $perfis = @(Get-NetFirewallProfile -ErrorAction SilentlyContinue)
-    $desligados = @($perfis | Where-Object { "$($_.Enabled)" -ne 'True' })
-    if (-not $perfis -or $desligados) {
-        Dizer "  o firewall do Windows esta DESLIGADO ($(@($desligados | ForEach-Object { $_.Name }) -join ', ')). Nao ligo o firewall sozinho, para nao derrubar o Digifarma na rede."
-        return $false
-    }
-    $criada = $false
-    try {
-        Remove-NetFirewallRule -Name $id -ErrorAction SilentlyContinue
-        New-NetFirewallRule -Name $id -DisplayName $nome -Direction Inbound -Action Allow `
-            -Protocol TCP -LocalPort $porta -RemoteAddress $faixas -Profile Any -ErrorAction Stop | Out-Null
-        Dizer "  regra '$nome' criada: porta $porta so para $($faixas -join ', ')"
-        $criada = $true
-    } catch { Dizer "  FALHOU ao criar a regra '$nome': $($_.Exception.Message)" }
-    foreach ($r in @(RegrasDaPorta $porta)) {
-        if ($r.Id -eq $id -or -not (Aberta $r.Remoto)) { continue }
+# Recria as regras da farmacia com as faixas de hoje (a VPN pode ter
+# entrado ou saido desde a ultima vez): uma para a rede local e uma por
+# placa de VPN, presa aquela placa. Presa na placa, a faixa da VPN so
+# vale para o que chega pelo tunel, mesmo que seja uma faixa publica:
+# um 12.4.29.x vindo pelo cabo nao entra.
+# Depois prende a rede local em toda regra de outros que esteja aberta,
+# ligada ou nao: a do proprio OpenSSH e as da Area de Trabalho Remota ja
+# nascem para qualquer endereco, e uma desligada pode ser religada por
+# uma atualizacao. Faz isso mesmo com o firewall desligado, para que
+# ligar o firewall depois nao abra nada.
+# Devolve $true so se o firewall esta ligado e nada nesta porta ficou
+# aberto. Quem chama so liga o servico com $true.
+function Liberar([string]$id, [string]$nome, [int]$porta, [string[]]$lan, $vpns) {
+    $criada = $true
+    Get-NetFirewallRule -Name "$id*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    if ($lan) {
         try {
-            Set-NetFirewallRule -Name $r.Id -RemoteAddress $faixas -ErrorAction Stop
-            Dizer "  regra '$($r.Nome)' restringida: era $($r.Remoto), agora $($faixas -join ', ')"
+            New-NetFirewallRule -Name $id -DisplayName $nome -Direction Inbound -Action Allow `
+                -Protocol TCP -LocalPort $porta -RemoteAddress $lan -Profile Any -ErrorAction Stop | Out-Null
+            Dizer "  regra '$nome' criada: porta $porta so para $($lan -join ', ')"
+        } catch { $criada = $false; Dizer "  FALHOU ao criar a regra '$nome': $($_.Exception.Message)" }
+    }
+    $k = 0
+    foreach ($v in @($vpns | Where-Object { $_ })) {
+        $k++
+        try {
+            New-NetFirewallRule -Name "$id-VPN$k" -DisplayName "$nome VPN $k" -Direction Inbound -Action Allow `
+                -Protocol TCP -LocalPort $porta -RemoteAddress $v.Faixa -InterfaceAlias $v.Alias -Profile Any -ErrorAction Stop | Out-Null
+            Dizer "  regra '$nome VPN $k' criada: porta $porta so para $($v.Faixa), e so pela placa '$($v.Alias)'"
+        } catch { $criada = $false; Dizer "  FALHOU ao criar a regra da VPN '$($v.Alias)': $($_.Exception.Message)" }
+    }
+    foreach ($r in @(RegrasDaPorta $porta)) {
+        if ($r.Id -like "$id*" -or -not (Aberta $r.Remoto)) { continue }
+        try {
+            if (-not $lan) { throw 'sem faixa de rede local para prender a regra' }
+            Set-NetFirewallRule -Name $r.Id -RemoteAddress $lan -ErrorAction Stop
+            Dizer "  regra '$($r.Nome)' restringida: era $($r.Remoto), agora $($lan -join ', ')"
         } catch {
             Disable-NetFirewallRule -Name $r.Id -ErrorAction SilentlyContinue
             Dizer "  nao consegui restringir a regra '$($r.Nome)' ($($_.Exception.Message)); desliguei ela"
         }
     }
-    $sobra = @(RegrasDaPorta $porta | Where-Object { $_.Ligada -and (Aberta $_.Remoto) })
+    $sobra = @(RegrasDaPorta $porta | Where-Object { $_.Id -notlike "$id*" -and $_.Ligada -and (Aberta $_.Remoto) })
     foreach ($r in $sobra) { Dizer "  CONTINUA ABERTA para fora da rede: '$($r.Nome)' de $($r.Remoto)" }
+    $perfis = @(Get-NetFirewallProfile -ErrorAction SilentlyContinue)
+    $desligados = @($perfis | Where-Object { "$($_.Enabled)" -ne 'True' })
+    if (-not $perfis -or $desligados) {
+        Dizer "  o firewall do Windows esta DESLIGADO ($(@($desligados | ForEach-Object { $_.Name }) -join ', ')): as regras acima nao valem nada enquanto ele estiver assim. Nao ligo o firewall sozinho."
+        return $false
+    }
     return ($criada -and -not $sobra)
 }
 
@@ -250,7 +267,7 @@ if ($lanFaixas) { Resumo 'rede local' ($lanFaixas -join ', ') } else { Resumo 'r
 
 # ------------------------------------------------------------------
 Secao '3. VPN OpenVPN'
-$vpnFaixas = @(); $vpnIps = @()
+$vpnRedes = @(); $vpnIps = @()
 $pastas = @("$env:ProgramFiles\OpenVPN", "$env:ProgramFiles\OpenVPN Connect", "${env:ProgramFiles(x86)}\OpenVPN") | Where-Object { Test-Path -LiteralPath $_ }
 if ($pastas) { foreach ($p in $pastas) { Dizer "  instalado em: $p" } } else { Dizer '  pasta do OpenVPN nao encontrada em Arquivos de Programas' }
 foreach ($s in @(Get-Service -Name 'OpenVPN*', 'ovpn*', 'agent_ovpn*' -ErrorAction SilentlyContinue)) {
@@ -261,20 +278,25 @@ if (-not $vads) { Dizer '  nenhum adaptador OpenVPN nesta maquina' }
 foreach ($v in $vads) {
     Dizer "  adaptador: $($v.Name) - $($v.InterfaceDescription) - $($v.Status)"
     $ips = @(Get-NetIPAddress -InterfaceIndex $v.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' })
-    if (-not $ips) { Dizer '    sem IP: a VPN esta desligada agora. Ligue a VPN e rode de novo para a faixa dela entrar no firewall.' }
+    if (-not $ips) { Dizer '    sem IP: este adaptador nao esta conectado agora.' }
     foreach ($a in $ips) {
         $p = [int]$a.PrefixLength
         # Em topologia net30 o adaptador recebe /30 e o celular cai em
-        # outro /30 do mesmo pool: /24 cobre o pool e continua privado.
+        # outro /30 do mesmo pool: /24 cobre o pool.
         if ($p -gt 24) { $p = 24; Dizer "    o adaptador esta em /$($a.PrefixLength); uso /24 para o celular caber no mesmo pool" }
         $f = Rede $a.IPAddress $p
         Dizer "    IP: $($a.IPAddress)/$($a.PrefixLength)   faixa: $f"
-        if (Privada $f) { $vpnFaixas += $f; $vpnIps += $a.IPAddress }
-        else { Dizer '    ESTA FAIXA NAO ENTRA no firewall: nao e privada, ou e larga demais.' }
+        # Faixa publica so entra estreita (/24), e a regra fica presa a
+        # esta placa: so vale para o que chega pelo tunel.
+        if ((Privada $f) -or $p -ge 24) {
+            $vpnRedes += [pscustomobject]@{ Faixa = $f; Alias = $v.Name }
+            $vpnIps += $a.IPAddress
+            if (-not (Privada $f)) { Dizer '    faixa publica: entra no firewall so presa a esta placa da VPN' }
+        } else { Dizer '    ESTA FAIXA NAO ENTRA no firewall: larga demais.' }
     }
 }
-$vpnFaixas = @($vpnFaixas | Select-Object -Unique)
-if ($vpnFaixas) { Resumo 'VPN' ($vpnFaixas -join ', ') } else { Resumo 'VPN' 'sem faixa (desligada ou ausente)' }
+if ($vpnRedes) { Resumo 'VPN' (@($vpnRedes | ForEach-Object { $_.Faixa }) -join ', ') }
+else { Resumo 'VPN' 'sem faixa: ligue a VPN e rode de novo' }
 
 # ------------------------------------------------------------------
 Secao '4. edicao do Windows'
@@ -375,11 +397,11 @@ foreach ($nome in 'AgenteSNGPC', 'AgenteSNGPC_Fila', 'AnvisaSNGPC_Login') {
 Dizer '  (so testo as tarefas; quem conserta e o INSTALAR_AGENTE.bat)'
 
 # ------------------------------------------------------------------
-$faixas = @(@($lanFaixas) + @($vpnFaixas) | Select-Object -Unique)
+
 $sshOk = $false; $rdpOk = $false
 if (-not $admin) {
     Resumo 'configuracao' 'PULADA - sem administrador'
-} elseif (-not $faixas) {
+} elseif (-not $lanFaixas -and -not $vpnRedes) {
     Secao 'configuracao'
     Dizer '  PULADA: nao achei faixa de rede local nem de VPN valida.'
     Dizer '  Sem faixa eu nao abro porta nenhuma: nunca libero para qualquer endereco.'
@@ -408,7 +430,7 @@ if (-not $admin) {
                 Dizer "  shell do SSH: $psExe"
             } catch { Dizer "  FALHOU ao trocar o shell: $($_.Exception.Message)" }
             $seguro = $false
-            try { $seguro = Liberar 'FARMACIA-SSH-22' 'FARMACIA - SSH (porta 22)' 22 $faixas }
+            try { $seguro = Liberar 'FARMACIA-SSH-22' 'FARMACIA - SSH (porta 22)' 22 $lanFaixas $vpnRedes }
             catch { Dizer "  FALHOU no firewall da porta 22: $($_.Exception.Message)" }
             if ($seguro) {
                 try {
@@ -434,7 +456,7 @@ if (-not $admin) {
         Resumo 'RDP' 'PULADO - Windows Home'
     } else {
         $seguro = $false
-        try { $seguro = Liberar 'FARMACIA-RDP-3389' 'FARMACIA - RDP (porta 3389)' 3389 $faixas }
+        try { $seguro = Liberar 'FARMACIA-RDP-3389' 'FARMACIA - RDP (porta 3389)' 3389 $lanFaixas $vpnRedes }
         catch { Dizer "  FALHOU no firewall da porta 3389: $($_.Exception.Message)" }
         $ts = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
         try {
@@ -468,7 +490,10 @@ if ($conta) {
     else { $quando = 'nao achei data de senha; conta sem senha o Windows recusa no SSH e no RDP' }
     Dizer "  conta: $usuario ($($conta.PrincipalSource)), $quando"
 }
-if (-not $sshOk) { Dizer '  ATENCAO: o SSH nao esta de pe; os comandos abaixo so funcionam depois de rodar isto como administrador.' }
+if (-not $sshOk) {
+    $porque = if ($admin) { 'veja o motivo acima' } else { 'rode isto como administrador' }
+    Dizer "  ATENCAO: o SSH nao esta de pe ($porque); os comandos abaixo ainda nao funcionam."
+}
 Dizer ''
 Dizer '  No Termux:'
 Dizer '    pkg install openssh'

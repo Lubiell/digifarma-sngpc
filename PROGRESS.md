@@ -14,8 +14,12 @@ servidor de longe, ainda não executado no Windows.
   Opção `R` no FARMACIA.bat e no menu.ps1.
 
 ## Em andamento
-- Rodar o ACESSO_REMOTO.bat no servidor como administrador e conferir o
-  relatório. A sintaxe do bloco PowerShell não foi validada fora do Windows.
+- ACESSO_REMOTO.bat rodou no servidor em 10/10 (Windows 10 Pro 1909, cabo,
+  DHCP). Sintaxe ok. Achados: firewall do Windows DESLIGADO nos 3 perfis,
+  então o SSH foi instalado mas ficou desligado; a VPN usa faixa pública
+  /24 (agora entra presa à placa da VPN); a conta parece não ter senha.
+  Esperando decisão: ligar o firewall com rede local e VPN liberadas?
+  Definir senha na conta?
 
 ## Pendências no servidor (agente parado desde 10/09)
 1. `chave-firebase.json` não existe na pasta do agente (sumiu com uma pasta
