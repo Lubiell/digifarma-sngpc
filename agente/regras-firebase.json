@@ -2,76 +2,121 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "farmacia": {
       "inventario": {
         ".read": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
         ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
       },
-
       "config": {
         ".read": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
         ".write": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
-        "senhaHash": { ".validate": "newData.isString() && newData.val().length === 64" }
+        "senhaHash": {
+          ".validate": "newData.isString() && newData.val().length === 64"
+        }
       },
-
       "aceites": {
-        ".read": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
+        ".read": "auth != null && (root.child('farmacia/autorizados').child(auth.uid).val() === true || root.child('farmacia/agentes').child(auth.uid).val() === true)",
         "$data": {
           ".write": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
           ".validate": "$data.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) && newData.hasChildren(['status','por','em'])",
-          "status": { ".validate": "newData.val() === 'aceito' || newData.val() === 'recusado'" },
-          "por": { ".validate": "newData.isString() && newData.val().length > 0" },
-          "em": { ".validate": "newData.isString()" },
-          "$outro": { ".validate": false }
+          "status": {
+            ".validate": "newData.val() === 'aceito' || newData.val() === 'recusado'"
+          },
+          "por": {
+            ".validate": "newData.isString() && newData.val().length > 0"
+          },
+          "em": {
+            ".validate": "newData.isString()"
+          },
+          "$outro": {
+            ".validate": false
+          }
         }
       },
-
       "operadores": {
-        ".read": "auth != null",
-        ".write": "auth != null",
-        "$i": { ".validate": "newData.isString() && newData.val().length <= 60" }
+        ".read": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
+        ".write": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
+        "$i": {
+          ".validate": "newData.isString() && newData.val().length <= 60"
+        }
       },
-
       "comando": {
         ".read": "auth != null && (root.child('farmacia/autorizados').child(auth.uid).val() === true || root.child('farmacia/agentes').child(auth.uid).val() === true)",
         ".write": "auth != null && (root.child('farmacia/autorizados').child(auth.uid).val() === true || root.child('farmacia/agentes').child(auth.uid).val() === true)",
-        "acao": { ".validate": "newData.val() === 'sincronizar_vendas' || newData.val() === 'atualizar_envio'" }
+        "acao": {
+          ".validate": "newData.val() === 'sincronizar_vendas' || newData.val() === 'atualizar_envio' || newData.val() === 'tarefas' || newData.val() === 'negativos' || newData.val() === 'comparacao' || newData.val() === 'resumo' || newData.val() === 'inventario' || newData.val() === 'produto' || newData.val() === 'saldo' || newData.val() === 'atualizar_agente' || newData.val() === 'config' || newData.val() === 'colunas' || newData.val() === 'totais' || newData.val() === 'zerar_negativos' || newData.val() === 'ajustar_lote' || newData.val() === 'receitas' || newData.val() === 'anvisa' || newData.val() === 'pendentes' || newData.val() === 'login_sngpc' || newData.val() === 'arrumar_tarefa_anvisa' || newData.val() === 'log_anvisa' || newData.val() === 'retorno_anvisa' || newData.val() === 'ponteiro' || newData.val() === 'xml'"
+        },
+        "chave": {
+          ".validate": "newData.val() === 'transmitido_ate_venda' || newData.val() === 'coluna_saldo' || newData.val() === 'modo_saldo' || newData.val() === 'permitir_ajuste_estoque'"
+        }
       },
-
-      "autorizados": { ".read": "auth != null", ".write": false },
-      "agentes":     { ".read": "auth != null", ".write": false }
+      "ajustes": {
+        ".read": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
+        ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
+      },
+      "relatorios": {
+        ".read": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
+        ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
+      },
+      "publico": {
+        ".read": true,
+        ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
+      },
+      "autorizados": {
+        ".read": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
+        ".write": false
+      },
+      "agentes": {
+        ".read": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
+        ".write": false
+      }
     },
-
     "estoque": {
-      ".read": "auth != null",
-
+      ".read": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
       "itens": {
-        ".write": "auth != null",
+        ".write": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
         "$id": {
-          "nome": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 120" },
-          "quantidade": { ".validate": "newData.isNumber() && newData.val() >= 0" },
-          "minimo": { ".validate": "newData.isNumber() && newData.val() >= 0" },
-          "validade": { ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^[0-9]{2}\\/[0-9]{2}$/))" },
-          "atualizadoPor": { ".validate": "newData.isString() && newData.val().length > 0" }
+          "nome": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 120"
+          },
+          "quantidade": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "minimo": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "validade": {
+            ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^[0-9]{2}\\/[0-9]{2}$/))"
+          },
+          "atualizadoPor": {
+            ".validate": "newData.isString() && newData.val().length > 0"
+          }
         }
       },
-
       "compras": {
-        ".write": "auth != null",
+        ".write": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
         "$id": {
-          "nome": { ".validate": "newData.isString() && newData.val().length > 0" },
-          "quantidade": { ".validate": "newData.isNumber() && newData.val() > 0" }
+          "nome": {
+            ".validate": "newData.isString() && newData.val().length > 0"
+          },
+          "quantidade": {
+            ".validate": "newData.isNumber() && newData.val() > 0"
+          }
         }
       },
-
       "historico": {
         "$id": {
-          ".write": "auth != null && !data.exists()",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous' && !data.exists()",
           ".validate": "newData.hasChildren(['tipo','quando','por'])",
-          "por":    { ".validate": "newData.isString() && newData.val().length > 0" },
-          "tipo":   { ".validate": "newData.isString()" },
-          "quando": { ".validate": "newData.isString()" }
+          "por": {
+            ".validate": "newData.isString() && newData.val().length > 0"
+          },
+          "tipo": {
+            ".validate": "newData.isString()"
+          },
+          "quando": {
+            ".validate": "newData.isString()"
+          }
         }
       }
     }

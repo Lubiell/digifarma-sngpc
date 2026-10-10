@@ -7,6 +7,7 @@ dentro de bloco abortando o script, "^|" chegando literal dentro de
 aspas, e "(S/N)" fechando o if no meio da pergunta.
 """
 import glob
+import json
 import os
 import re
 import sys
@@ -268,6 +269,22 @@ def conferir_protocolo_do_app():
     pedidas = set(re.findall(r"chave: '([a-z_]+)'", app))
     for fora in sorted(pedidas - permitidas):
         falhas.append("o app pede a chave de config '%s', fora de CONFIG_REMOTO" % fora)
+
+    # As regras do Firebase tambem tem uma lista de acoes e chaves. Acao
+    # fora dela e recusada no app com PERMISSION_DENIED, antes de chegar
+    # ao agente - foi o que aconteceu com o 'xml' do Buscar nos XML.
+    try:
+        regras = json.load(open('agente/regras-firebase.json', encoding='utf-8'))
+        comando = regras['rules']['farmacia']['comando']
+        nas_regras = set(re.findall(r"=== '([a-z_]+)'", comando['acao']['.validate']))
+        chaves_regras = set(re.findall(r"=== '([a-z_]+)'", comando['chave']['.validate']))
+    except (OSError, ValueError, KeyError) as e:
+        falhas.append('nao consegui ler a lista de acoes das regras: %s' % e)
+    else:
+        for fora in sorted((mandadas | relatorios_app) - nas_regras):
+            falhas.append("o app manda a acao '%s' e as regras do Firebase recusam" % fora)
+        for fora in sorted(pedidas - chaves_regras):
+            falhas.append("o app pede a chave '%s' e as regras do Firebase recusam" % fora)
 
     for f in falhas:
         print('  FALHA protocolo do app: %s' % f)
