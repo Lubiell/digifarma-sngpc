@@ -2852,12 +2852,198 @@ def recado_de_permissao(config):
         'esse UID e as regras valem para ele igual valem para o app.' % uid)
 
 
+def resumo_do_dia(dados):
+    """Os números do placar da Situação, para farmacia/historico/<dia>.
+
+    A tela mostrava só a foto de agora: "14 divergências" não diz se a
+    conferência está ganhando ou perdendo. As contas são as MESMAS do app
+    (diferença diferente de zero, XML fora de 'ok', vendas com problema) —
+    histórico que conta de outro jeito que o placar só gera discussão."""
+    itens = dados.get('itens') or []
+    confianca = (dados.get('inventario') or {}).get('confianca') or {}
+    return {
+        'em': dados.get('atualizadoEm')
+              or datetime.datetime.now().isoformat(timespec='seconds'),
+        'divergencias': sum(1 for i in itens if round(numero(i.get('diferenca')), 3)),
+        'porMotivo': dict(dados.get('resumoSaldo') or {}),
+        'xml': sum(1 for c in (dados.get('conferencia_xml') or [])
+                   if c and c.get('situacao') != 'ok'),
+        'vendasProblema': len(dados.get('vendas_problema') or []),
+        # dia com a comparação prejudicada não se compara com os outros
+        'confiavel': bool(confianca.get('confiavel', True)),
+    }
+
+
+def publicar_historico(db, dados):
+    """Um nó por dia; cada sincronização do dia regrava o mesmo — fica o
+    último retrato do dia, e o histórico cresce um registro por dia."""
+    dia = datetime.date.today().isoformat()
+    db.reference('farmacia/historico/%s' % dia).set(resumo_do_dia(dados))
+
+
+# ============================================================
+# AVISOS NO CELULAR (Firebase Cloud Messaging)
+# ============================================================
+# O app só mostrava o problema para quem o abria. Venda de controlado sem
+# receita escriturada é o que derruba o envio, e o conserto é barato só
+# ANTES de transmitir: por isso o aviso vai ao celular sem ninguém pedir.
+#
+# Cada celular que ligou os avisos grava o seu token em
+# farmacia/notificacoes/<id>. O agente manda para todos; token que o FCM diz
+# que morreu (app desinstalado, permissão revogada) sai da lista.
+ARQUIVO_AVISOS = 'avisos_enviados.json'
+HORA_DO_RESUMO = 8          # o resumo do dia sai na 1ª sincronização depois disto
+URL_APP = 'https://lubiell.github.io/digifarma-sngpc/'
+
+
+def _messaging():
+    from firebase_admin import messaging
+    return messaging
+
+
+def ler_avisos():
+    """O que já foi avisado. Arquivo estranho vale como vazio: memória
+    perdida custa um aviso repetido; memória que trava custa todos."""
+    caminho = os.path.join(PASTA, ARQUIVO_AVISOS)
+    try:
+        with open(caminho, encoding='utf-8') as f:
+            estado = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(estado, dict):
+        return {}
+    if not isinstance(estado.get('vendas', []), list):
+        estado['vendas'] = []
+    return estado
+
+
+def gravar_avisos(chave, valor):
+    """Grava UMA chave, relendo o arquivo na hora.
+
+    A fila (5 min) grava 'vendas' e a sincronização (1 h) grava 'resumo', e
+    as duas coincidem na hora cheia. Gravar o estado lido lá no começo
+    devolvia ao disco a chave velha da outra — e a venda era avisada de
+    novo. Relida aqui, cada uma só mexe na sua. Escrita em arquivo à parte
+    e troca atômica: queda de energia no meio não deixa JSON pela metade."""
+    try:
+        estado = ler_avisos()
+        estado[chave] = valor
+        caminho = os.path.join(PASTA, ARQUIVO_AVISOS)
+        with open(caminho + '.tmp', 'w', encoding='utf-8') as f:
+            json.dump(estado, f, ensure_ascii=False)
+        os.replace(caminho + '.tmp', caminho)
+    except Exception as e:
+        registrar('Não consegui guardar o que já foi avisado: %s' % e)
+
+
+def tokens_de_aviso(db):
+    """{id: token} dos celulares que ligaram os avisos."""
+    cadastro = db.reference('farmacia/notificacoes').get() or {}
+    return {chave: texto(d.get('token')) for chave, d in cadastro.items()
+            if isinstance(d, dict) and texto(d.get('token'))}
+
+
+def enviar_aviso(db, titulo, corpo, tokens=None):
+    """Manda para todos os celulares cadastrados. Devolve quantos receberam."""
+    messaging = _messaging()
+    if tokens is None:
+        tokens = tokens_de_aviso(db)
+    entregues = 0
+    for chave, token in tokens.items():
+        mensagem = messaging.Message(
+            token=token,
+            data={'titulo': titulo, 'texto': corpo},
+            webpush=messaging.WebpushConfig(
+                notification=messaging.WebpushNotification(
+                    title=titulo, body=corpo, icon='icon-192.png'),
+                fcm_options=messaging.WebpushFCMOptions(link=URL_APP)))
+        try:
+            messaging.send(mensagem)
+            entregues += 1
+        except Exception as e:
+            # celular que desligou os avisos ou apagou o app: o token não
+            # volta a valer, e tentar de novo a cada 5 minutos só suja o log
+            if type(e).__name__ in ('UnregisteredError', 'SenderIdMismatchError') \
+                    or 'registration token' in str(e).lower():
+                try:
+                    db.reference('farmacia/notificacoes/%s' % chave).delete()
+                except Exception:
+                    pass
+                registrar('Aviso: celular %s saiu da lista (%s).' % (chave, type(e).__name__))
+            else:
+                registrar('Não consegui avisar o celular %s: %s' % (chave, e))
+    return entregues
+
+
+def avisar_vendas_sem_receita(db, sem_receita):
+    """Avisa a venda de controlado sem receita que ainda NÃO foi avisada.
+
+    Uma vez por venda: o aviso que se repete a cada 5 minutos é o aviso que
+    se desliga. Só conta como avisada quando chegou a algum celular — sem
+    ninguém cadastrado, ela espera, e quem ligar os avisos recebe."""
+    if not sem_receita:
+        return 0
+    estado = ler_avisos()
+    pendentes = {}
+    for v in sem_receita:
+        venda = texto(v.get('venda'))
+        if venda:
+            pendentes.setdefault(venda, texto(v.get('descricao')).strip())
+    ja = set(estado.get('vendas', []))
+    novas = sorted((v for v in pendentes if v not in ja), key=numero)
+    if not novas:
+        # venda corrigida sai da memória — senão a lista cresce para sempre
+        if ja - set(pendentes):
+            gravar_avisos('vendas', sorted(ja & set(pendentes), key=numero))
+        return 0
+    if len(novas) == 1:
+        corpo = 'Venda %s: %s sem receita. Lance antes do próximo envio.' % (
+            novas[0], pendentes[novas[0]][:40] or 'controlado')
+    else:
+        corpo = '%d vendas de controlado sem receita (%s%s). Lance antes do próximo envio.' % (
+            len(novas), ', '.join(novas[:5]), '…' if len(novas) > 5 else '')
+    entregues = enviar_aviso(db, 'Venda sem receita', corpo)
+    if entregues:
+        # só as que ainda estão pendentes: a lista não cresce para sempre
+        gravar_avisos('vendas', sorted((ja | set(novas)) & set(pendentes), key=numero))
+    return entregues
+
+
+def avisar_resumo_do_dia(db, dados, agora=None):
+    """Um resumo por dia, de manhã, e só quando há o que corrigir."""
+    agora = agora or datetime.datetime.now()
+    if agora.hour < HORA_DO_RESUMO:
+        return 0
+    estado = ler_avisos()
+    hoje = agora.date().isoformat()
+    if estado.get('resumo') == hoje:
+        return 0
+    r = resumo_do_dia(dados)
+    sem_receita = len(dados.get('vendasSemReceita') or [])
+    if not (r['divergencias'] or r['vendasProblema'] or sem_receita):
+        return 0
+    corpo = '%d divergência(s) de saldo, %d venda(s) com problema, %d sem receita para o próximo envio.' % (
+        r['divergencias'], r['vendasProblema'], sem_receita)
+    entregues = enviar_aviso(db, 'Conferência do dia', corpo)
+    if entregues:
+        gravar_avisos('resumo', hoje)
+    return entregues
+
+
 def publicar(db, dados):
     db.reference('farmacia/inventario').set(dados)
     try:
         publicar_publico(db, dados)
     except Exception as e:
         registrar('Não consegui publicar o quadro do balcão: %s' % e)
+    try:
+        publicar_historico(db, dados)
+    except Exception as e:
+        registrar('Não consegui gravar o histórico do dia: %s' % e)
+    try:
+        avisar_resumo_do_dia(db, dados)
+    except Exception as e:
+        registrar('Não consegui mandar o resumo do dia: %s' % e)
     # O .set() acima troca o nó INTEIRO. Se alguma consulta falhou ao montar
     # os dados, o ramo dela nem entra no dicionário — e some do Firebase.
     #
@@ -3346,6 +3532,14 @@ def publicar_vendas_recentes(config, db):
         db.reference('farmacia/inventario/%s' % caminho).set(valor)
         escritos.append(caminho)
 
+    # o aviso olha a lista inteira, não o "mudou": venda que chegou quando
+    # ninguém tinha ligado os avisos ainda precisa sair quando alguém ligar
+    if sem_receita:
+        try:
+            avisar_vendas_sem_receita(db, sem_receita)
+        except Exception as e:
+            registrar('Não consegui avisar as vendas sem receita: %s' % e)
+
     if escritos:
         db.reference('farmacia/inventario/vendasRecentesEm').set(
             datetime.datetime.now().isoformat(timespec='seconds'))
@@ -3516,46 +3710,144 @@ def versao_do_agente():
         return {}
 
 
+# O agente é mais de um arquivo, e quem diz quais é o próprio repositório:
+# agente/arquivos.json, {"arquivos": {nome: trecho que o arquivo precisa ter}}.
+# Lida a cada atualização, a lista nova já vale para a própria atualização —
+# é o que permite, mais tarde, dividir o agente em módulos sem deixar o
+# servidor com o principal novo importando um módulo que ele nunca baixou.
+# Sem a lista no repositório (404), vale esta.
+ARQUIVOS_PADRAO = {'agente_auto.py': 'def principal(', 'mapa_xml.py': 'def comparar('}
+NOME_DE_ARQUIVO = re.compile(r'^[a-z][a-z0-9_]*\.py$')
+MAX_ARQUIVOS = 30
+
+
+def baixar_texto(url):
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=60) as resposta:
+        return resposta.read().decode('utf-8')
+
+
+def lista_de_arquivos(base):
+    """{arquivo: trecho obrigatório}, do arquivos.json do repositório.
+
+    O nome vira caminho no disco do servidor: só nome simples de módulo,
+    nada de pasta nem "..". Lista estranha para tudo — atualizar pela metade
+    é pior que não atualizar."""
+    import urllib.error
+    try:
+        bruto = json.loads(baixar_texto(base + '/arquivos.json'))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return dict(ARQUIVOS_PADRAO)
+        raise
+    arquivos = bruto.get('arquivos') if isinstance(bruto, dict) else None
+    if not isinstance(arquivos, dict) or 'agente_auto.py' not in arquivos \
+            or len(arquivos) > MAX_ARQUIVOS:
+        raise RuntimeError('arquivos.json do repositório não é uma lista válida')
+    for nome, marca in arquivos.items():
+        if not NOME_DE_ARQUIVO.match(nome) or not isinstance(marca, str) or not marca:
+            raise RuntimeError('arquivos.json tem um nome inválido: %r' % nome)
+    return arquivos
+
+
+def conferir_baixado(nome, texto_novo, marca):
+    if nome == 'agente_auto.py' and (len(texto_novo) < 20000
+                                     or 'def principal(' not in texto_novo
+                                     or 'CONSULTAS' not in texto_novo):
+        raise RuntimeError('o arquivo baixado não parece o agente (%d bytes)' % len(texto_novo))
+    if marca not in texto_novo:
+        raise RuntimeError('%s baixado não tem "%s" — não parece o arquivo certo' % (nome, marca))
+    compile(texto_novo, nome, 'exec')  # erro de sintaxe morre aqui, não no servidor
+
+
+def conferir_importacao(pasta, modulos):
+    """Importa os módulos novos num processo à parte, na pasta do agente.
+
+    Sintaxe certa não basta: o principal pode importar um módulo que não
+    veio, ou um nome que o módulo não tem. Isso só aparece importando — e
+    tem de aparecer aqui, com o backup na mão, e não na próxima rodada da
+    tarefa agendada, com o agente parado e ninguém no servidor."""
+    import subprocess
+    codigo = 'import ' + ', '.join(modulos)
+    # sem janela piscando na tela de quem usa o servidor, e sem herdar um
+    # teclado que a tarefa agendada não tem
+    r = subprocess.run([sys.executable, '-c', codigo], cwd=pasta,
+                       capture_output=True, text=True, timeout=120,
+                       stdin=subprocess.DEVNULL,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    if r.returncode != 0:
+        raise RuntimeError('o agente novo não carrega: %s'
+                           % (r.stderr.strip().splitlines() or ['erro sem mensagem'])[-1])
+
+
 def atualizar_agente(config):
     """Baixa o agente do GitHub e se substitui.
 
     É o que tira a farmácia da obrigação de ir ao servidor a cada correção.
-    Por isso mesmo, com cinto e suspensório: o arquivo baixado é conferido
-    (tamanho, conteúdo e SINTAXE) antes de encostar no que está rodando, e o
-    atual é guardado em backup. Se qualquer coisa falhar, nada é trocado —
-    um agente quebrado num servidor onde ninguém está é pior do que um
-    agente desatualizado."""
-    import urllib.request
+    Por isso mesmo, com cinto e suspensório: todos os arquivos são baixados
+    e conferidos (conteúdo e SINTAXE) antes de encostar no que está rodando;
+    o atual é guardado em backup; depois da troca, o agente novo é importado
+    num processo à parte e, se não carregar, TODOS os arquivos voltam ao que
+    eram. Um agente quebrado num servidor onde ninguém está é pior do que
+    um agente desatualizado."""
     url = config.get('url_atualizacao') or URL_AGENTE
-    with urllib.request.urlopen(url, timeout=60) as resposta:
-        novo = resposta.read().decode('utf-8')
+    base = url.rsplit('/', 1)[0]
+    arquivos = lista_de_arquivos(base)
+    novos = {}
+    for nome, marca in arquivos.items():
+        novos[nome] = baixar_texto(base + '/' + nome)
+        conferir_baixado(nome, novos[nome], marca)
 
-    if len(novo) < 20000 or 'def principal(' not in novo or 'CONSULTAS' not in novo:
-        raise RuntimeError('o arquivo baixado não parece o agente (%d bytes)' % len(novo))
-    compile(novo, 'agente_auto.py', 'exec')  # erro de sintaxe morre aqui, não no servidor
-
-    atual = os.path.abspath(__file__)
+    # tudo baixado e conferido: só agora encosta no disco
     antes = versao_do_agente()
-    backup = os.path.join(PASTA, 'agente_auto_antes_de_%s.py'
-                          % datetime.datetime.now().strftime('%Y-%m-%d_%H%M'))
-    shutil.copy2(atual, backup)
-    with open(atual, 'w', encoding='utf-8') as f:
-        f.write(novo)
+    carimbo = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    trocados = []          # (destino, backup ou None se o arquivo é novo)
+    try:
+        for nome, texto_novo in novos.items():
+            destino = os.path.join(PASTA, nome)
+            backup = None
+            if os.path.exists(destino):
+                with open(destino, encoding='utf-8') as f:
+                    if f.read() == texto_novo:
+                        continue
+                backup = os.path.join(PASTA, '%s_antes_de_%s.py' % (nome[:-3], carimbo))
+                shutil.copy2(destino, backup)
+            provisorio = destino + '.novo'
+            with open(provisorio, 'w', encoding='utf-8') as f:
+                f.write(texto_novo)
+            os.replace(provisorio, destino)
+            trocados.append((destino, backup))
+        if trocados:
+            conferir_importacao(PASTA, [n[:-3] for n in novos
+                                        if not n.startswith('teste_')])
+    except Exception as e:
+        for destino, backup in reversed(trocados):
+            try:
+                if backup:
+                    shutil.copy2(backup, destino)
+                else:
+                    os.remove(destino)
+            except Exception as e2:
+                registrar('NÃO consegui voltar %s: %s' % (destino, e2))
+        raise RuntimeError('a atualização falhou e o agente voltou à versão '
+                           'anterior: %s' % e)
 
     # Guardar backup a cada atualização e nunca limpar enche a pasta de
     # cópias quase iguais — cinco num único dia, na farmácia. Os últimos
     # poucos servem para voltar atrás; os antigos só confundem quem procura
     # o arquivo certo numa emergência.
-    try:
-        antigos = sorted(n for n in os.listdir(PASTA)
-                         if n.startswith('agente_auto_antes_de_') and n.endswith('.py'))
-        for velho in antigos[:-BACKUPS_GUARDADOS]:
-            os.remove(os.path.join(PASTA, velho))
-        if len(antigos) > BACKUPS_GUARDADOS:
-            registrar('Apaguei %d backup(s) antigo(s) do agente; ficaram os %d últimos.'
-                      % (len(antigos) - BACKUPS_GUARDADOS, BACKUPS_GUARDADOS))
-    except Exception as e:
-        registrar('Não consegui limpar os backups antigos: %s' % e)
+    for nome in novos:
+        prefixo = '%s_antes_de_' % nome[:-3]
+        try:
+            antigos = sorted(n for n in os.listdir(PASTA)
+                             if n.startswith(prefixo) and n.endswith('.py'))
+            for velho in antigos[:-BACKUPS_GUARDADOS]:
+                os.remove(os.path.join(PASTA, velho))
+            if len(antigos) > BACKUPS_GUARDADOS:
+                registrar('Apaguei %d backup(s) antigo(s) de %s; ficaram os %d últimos.'
+                          % (len(antigos) - BACKUPS_GUARDADOS, nome, BACKUPS_GUARDADOS))
+        except Exception as e:
+            registrar('Não consegui limpar os backups antigos: %s' % e)
 
     # As regras do banco andam junto com o agente: função nova quase sempre
     # quer uma ação nova liberada, e enquanto o JSON não é copiado à mão para
@@ -3570,13 +3862,14 @@ def atualizar_agente(config):
         registrar(recado_regras.strip())
 
     depois = versao_do_agente()
-    if depois.get('hash') == antes.get('hash'):
+    if not trocados:
         return ('O agente já estava na versão mais nova (%s).%s'
                 % (antes.get('hash'), recado_regras))
-    return ('Agente atualizado: %s -> %s (%d bytes). Backup em %s. A próxima '
-            'execução já roda a versão nova.%s'
-            % (antes.get('hash'), depois.get('hash'), depois.get('bytes'),
-               os.path.basename(backup), recado_regras))
+    return ('Agente atualizado: %s -> %s (%d bytes); arquivos trocados: %s. '
+            'Backup com o carimbo %s. A próxima execução já roda a versão nova.%s'
+            % (antes.get('hash'), depois.get('hash'), depois.get('bytes') or 0,
+               ', '.join(os.path.basename(d) for d, _ in trocados), carimbo,
+               recado_regras))
 
 
 URL_REGRAS = REPO_CRU + '/regras-firebase.json'
@@ -5548,6 +5841,14 @@ def atender_pedido(config, db, pedido):
 
     if acao == 'desmarcar_controlado':
         return desmarcar_controlado(config, db, pedido)
+
+    if acao == 'testar_aviso':
+        tokens = tokens_de_aviso(db)
+        if not tokens:
+            return 'Nenhum celular com avisos ligados. Ligue no app, aba Servidor.'
+        entregues = enviar_aviso(db, 'Teste de aviso',
+                                 'Os avisos deste celular estão funcionando.', tokens)
+        return 'Aviso de teste entregue a %d de %d celular(es).' % (entregues, len(tokens))
 
     if acao == 'config':
         recado = aplicar_config(config, pedido)

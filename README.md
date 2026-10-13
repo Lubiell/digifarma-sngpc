@@ -41,6 +41,8 @@ atende as três exigências.
 | Vendas | controlado vendido sem receita escriturada ou sem lote — a causa clássica de recusa |
 | Aceites | marcar à mão o aceite ou a recusa de cada envio, com nome e horário |
 
+Para quem usa o app no balcão: [MANUAL_BALCAO.md](MANUAL_BALCAO.md), uma página com o que fazer diante de cada aviso.
+
 Os dois botões da aba Situação escrevem em `farmacia/comando`. O agente
 atende em até 5 minutos e marca o pedido como concluído — o app mostra o
 estado da fila.

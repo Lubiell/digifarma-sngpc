@@ -548,6 +548,291 @@ def principal():
     finally:
         ag.consultar = guardado
 
+    # --- histórico do dia: as mesmas contas do placar do app ---
+    resumo = ag.resumo_do_dia({
+        'atualizadoEm': '2026-10-13T10:00:00',
+        'itens': [{'diferenca': 2, 'motivo': 'quantidade'}, {'diferenca': 0.0},
+                  {'diferenca': -1, 'motivo': 'negativo'}, {'diferenca': 0.0004}],
+        'resumoSaldo': {'quantidade': 1, 'negativo': 1},
+        'conferencia_xml': [{'situacao': 'ok'}, {'situacao': 'fora_do_xml'}],
+        'vendas_problema': [{'venda': 1}, {'venda': 2}, {'venda': 3}],
+        'inventario': {'confianca': {'confiavel': False}},
+    })
+    conferir('o histórico conta como o placar (diferença ≠ 0, XML fora de ok, vendas)',
+             (resumo['divergencias'], resumo['xml'], resumo['vendasProblema'])
+             == (2, 1, 3), resumo)
+    conferir('o histórico marca o dia de comparação prejudicada',
+             resumo['confiavel'] is False and resumo['porMotivo'] == {'quantidade': 1, 'negativo': 1},
+             resumo)
+    conferir('dia sem nada publicado vira zeros, não erro',
+             ag.resumo_do_dia({})['divergencias'] == 0 and ag.resumo_do_dia({})['confiavel'] is True)
+
+    gravados = {}
+
+    class RefHistorico:
+        def __init__(self, caminho):
+            self.caminho = caminho
+
+        def set(self, valor):
+            gravados[self.caminho] = valor
+
+    class DbHistorico:
+        def reference(self, caminho):
+            return RefHistorico(caminho)
+
+    ag.publicar_historico(DbHistorico(), {'itens': [{'diferenca': 1}]})
+    hoje_hist = 'farmacia/historico/%s' % datetime.date.today().isoformat()
+    conferir('um nó por dia em farmacia/historico/<data>',
+             list(gravados) == [hoje_hist] and gravados[hoje_hist]['divergencias'] == 1,
+             gravados)
+
+    # --- avisos no celular (FCM simulado) ---
+    enviados = []
+
+    class TokenMorto(Exception):
+        pass
+    TokenMorto.__name__ = 'UnregisteredError'
+
+    class MessagingFalso:
+        class Message:
+            def __init__(self, token, data, webpush):
+                self.token, self.data, self.webpush = token, data, webpush
+
+        def WebpushConfig(self, **k):
+            return k
+
+        def WebpushNotification(self, **k):
+            return k
+
+        def WebpushFCMOptions(self, **k):
+            return k
+
+        def send(self, mensagem):
+            if mensagem.token == 'morto':
+                raise TokenMorto('Requested entity was not found.')
+            enviados.append((mensagem.token, mensagem.data['titulo'], mensagem.data['texto']))
+
+    apagados = []
+
+    class DbAvisos:
+        def __init__(self, cadastro):
+            self.cadastro = cadastro
+
+        def reference(self, caminho):
+            db = self
+
+            class Ref:
+                def get(self):
+                    return db.cadastro
+
+                def delete(self):
+                    apagados.append(caminho)
+            return Ref()
+
+    pasta_avisos = tempfile.mkdtemp()
+    guardados = (ag._messaging, ag.PASTA)
+    try:
+        ag._messaging = lambda: MessagingFalso()
+        ag.PASTA = pasta_avisos
+        celulares = DbAvisos({'a1': {'token': 'tok-1', 'em': 'x'}, 'a2': {'token': 'morto', 'em': 'x'}})
+        venda = [{'venda': 46505, 'descricao': 'OLANZAPINA 10MG', 'ms': '1'}]
+
+        ag.avisar_vendas_sem_receita(DbAvisos({}), venda)
+        conferir('sem celular cadastrado, a venda não conta como avisada',
+                 not enviados and not ag.ler_avisos().get('vendas'), ag.ler_avisos())
+
+        ag.avisar_vendas_sem_receita(celulares, venda)
+        conferir('venda sem receita nova vira aviso com o número da venda',
+                 enviados == [('tok-1', 'Venda sem receita',
+                               'Venda 46505: OLANZAPINA 10MG sem receita. Lance antes do próximo envio.')],
+                 enviados)
+        conferir('celular que desinstalou sai da lista', apagados == ['farmacia/notificacoes/a2'], apagados)
+
+        enviados.clear()
+        ag.avisar_vendas_sem_receita(celulares, venda)
+        conferir('a mesma venda não é avisada de novo a cada 5 minutos', not enviados, enviados)
+
+        ag.avisar_vendas_sem_receita(celulares, venda + [
+            {'venda': 46510, 'descricao': 'A'}, {'venda': 46511, 'descricao': 'B'}])
+        conferir('várias vendas novas viram um aviso só',
+                 len(enviados) == 1 and '2 vendas' in enviados[0][2] and '46510, 46511' in enviados[0][2],
+                 enviados)
+        ag.avisar_vendas_sem_receita(celulares, [{'venda': 46511, 'descricao': 'B'}])
+        conferir('venda corrigida sai da memória dos avisos',
+                 ag.ler_avisos()['vendas'] == ['46511'], ag.ler_avisos())
+
+        # a sincronização grava o resumo enquanto a fila trabalha nas vendas
+        ag.gravar_avisos('resumo', '2026-10-14')
+        ag.gravar_avisos('vendas', ['46511'])
+        conferir('uma gravação dos avisos não apaga a chave da outra',
+                 ag.ler_avisos() == {'resumo': '2026-10-14', 'vendas': ['46511']}, ag.ler_avisos())
+        with open(os.path.join(pasta_avisos, ag.ARQUIVO_AVISOS), 'w') as f:
+            f.write('[]')
+        enviados.clear()
+        ag.avisar_vendas_sem_receita(celulares, [{'venda': 50000, 'descricao': 'X'}])
+        conferir('memória de avisos estragada não trava os avisos',
+                 len(enviados) == 1 and ag.ler_avisos().get('vendas') == ['50000'], ag.ler_avisos())
+        with open(os.path.join(pasta_avisos, ag.ARQUIVO_AVISOS), 'w') as f:
+            f.write('{}')
+
+        enviados.clear()
+        com_pendencia = {'itens': [{'diferenca': 1}], 'vendas_problema': [], 'vendasSemReceita': [1]}
+        cedo = datetime.datetime(2026, 10, 14, 7, 30)
+        ag.avisar_resumo_do_dia(celulares, com_pendencia, cedo)
+        conferir('o resumo do dia não sai de madrugada', not enviados)
+        manha = datetime.datetime(2026, 10, 14, 8, 5)
+        ag.avisar_resumo_do_dia(celulares, com_pendencia, manha)
+        ag.avisar_resumo_do_dia(celulares, com_pendencia, manha + datetime.timedelta(hours=1))
+        conferir('o resumo sai uma vez por dia, com os números',
+                 len(enviados) == 1 and enviados[0][2].startswith('1 divergência(s) de saldo, 0 venda(s)'),
+                 enviados)
+        enviados.clear()
+        ag.avisar_resumo_do_dia(celulares, {'itens': []}, datetime.datetime(2026, 10, 15, 9))
+        conferir('dia sem pendência não manda resumo', not enviados, enviados)
+
+        enviados.clear()
+        recado = ag.atender_pedido({}, DbAvisos({'a1': {'token': 'tok-1', 'em': 'x'}}),
+                                   {'acao': 'testar_aviso'})
+        conferir('o botão de teste manda um aviso e diz quantos receberam',
+                 len(enviados) == 1 and '1 de 1' in recado, recado)
+        recado = ag.atender_pedido({}, DbAvisos({}), {'acao': 'testar_aviso'})
+        conferir('teste sem celular cadastrado explica como ligar', 'Nenhum celular' in recado, recado)
+    finally:
+        ag._messaging, ag.PASTA = guardados
+        shutil.rmtree(pasta_avisos, ignore_errors=True)
+
+    # --- atualizador de vários arquivos, com volta atrás ---
+    import json
+    import urllib.error
+
+    def agente_falso(extra=''):
+        return 'CONSULTAS = {}\n%s\ndef principal():\n    pass\n' % extra + '#' * 20000
+
+    def montar_servidor(arquivos_no_disco):
+        pasta_srv = tempfile.mkdtemp()
+        for nome, conteudo in arquivos_no_disco.items():
+            with open(os.path.join(pasta_srv, nome), 'w', encoding='utf-8') as f:
+                f.write(conteudo)
+        return pasta_srv
+
+    def ler(pasta_srv, nome):
+        with open(os.path.join(pasta_srv, nome), encoding='utf-8') as f:
+            return f.read()
+
+    repositorio = {}
+
+    def baixar_falso(url):
+        nome = url.rsplit('/', 1)[1]
+        if nome not in repositorio:
+            raise urllib.error.HTTPError(url, 404, 'Not Found', {}, None)
+        return repositorio[nome]
+
+    antigo_agente, antigo_mapa = agente_falso('VERSAO = 1'), 'def comparar():\n    return 1\n'
+    guardados = (ag.PASTA, ag.baixar_texto, ag.publicar_regras)
+    pastas = []
+    try:
+        ag.baixar_texto = baixar_falso
+        ag.publicar_regras = lambda _config: 'regras ok'
+
+        # 1. lista nova com um módulo novo: tudo chega, backups ficam
+        ag.PASTA = montar_servidor({'agente_auto.py': antigo_agente, 'mapa_xml.py': antigo_mapa})
+        pastas.append(ag.PASTA)
+        repositorio.clear()
+        repositorio.update({
+            'arquivos.json': json.dumps({'arquivos': {'agente_auto.py': 'def principal(',
+                                                      'mapa_xml.py': 'def comparar(',
+                                                      'coleta.py': 'def coletar('}}),
+            'agente_auto.py': agente_falso('import coleta\nVERSAO = 2'),
+            'mapa_xml.py': 'def comparar():\n    return 2\n',
+            'coleta.py': 'def coletar():\n    return 2\n',
+        })
+        recado = ag.atualizar_agente({})
+        conferir('atualizador baixa a lista do repositório, inclusive módulo novo',
+                 'VERSAO = 2' in ler(ag.PASTA, 'agente_auto.py')
+                 and ler(ag.PASTA, 'coleta.py').startswith('def coletar')
+                 and 'return 2' in ler(ag.PASTA, 'mapa_xml.py'), recado)
+        backups = sorted(n for n in os.listdir(ag.PASTA) if '_antes_de_' in n)
+        conferir('cada arquivo trocado deixa backup com o nome de sempre',
+                 [b.split('_antes_de_')[0] for b in backups] == ['agente_auto', 'mapa_xml'], backups)
+
+        # 2. o principal novo importa um módulo que não veio: tudo volta
+        ag.PASTA = montar_servidor({'agente_auto.py': antigo_agente, 'mapa_xml.py': antigo_mapa})
+        pastas.append(ag.PASTA)
+        repositorio.clear()
+        repositorio.update({
+            'arquivos.json': json.dumps({'arquivos': {'agente_auto.py': 'def principal(',
+                                                      'mapa_xml.py': 'def comparar(',
+                                                      'leitura.py': 'def ler('}}),
+            'agente_auto.py': agente_falso('import modulo_que_nao_veio\nVERSAO = 3'),
+            'mapa_xml.py': 'def comparar():\n    return 3\n',
+            'leitura.py': 'def ler():\n    return 3\n',
+        })
+        try:
+            ag.atualizar_agente({})
+            conferir('agente novo que não carrega volta TODOS os arquivos', False)
+        except RuntimeError as e:
+            conferir('agente novo que não carrega volta TODOS os arquivos',
+                     ler(ag.PASTA, 'agente_auto.py') == antigo_agente
+                     and ler(ag.PASTA, 'mapa_xml.py') == antigo_mapa
+                     and not os.path.exists(os.path.join(ag.PASTA, 'leitura.py'))
+                     and 'voltou à versão anterior' in str(e)
+                     and 'modulo_que_nao_veio' in str(e), e)
+
+        # 3. lista com caminho para fora da pasta: recusada antes de tocar no disco
+        repositorio['arquivos.json'] = json.dumps(
+            {'arquivos': {'agente_auto.py': 'def principal(', '../fora.py': 'x'}})
+        try:
+            ag.atualizar_agente({})
+            conferir('arquivos.json com caminho estranho é recusado', False)
+        except RuntimeError as e:
+            conferir('arquivos.json com caminho estranho é recusado',
+                     'nome inválido' in str(e) and ler(ag.PASTA, 'agente_auto.py') == antigo_agente, e)
+
+        # 4. sem arquivos.json no repositório: vale a lista fixa
+        del repositorio['arquivos.json']
+        repositorio.update({'agente_auto.py': agente_falso('VERSAO = 4'),
+                            'mapa_xml.py': 'def comparar():\n    return 4\n'})
+        ag.atualizar_agente({})
+        conferir('sem arquivos.json, atualiza o agente e o mapa_xml',
+                 'VERSAO = 4' in ler(ag.PASTA, 'agente_auto.py')
+                 and 'return 4' in ler(ag.PASTA, 'mapa_xml.py'))
+
+        # 5. erro de sintaxe em um arquivo: nada é trocado
+        antes_do_erro = ler(ag.PASTA, 'agente_auto.py')
+        repositorio.update({'agente_auto.py': agente_falso('VERSAO = 5'),
+                            'mapa_xml.py': 'def comparar(:\n'})
+        try:
+            ag.atualizar_agente({})
+            conferir('erro de sintaxe em qualquer arquivo: nada é trocado', False)
+        except SyntaxError:
+            conferir('erro de sintaxe em qualquer arquivo: nada é trocado',
+                     ler(ag.PASTA, 'agente_auto.py') == antes_do_erro)
+
+        # 6. nada mudou
+        repositorio.update({'agente_auto.py': antes_do_erro,
+                            'mapa_xml.py': 'def comparar():\n    return 4\n'})
+        conferir('repositório igual ao servidor: diz que já está na mais nova',
+                 'já estava' in ag.atualizar_agente({}))
+    finally:
+        ag.PASTA, ag.baixar_texto, ag.publicar_regras = guardados
+        for p in pastas:
+            shutil.rmtree(p, ignore_errors=True)
+
+    # a lista de verdade, do repositório: passa na validação, e cada arquivo
+    # listado existe aqui e tem o trecho que o atualizador vai exigir dele
+    aqui = os.path.dirname(os.path.abspath(__file__))
+    guardado = ag.baixar_texto
+    try:
+        ag.baixar_texto = lambda url: open(os.path.join(aqui, url.rsplit('/', 1)[1]),
+                                           encoding='utf-8').read()
+        lista = ag.lista_de_arquivos('repo')
+        sem_marca = [n for n, marca in lista.items()
+                     if marca not in open(os.path.join(aqui, n), encoding='utf-8').read()]
+        conferir('o arquivos.json do repositório passa no atualizador e bate com os arquivos',
+                 'agente_auto.py' in lista and not sem_marca, (lista, sem_marca))
+    finally:
+        ag.baixar_texto = guardado
+
     # --- desmarcar controlado pelo app ---
     escritos, ajustes = [], []
 
