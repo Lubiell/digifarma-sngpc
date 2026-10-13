@@ -36,7 +36,7 @@ atende as três exigências.
 | Aba | O que traz |
 |---|---|
 | Situação | carimbo do último sincronismo, dados do último envio, botões que pedem ao agente |
-| Saldo | divergências entre o saldo do Digifarma e o inventário SNGPC vigente, com laboratório, M.S., código de barras, lote e o detalhe de cada uma |
+| Saldo | divergências entre o saldo do Digifarma e o inventário SNGPC vigente, com laboratório, M.S., código de barras, lote e o detalhe de cada uma; no detalhe, o botão que desmarca psicotrópico/antimicrobiano no Digifarma (com a escrita ligada na aba Servidor, 60 minutos) |
 | XML | o que saiu no banco cruzado com o que subiu no XML, por registro M.S. + lote |
 | Vendas | controlado vendido sem receita escriturada ou sem lote — a causa clássica de recusa |
 | Aceites | marcar à mão o aceite ou a recusa de cada envio, com nome e horário |

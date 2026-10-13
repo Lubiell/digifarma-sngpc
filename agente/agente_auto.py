@@ -5016,18 +5016,8 @@ def prazo_do_ajuste(config):
 
 
 def conferir_permissao_de_ajuste(config, info):
-    """As duas travas que valem para qualquer escrita no Digifarma."""
-    ligada, limite = prazo_do_ajuste(config)
-    if not ligada:
-        if limite:
-            raise RuntimeError(
-                'a liberação da escrita venceu em %s. Ligue de novo pelo app, '
-                'no bloco "Corrigir estoque no Digifarma" — vale %d minutos.'
-                % (limite.strftime('%d/%m/%Y %H:%M'), JANELA_AJUSTE_MINUTOS))
-        raise RuntimeError(
-            'ajuste de estoque desligado. Ligue pelo app, no bloco "Corrigir '
-            'estoque no Digifarma": a liberação vale %d minutos e depois se '
-            'fecha sozinha.' % JANELA_AJUSTE_MINUTOS)
+    """As duas travas que valem para qualquer escrita no saldo do Digifarma."""
+    conferir_escrita_liberada(config)
     if info['modo'] != 'saldo':
         # nesta instalação a coluna é de MOVIMENTO: cada linha é um
         # lançamento, e o saldo é a soma. Escrever nela não corrige saldo,
@@ -5036,6 +5026,22 @@ def conferir_permissao_de_ajuste(config, info):
             'nesta instalação a coluna %s é de movimento, não de saldo. '
             'Ajustar por aqui inventaria lançamento — corrija no Digifarma.'
             % info['coluna'])
+
+
+def conferir_escrita_liberada(config):
+    """A trava que vale para QUALQUER escrita no Digifarma: a liberação com
+    prazo, ligada pelo app ou no servidor."""
+    ligada, limite = prazo_do_ajuste(config)
+    if not ligada:
+        if limite:
+            raise RuntimeError(
+                'a liberação da escrita venceu em %s. Ligue de novo pelo app, '
+                'na aba Servidor, bloco "Escrita no Digifarma" — vale %d minutos.'
+                % (limite.strftime('%d/%m/%Y %H:%M'), JANELA_AJUSTE_MINUTOS))
+        raise RuntimeError(
+            'escrita no Digifarma desligada. Ligue pelo app, na aba Servidor, '
+            'bloco "Escrita no Digifarma": a liberação vale %d minutos e '
+            'depois se fecha sozinha.' % JANELA_AJUSTE_MINUTOS)
 
 
 def registrar_ajuste(db, dados):
@@ -5235,6 +5241,107 @@ def ajustar_lote(config, db, pedido):
                 % (texto(linha.get('PRODUTO'))[:40], lote, antes, contado))
     finally:
         fechar(conexao)
+
+
+# O que cada pedido do app desmarca na PRODUTOS. São as mesmas colunas que
+# decidem, em todas as consultas deste agente, o que é controlado.
+COLUNAS_CONTROLADO = {
+    'ambos': ('PSICOTROPICO', 'ANTIMICROBIANO'),
+    'psicotropico': ('PSICOTROPICO',),
+    'antimicrobiano': ('ANTIMICROBIANO',),
+}
+
+
+def desmarcar_controlado(config, db, pedido):
+    """Tira a marca de psicotrópico e/ou antimicrobiano de UM produto.
+
+    É o mesmo que desmarcar a caixa no cadastro do Digifarma, feito do
+    celular para quem não está no servidor. Desmarcado, o produto sai do
+    SNGPC: as vendas dele deixam de ser escrituradas. Por isso só passa com
+    a escrita liberada, só mexe no produto pedido e guarda o antes e o
+    depois em farmacia/ajustes — remarcar é a caixa de volta no Digifarma.
+
+    'N' tem de ser um valor que o Digifarma já usa na coluna: gravar uma
+    marca que o sistema não conhece seria inventar cadastro."""
+    codigo = texto(pedido.get('produtoId')).strip()
+    if not re.fullmatch(r'\d{1,18}', codigo):
+        raise RuntimeError('diga qual produto (o código do Digifarma)')
+    quais = texto(pedido.get('desmarcar')).strip().lower() or 'ambos'
+    if quais not in COLUNAS_CONTROLADO:
+        raise RuntimeError('desmarcar aceita ambos, psicotropico ou antimicrobiano')
+    conferir_escrita_liberada(config)
+
+    conexao = conectar_firebird(config)
+    try:
+        linhas = consultar(conexao,
+                           'SELECT PRODUTO_ID, PRODUTO, REGISTRO_MS, PSICOTROPICO, '
+                           'ANTIMICROBIANO FROM PRODUTOS WHERE PRODUTO_ID = ?',
+                           (int(codigo),))
+        if not linhas:
+            raise RuntimeError('produto %s não existe no cadastro' % codigo)
+        linha = linhas[0]
+        nome = texto(linha.get('PRODUTO')).strip()
+        marcadas = [c for c in COLUNAS_CONTROLADO[quais]
+                    if texto(linha.get(c)).strip() == 'S']
+        if not marcadas:
+            recado = '%s já não estava marcado como %s.' % (
+                nome[:40], ' nem '.join(c.lower() for c in COLUNAS_CONTROLADO[quais]))
+            # A tela agrupa por M.S. + lote e mostra o código de UM dos
+            # cadastros; a marca pode estar em outro com o mesmo registro.
+            # Desmarcar esse outro por conta própria seria mexer num produto
+            # que ninguém pediu — o recado diz qual é, e a decisão fica com
+            # quem está no Digifarma.
+            ms = so_digitos(linha.get('REGISTRO_MS'))
+            if ms:
+                outros = [l for l in consultar(conexao, CONSULTAS['produtos_controlados'])
+                          if so_digitos(l.get('REGISTRO_MS')) == ms
+                          and texto(l.get('PRODUTO_ID')) != codigo
+                          and any(texto(l.get(c)).strip() == 'S'
+                                  for c in COLUNAS_CONTROLADO[quais])]
+                if outros:
+                    recado += (' Com o mesmo M.S., continua marcado: %s. Desmarque '
+                               'esse no cadastro do Digifarma.' % ', '.join(
+                                   '%s (código %s)' % (texto(l.get('PRODUTO')).strip()[:40],
+                                                       texto(l.get('PRODUTO_ID')))
+                                   for l in outros[:3]))
+            return recado
+        for c in marcadas:
+            if not consultar(conexao, "SELECT FIRST 1 PRODUTO_ID FROM PRODUTOS "
+                                      "WHERE %s = 'N'" % c):
+                raise RuntimeError(
+                    'nenhum produto tem %s = N no cadastro, então não sei como '
+                    'o Digifarma grava "desmarcado". Desmarque no Digifarma.' % c)
+
+        afetadas = executar(
+            conexao,
+            'UPDATE PRODUTOS SET %s WHERE PRODUTO_ID = ? AND (%s)'
+            % (', '.join("%s = 'N'" % c for c in marcadas),
+               ' OR '.join("%s = 'S'" % c for c in marcadas)),
+            (int(codigo),))
+        if not afetadas:
+            raise RuntimeError('o Digifarma não aceitou a alteração em %s' % nome[:40])
+        registrar_ajuste(db, {
+            'tipo': 'desmarcar_controlado',
+            'por': texto(pedido.get('pedidoPor')),
+            'produtoId': codigo, 'produto': nome,
+            'ms': so_digitos(linha.get('REGISTRO_MS')),
+            'colunas': [{'coluna': c, 'de': 'S', 'para': 'N'} for c in marcadas],
+        })
+    finally:
+        fechar(conexao)
+
+    # o produto sai da conferência: a tela só reflete isso depois de
+    # recalcular, e uma lista que ainda mostra o que foi desmarcado parece
+    # que o pedido não funcionou
+    recado = ('%s: desmarcado %s. Para voltar, marque a caixa de novo no '
+              'cadastro do Digifarma.' % (nome[:40], ' e '.join(c.lower() for c in marcadas)))
+    try:
+        modo_auto(config)
+    except Exception as e:
+        registrar('Desmarquei, mas a sincronização seguinte falhou: %s' % e)
+        # sem isto o produto continua na lista e parece que nada aconteceu
+        recado += ' A lista do app só muda na próxima sincronização.'
+    return recado
 
 
 def aplicar_config(config, pedido):
@@ -5438,6 +5545,9 @@ def atender_pedido(config, db, pedido):
 
     if acao == 'ajustar_lote':
         return ajustar_lote(config, db, pedido)
+
+    if acao == 'desmarcar_controlado':
+        return desmarcar_controlado(config, db, pedido)
 
     if acao == 'config':
         recado = aplicar_config(config, pedido)
