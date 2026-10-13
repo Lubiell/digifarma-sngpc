@@ -3695,46 +3695,140 @@ def versao_do_agente():
         return {}
 
 
+# O agente é mais de um arquivo, e quem diz quais é o próprio repositório:
+# agente/arquivos.json, {"arquivos": {nome: trecho que o arquivo precisa ter}}.
+# Lida a cada atualização, a lista nova já vale para a própria atualização —
+# é o que permite, mais tarde, dividir o agente em módulos sem deixar o
+# servidor com o principal novo importando um módulo que ele nunca baixou.
+# Sem a lista no repositório (404), vale esta.
+ARQUIVOS_PADRAO = {'agente_auto.py': 'def principal(', 'mapa_xml.py': 'def comparar('}
+NOME_DE_ARQUIVO = re.compile(r'^[a-z][a-z0-9_]*\.py$')
+MAX_ARQUIVOS = 30
+
+
+def baixar_texto(url):
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=60) as resposta:
+        return resposta.read().decode('utf-8')
+
+
+def lista_de_arquivos(base):
+    """{arquivo: trecho obrigatório}, do arquivos.json do repositório.
+
+    O nome vira caminho no disco do servidor: só nome simples de módulo,
+    nada de pasta nem "..". Lista estranha para tudo — atualizar pela metade
+    é pior que não atualizar."""
+    import urllib.error
+    try:
+        bruto = json.loads(baixar_texto(base + '/arquivos.json'))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return dict(ARQUIVOS_PADRAO)
+        raise
+    arquivos = bruto.get('arquivos') if isinstance(bruto, dict) else None
+    if not isinstance(arquivos, dict) or 'agente_auto.py' not in arquivos \
+            or len(arquivos) > MAX_ARQUIVOS:
+        raise RuntimeError('arquivos.json do repositório não é uma lista válida')
+    for nome, marca in arquivos.items():
+        if not NOME_DE_ARQUIVO.match(nome) or not isinstance(marca, str) or not marca:
+            raise RuntimeError('arquivos.json tem um nome inválido: %r' % nome)
+    return arquivos
+
+
+def conferir_baixado(nome, texto_novo, marca):
+    if nome == 'agente_auto.py' and (len(texto_novo) < 20000
+                                     or 'def principal(' not in texto_novo
+                                     or 'CONSULTAS' not in texto_novo):
+        raise RuntimeError('o arquivo baixado não parece o agente (%d bytes)' % len(texto_novo))
+    if marca not in texto_novo:
+        raise RuntimeError('%s baixado não tem "%s" — não parece o arquivo certo' % (nome, marca))
+    compile(texto_novo, nome, 'exec')  # erro de sintaxe morre aqui, não no servidor
+
+
+def conferir_importacao(pasta, modulos):
+    """Importa os módulos novos num processo à parte, na pasta do agente.
+
+    Sintaxe certa não basta: o principal pode importar um módulo que não
+    veio, ou um nome que o módulo não tem. Isso só aparece importando — e
+    tem de aparecer aqui, com o backup na mão, e não na próxima rodada da
+    tarefa agendada, com o agente parado e ninguém no servidor."""
+    import subprocess
+    codigo = 'import ' + ', '.join(modulos)
+    r = subprocess.run([sys.executable, '-c', codigo], cwd=pasta,
+                       capture_output=True, text=True, timeout=120)
+    if r.returncode != 0:
+        raise RuntimeError('o agente novo não carrega: %s'
+                           % (r.stderr.strip().splitlines() or ['erro sem mensagem'])[-1])
+
+
 def atualizar_agente(config):
     """Baixa o agente do GitHub e se substitui.
 
     É o que tira a farmácia da obrigação de ir ao servidor a cada correção.
-    Por isso mesmo, com cinto e suspensório: o arquivo baixado é conferido
-    (tamanho, conteúdo e SINTAXE) antes de encostar no que está rodando, e o
-    atual é guardado em backup. Se qualquer coisa falhar, nada é trocado —
-    um agente quebrado num servidor onde ninguém está é pior do que um
-    agente desatualizado."""
-    import urllib.request
+    Por isso mesmo, com cinto e suspensório: todos os arquivos são baixados
+    e conferidos (conteúdo e SINTAXE) antes de encostar no que está rodando;
+    o atual é guardado em backup; depois da troca, o agente novo é importado
+    num processo à parte e, se não carregar, TODOS os arquivos voltam ao que
+    eram. Um agente quebrado num servidor onde ninguém está é pior do que
+    um agente desatualizado."""
     url = config.get('url_atualizacao') or URL_AGENTE
-    with urllib.request.urlopen(url, timeout=60) as resposta:
-        novo = resposta.read().decode('utf-8')
+    base = url.rsplit('/', 1)[0]
+    arquivos = lista_de_arquivos(base)
+    novos = {}
+    for nome, marca in arquivos.items():
+        novos[nome] = baixar_texto(base + '/' + nome)
+        conferir_baixado(nome, novos[nome], marca)
 
-    if len(novo) < 20000 or 'def principal(' not in novo or 'CONSULTAS' not in novo:
-        raise RuntimeError('o arquivo baixado não parece o agente (%d bytes)' % len(novo))
-    compile(novo, 'agente_auto.py', 'exec')  # erro de sintaxe morre aqui, não no servidor
-
-    atual = os.path.abspath(__file__)
+    # tudo baixado e conferido: só agora encosta no disco
     antes = versao_do_agente()
-    backup = os.path.join(PASTA, 'agente_auto_antes_de_%s.py'
-                          % datetime.datetime.now().strftime('%Y-%m-%d_%H%M'))
-    shutil.copy2(atual, backup)
-    with open(atual, 'w', encoding='utf-8') as f:
-        f.write(novo)
+    carimbo = datetime.datetime.now().strftime('%Y-%m-%d_%H%M')
+    trocados = []          # (destino, backup ou None se o arquivo é novo)
+    try:
+        for nome, texto_novo in novos.items():
+            destino = os.path.join(PASTA, nome)
+            backup = None
+            if os.path.exists(destino):
+                with open(destino, encoding='utf-8') as f:
+                    if f.read() == texto_novo:
+                        continue
+                backup = os.path.join(PASTA, '%s_antes_de_%s.py' % (nome[:-3], carimbo))
+                shutil.copy2(destino, backup)
+            provisorio = destino + '.novo'
+            with open(provisorio, 'w', encoding='utf-8') as f:
+                f.write(texto_novo)
+            os.replace(provisorio, destino)
+            trocados.append((destino, backup))
+        if trocados:
+            conferir_importacao(PASTA, [n[:-3] for n in novos
+                                        if not n.startswith('teste_')])
+    except Exception as e:
+        for destino, backup in reversed(trocados):
+            try:
+                if backup:
+                    shutil.copy2(backup, destino)
+                else:
+                    os.remove(destino)
+            except Exception as e2:
+                registrar('NÃO consegui voltar %s: %s' % (destino, e2))
+        raise RuntimeError('a atualização falhou e o agente voltou à versão '
+                           'anterior: %s' % e)
 
     # Guardar backup a cada atualização e nunca limpar enche a pasta de
     # cópias quase iguais — cinco num único dia, na farmácia. Os últimos
     # poucos servem para voltar atrás; os antigos só confundem quem procura
     # o arquivo certo numa emergência.
-    try:
-        antigos = sorted(n for n in os.listdir(PASTA)
-                         if n.startswith('agente_auto_antes_de_') and n.endswith('.py'))
-        for velho in antigos[:-BACKUPS_GUARDADOS]:
-            os.remove(os.path.join(PASTA, velho))
-        if len(antigos) > BACKUPS_GUARDADOS:
-            registrar('Apaguei %d backup(s) antigo(s) do agente; ficaram os %d últimos.'
-                      % (len(antigos) - BACKUPS_GUARDADOS, BACKUPS_GUARDADOS))
-    except Exception as e:
-        registrar('Não consegui limpar os backups antigos: %s' % e)
+    for nome in novos:
+        prefixo = '%s_antes_de_' % nome[:-3]
+        try:
+            antigos = sorted(n for n in os.listdir(PASTA)
+                             if n.startswith(prefixo) and n.endswith('.py'))
+            for velho in antigos[:-BACKUPS_GUARDADOS]:
+                os.remove(os.path.join(PASTA, velho))
+            if len(antigos) > BACKUPS_GUARDADOS:
+                registrar('Apaguei %d backup(s) antigo(s) de %s; ficaram os %d últimos.'
+                          % (len(antigos) - BACKUPS_GUARDADOS, nome, BACKUPS_GUARDADOS))
+        except Exception as e:
+            registrar('Não consegui limpar os backups antigos: %s' % e)
 
     # As regras do banco andam junto com o agente: função nova quase sempre
     # quer uma ação nova liberada, e enquanto o JSON não é copiado à mão para
@@ -3749,13 +3843,14 @@ def atualizar_agente(config):
         registrar(recado_regras.strip())
 
     depois = versao_do_agente()
-    if depois.get('hash') == antes.get('hash'):
+    if not trocados:
         return ('O agente já estava na versão mais nova (%s).%s'
                 % (antes.get('hash'), recado_regras))
-    return ('Agente atualizado: %s -> %s (%d bytes). Backup em %s. A próxima '
-            'execução já roda a versão nova.%s'
-            % (antes.get('hash'), depois.get('hash'), depois.get('bytes'),
-               os.path.basename(backup), recado_regras))
+    return ('Agente atualizado: %s -> %s (%d bytes); arquivos trocados: %s. '
+            'Backup com o carimbo %s. A próxima execução já roda a versão nova.%s'
+            % (antes.get('hash'), depois.get('hash'), depois.get('bytes') or 0,
+               ', '.join(os.path.basename(d) for d, _ in trocados), carimbo,
+               recado_regras))
 
 
 URL_REGRAS = REPO_CRU + '/regras-firebase.json'

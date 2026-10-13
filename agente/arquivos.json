@@ -1,0 +1,8 @@
+{
+  "_leia": "Arquivos que o botão Atualizar o agente baixa, e o trecho que cada um precisa conter. Módulo novo do agente só chega ao servidor se estiver aqui.",
+  "arquivos": {
+    "agente_auto.py": "def principal(",
+    "mapa_xml.py": "def comparar(",
+    "teste_agente.py": "def principal("
+  }
+}
