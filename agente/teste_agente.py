@@ -533,6 +533,14 @@ def principal():
         conferir('laboratorio guardado por extenso no PRODUTOS sai como esta',
                  ag.laboratorios_por_medicamento(None)[0].get('13139') == 'EMS')
 
+        # Digifarma: colunas da PRODUTOS com PROD_ na frente
+        mapa = {'PRODUTOS': {'PRODUTO_ID', 'PROD_LABORATORIO_ID'},
+                'LABORATORIOS': {'LABORATORIO_ID', 'NOME_FANTASIA'}}
+        conferir('coluna com PROD_ na frente acha o cadastro de laboratorios',
+                 ag.coluna_de_laboratorio(mapa) == ('PROD_LABORATORIO_ID', 'LABORATORIOS',
+                                                    'NOME_FANTASIA', 'LABORATORIO_ID'),
+                 ag.coluna_de_laboratorio(mapa))
+
         ag.consultar = banco_com_laboratorio(('PRODUTO_ID', 'REGISTRO_MS',
                                               'DATA_FABRICACAO'))
         conferir('sem coluna de laboratorio, nada e inventado',

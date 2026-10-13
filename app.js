@@ -586,6 +586,32 @@ function pintarConfiancaDoSaldo() {
   barra.hidden = false;
 }
 
+/* O laboratorio vem do cadastro do Digifarma, lido pelo agente. Quando
+   nenhum item traz o laboratorio, a tela diz por que, em vez de so faltar:
+   agente antigo, coluna nao achada ou cadastro de apoio nao achado. */
+function pintarAvisoLaboratorio(itens) {
+  const p = $('saldo-laboratorio');
+  if (!itens.length || itens.some((i) => i.laboratorio)) { p.hidden = true; return; }
+  const lab = estado.inventario?.diagnostico?.quem?.laboratorio;
+  let texto;
+  if (!lab) {
+    texto = 'Laboratório: o agente do servidor ainda não manda esse dado. '
+      + 'Atualize o agente (aba Servidor) e espere a próxima sincronização.';
+  } else if (!lab.coluna) {
+    texto = 'Laboratório: o agente não achou a coluna no cadastro de produtos. '
+      + 'Colunas da PRODUTOS: ' + (lab.colunasDaTabela || []).join(', ')
+      + ((lab.tabelasParecidas || []).length
+        ? '. Tabelas parecidas: ' + lab.tabelasParecidas
+          .map((t) => t.tabela + ' (' + (t.colunas || []).join(', ') + ')').join('; ')
+        : '. Nenhuma tabela com LABORAT ou FABRIC no nome.');
+  } else {
+    texto = 'Laboratório: o agente achou a coluna PRODUTOS.' + lab.coluna
+      + ', mas ela veio vazia nos produtos desta lista.';
+  }
+  p.textContent = texto;
+  p.hidden = false;
+}
+
 function detalheDoSaldo(i, dif) {
   const pares = [
     ['Código', i.codigo],
@@ -632,6 +658,7 @@ function pintarSaldo() {
     .sort((a, b) => peso(a) - peso(b)
       || Math.abs(Number(b.diferenca || 0)) - Math.abs(Number(a.diferenca || 0)));
   $('saldo-vazio').hidden = itens.length > 0 || !!estado.buscaSaldo;
+  pintarAvisoLaboratorio(itens);
 
   itens.forEach((i, n) => {
     const dif = Number(i.diferenca || 0);

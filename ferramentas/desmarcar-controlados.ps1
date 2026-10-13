@@ -30,6 +30,7 @@ param(
     [ValidateSet('Todos', 'ComEstoque', 'SemEstoque')][string]$Estoque = 'Todos',
     [string]$CampoEstoque,
     [string]$CampoDescricao,
+    [string]$CampoLaboratorio,
     [string]$TabelaEstoque,
     [string]$ChaveEstoque,
     [switch]$Escolher,
@@ -320,6 +321,49 @@ function Resolve-Stock($Alvo) {
     return @{ Erro = $null; Expr = $expr; Texto = "soma de $tab.$($col[0].Campo) por $($chave[0].Campo)" }
 }
 
+# Laboratório: coluna do cadastro de produtos; quando é código, o nome vem da tabela de laboratórios.
+# Devolve a expressão SQL (tabela de produtos com apelido P) e a descrição, ou o motivo de não achar.
+function Resolve-Lab($Alvo) {
+    if ($CampoLaboratorio) {
+        $col = @($Alvo.Colunas | Where-Object { $_.Campo -eq $CampoLaboratorio })
+        if (-not $col) { return @{ Erro = "coluna '$CampoLaboratorio' não existe em $($Alvo.Tabela)." } }
+    } else {
+        $col = @($Alvo.Colunas | Where-Object { $_.Campo -match 'LABORAT' })
+        if (-not $col) { $col = @($Alvo.Colunas | Where-Object { $_.Campo -match 'FABRICANTE' }) }
+        if (-not $col) {
+            return @{ Erro = "nenhuma coluna com LABORAT ou FABRICANTE em $($Alvo.Tabela); informe -CampoLaboratorio (ou LABORATORIO no .bat) com uma destas: $(($Alvo.Colunas | ForEach-Object { $_.Campo }) -join ', ')." }
+        }
+    }
+    $c = $col[0]
+    $texto = "$($Alvo.Tabela).$($c.Campo)"
+    if ($TiposNumero -notcontains $c.Tipo) { return @{ Erro = $null; Expr = "P.$(Q $c.Campo)"; Texto = $texto } }
+    # Código: procura a tabela de laboratórios, a coluna que casa com o código e a que tem o nome.
+    $semPrefixo = $c.Campo -replace '^(PROD_|COD_|CODIGO_)', ''
+    $raiz = $semPrefixo -replace '_(ID|COD|CODIGO)$', ''
+    $chaves = @($c.Campo, $semPrefixo, "$($raiz)_ID", 'ID', 'CODIGO', 'COD')
+    $nomes = @('^NOME_?FANTASIA$', '^FANTASIA$', '^APELIDO$', '^NOME$', '^RAZAO_?SOCIAL$', '^DESCRICAO$', "^$raiz$", 'NOME', 'DESCRI')
+    $tabelas = @($Colunas | Where-Object { $_.Tabela -ne $Alvo.Tabela -and $_.Tabela -match 'LABORAT|FABRICANTE' } |
+        Group-Object Tabela | Sort-Object { $_.Name.Length }, Name)
+    foreach ($t in $tabelas) {
+        $pkTab = @($Chaves | Where-Object { $_[0] -eq $t.Name } | ForEach-Object { $_[1] })
+        $chave = $null
+        foreach ($k in $chaves + $pkTab) {
+            $chave = $t.Group | Where-Object { $_.Campo -eq $k -and $TiposNumero -contains $_.Tipo } | Select-Object -First 1
+            if ($chave) { break }
+        }
+        if (-not $chave) { continue }
+        $nome = $null
+        foreach ($padrao in $nomes) {
+            $nome = $t.Group | Where-Object { $_.Campo -match $padrao -and $TiposTexto -contains $_.Tipo } | Select-Object -First 1
+            if ($nome) { break }
+        }
+        if (-not $nome) { continue }
+        $expr = "(SELECT FIRST 1 X.$(Q $nome.Campo) FROM $(Q $t.Name) X WHERE X.$(Q $chave.Campo) = P.$(Q $c.Campo))"
+        return @{ Erro = $null; Expr = $expr; Texto = "$texto -> $($t.Name).$($nome.Campo)" }
+    }
+    return @{ Erro = $null; Expr = "P.$(Q $c.Campo)"; Texto = "$texto (código; não achei a tabela com o nome do laboratório)" }
+}
+
 # "1,3,5-8" -> 1,3,5,6,7,8 (dentro de 1..Max); $null se algo não for válido.
 function ConvertFrom-Ranges([string]$Texto, [int]$Max) {
     $nums = New-Object Collections.Generic.List[int]
@@ -337,12 +381,14 @@ function ConvertFrom-Ranges([string]$Texto, [int]$Max) {
 
 function Format-Row($R) {
     $partes = @($R.Chave -join '/') + @($R.Descricao)
+    if ($script:TemLab) { $partes += $R.Laboratorio }
     if ($script:TemEstoque) { $partes += $R.Estoque }
     return ($partes + $R.Flags) -join ' | '
 }
 
 function Get-Header {
     $partes = @((@($alvo.Pk | ForEach-Object { $_.Campo })) -join '/') + @('Descrição')
+    if ($script:TemLab) { $partes += 'Laboratório' }
     if ($script:TemEstoque) { $partes += 'Estoque' }
     return ($partes + @($alvo.Alvos | ForEach-Object { $_.Col.Campo })) -join ' | '
 }
@@ -353,6 +399,7 @@ function Select-Products($Lista) {
         try {
             $itens = for ($i = 0; $i -lt $Lista.Count; $i++) {
                 $o = [ordered]@{ Item = $i + 1; Codigo = ($Lista[$i].Chave -join '/'); Descricao = $Lista[$i].Descricao }
+                if ($script:TemLab) { $o['Laboratorio'] = $Lista[$i].Laboratorio }
                 if ($script:TemEstoque) {
                     $o['Estoque'] = $Lista[$i].Estoque
                     try { $o['Estoque'] = [decimal]::Parse($Lista[$i].Estoque, [Globalization.CultureInfo]::InvariantCulture) } catch { }
@@ -385,7 +432,7 @@ function Select-Products($Lista) {
 }
 
 # ---------- validação dos parâmetros ----------
-foreach ($n in @($Tabela, $CampoPsicotropico, $CampoAntimicrobiano, $CampoEstoque, $TabelaEstoque, $ChaveEstoque, $CampoDescricao)) {
+foreach ($n in @($Tabela, $CampoPsicotropico, $CampoAntimicrobiano, $CampoEstoque, $TabelaEstoque, $ChaveEstoque, $CampoDescricao, $CampoLaboratorio)) {
     if ($n -and $n -notmatch '^[A-Za-z_][A-Za-z0-9_$]*$') { Stop-Script "nome inválido: '$n'." }
 }
 foreach ($v in @($ValorMarcado, $ValorDesmarcado)) {
@@ -472,6 +519,8 @@ if ($Descobrir) {
         Write-Host "Escolha automática: $($alvo.Tabela) -> $(($alvo.Alvos | ForEach-Object { "$($_.Kind): $($_.Col.Campo)" }) -join '; ')"
         $est = Resolve-Stock $alvo
         if ($est.Erro) { Write-Host "Estoque: não identificado, $($est.Erro)" } else { Write-Host "Estoque: $($est.Texto)" }
+        $lab = Resolve-Lab $alvo
+        if ($lab.Erro) { Write-Host "Laboratório: não identificado, $($lab.Erro)" } else { Write-Host "Laboratório: $($lab.Texto)" }
         Write-Host 'Confira se são mesmo as caixas e o estoque da tela de cadastro de produtos antes de usar -Aplicar.'
     }
     exit 0
@@ -494,6 +543,9 @@ foreach ($a in $alvo.Alvos) {
 $est = Resolve-Stock $alvo
 if ($est.Erro -and ($Estoque -ne 'Todos' -or $CampoEstoque -or $TabelaEstoque)) { Stop-Script "estoque: $($est.Erro) Rode com -Descobrir para ver as colunas de estoque." 2 }
 $script:TemEstoque = -not $est.Erro
+$lab = Resolve-Lab $alvo
+if ($lab.Erro -and $CampoLaboratorio) { Stop-Script "laboratório: $($lab.Erro)" 2 }
+$script:TemLab = -not $lab.Erro
 
 if (-not $PastaSaida) { $PastaSaida = Join-Path (Join-Path $PSScriptRoot 'registros') (Get-Date -Format 'yyyyMMdd-HHmmss') }
 New-Item -ItemType Directory -Force $PastaSaida | Out-Null
@@ -504,6 +556,7 @@ foreach ($a in $alvo.Alvos) {
     Write-Log "  $($a.Kind): $T.$($a.Col.Campo) de $($a.Marcado) para $($a.Desmarcado)  [valores hoje: $(Format-Values $a.Col)]"
 }
 if ($script:TemEstoque) { Write-Log "  Estoque: $($est.Texto) | filtro: $Estoque" } else { Write-Log "  Estoque: não exibido ($($est.Erro))" }
+if ($script:TemLab) { Write-Log "  Laboratório: $($lab.Texto)" } else { Write-Log "  Laboratório: não exibido ($($lab.Erro))" }
 
 function Get-Counts {
     $sql = for ($i = 0; $i -lt $alvo.Alvos.Count; $i++) {
@@ -540,6 +593,9 @@ $expr = @($pk | ForEach-Object { "COALESCE(CAST(P.$(Q $_.Campo) AS VARCHAR(100))
 $expr += if ($desc) {
     "COALESCE(REPLACE(REPLACE(REPLACE(SUBSTRING(P.$(Q $desc.Campo) FROM 1 FOR 100), '|', '/'), ASCII_CHAR(13), ' '), ASCII_CHAR(10), ' '), '')"
 } else { "''" }
+$expr += if ($script:TemLab) {
+    "COALESCE(REPLACE(REPLACE(REPLACE(SUBSTRING(CAST($($lab.Expr) AS VARCHAR(100)) FROM 1 FOR 60), '|', '/'), ASCII_CHAR(13), ' '), ASCII_CHAR(10), ' '), '')"
+} else { "''" }
 $expr += if ($script:TemEstoque) { "CAST($($est.Expr) AS VARCHAR(40))" } else { "''" }
 $expr += @($alvo.Alvos | ForEach-Object { "COALESCE(CAST(P.$(Q $_.Col.Campo) AS VARCHAR(20)), '')" })
 $where = '(' + (($alvo.Alvos | ForEach-Object { "P.$(Q $_.Col.Campo) = $($_.Marcado)" }) -join ' OR ') + ')'
@@ -547,15 +603,16 @@ if ($Estoque -eq 'ComEstoque') { $where += " AND $($est.Expr) > 0" }
 if ($Estoque -eq 'SemEstoque') { $where += " AND $($est.Expr) <= 0" }
 $ordem = if ($pk) { ($pk | ForEach-Object { "P.$(Q $_.Campo)" }) -join ', ' } else { '1' }
 $n = $pk.Count
-$lista = @(Get-Rows (Invoke-Isql "SELECT '#L|' || $($expr -join " || '|' || ") FROM $(Q $T) P WHERE $where ORDER BY $ordem;") 'L' ($n + 2 + $alvo.Alvos.Count) | ForEach-Object {
+$lista = @(Get-Rows (Invoke-Isql "SELECT '#L|' || $($expr -join " || '|' || ") FROM $(Q $T) P WHERE $where ORDER BY $ordem;") 'L' ($n + 3 + $alvo.Alvos.Count) | ForEach-Object {
         $campos = @($_ | ForEach-Object { $_.TrimEnd() })
         $chave = @()
         if ($n) { $chave = @($campos[0..($n - 1)]) }
         [pscustomobject]@{
             Chave     = $chave
-            Descricao = $campos[$n]
-            Estoque   = (Format-Number $campos[$n + 1])
-            Flags     = @($campos[($n + 2)..($campos.Count - 1)])
+            Descricao   = $campos[$n]
+            Laboratorio = $campos[$n + 1]
+            Estoque     = (Format-Number $campos[$n + 2])
+            Flags       = @($campos[($n + 3)..($campos.Count - 1)])
         }
     })
 $filtroTxt = @{ Todos = ''; ComEstoque = ' com estoque'; SemEstoque = ' sem estoque' }[$Estoque]
@@ -576,10 +633,11 @@ if ($Codigos -or $Escolher) { Write-Log "  Escolhidos: $($sel.Count)" }
 
 $csv = Join-Path $PastaSaida 'produtos-a-desmarcar.csv'
 $cab = @($pk | ForEach-Object { $_.Campo }) + @($(if ($desc) { $desc.Campo } else { 'DESCRICAO' }))
+if ($script:TemLab) { $cab += 'LABORATORIO' }
 if ($script:TemEstoque) { $cab += 'ESTOQUE' }
 $cab += @($alvo.Alvos | ForEach-Object { $_.Col.Campo })
 $linhasCsv = New-Object Collections.Generic.List[string]
-foreach ($campos in @(, $cab) + @($sel | ForEach-Object { , (@($_.Chave) + @($_.Descricao) + $(if ($script:TemEstoque) { @($_.Estoque) } else { @() }) + $_.Flags) })) {
+foreach ($campos in @(, $cab) + @($sel | ForEach-Object { , (@($_.Chave) + @($_.Descricao) + $(if ($script:TemLab) { @($_.Laboratorio) } else { @() }) + $(if ($script:TemEstoque) { @($_.Estoque) } else { @() }) + $_.Flags) })) {
     $linhasCsv.Add((($campos | ForEach-Object { '"' + ([string]$_).Replace('"', '""') + '"' }) -join ';'))
 }
 [IO.File]::WriteAllLines($csv, $linhasCsv, $Utf8Bom)
