@@ -642,7 +642,66 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = MOTIVO_SALDO[i.motivo]?.[1] || '';
   }
   if (nota.textContent) d.appendChild(nota);
+  // So produto do cadastro (com codigo) e marcado como controlado: o lote
+  // que so existe na ANVISA nao tem o que desmarcar no Digifarma.
+  if (i.codigo && i.classe) {
+    const b = criar('button', 'botao botao-perigo');
+    b.textContent = 'Desmarcar controlado/antibiótico no Digifarma';
+    b.onclick = () => pedirDesmarcar(i);
+    d.appendChild(b);
+  }
   return d;
+}
+
+/* Desmarcar psicotropico/antimicrobiano de UM produto, pelo agente. E a
+   caixa do cadastro do Digifarma, feita do celular: o produto sai do SNGPC.
+   So com a escrita liberada (aba Servidor), que se fecha sozinha. */
+function pedirDesmarcar(i) {
+  if (!estado.inventario?.escrita?.ligada) {
+    abrirModal({
+      titulo: 'Escrita no Digifarma desligada',
+      corpo: (() => {
+        const p = criar('p', 'sublinha');
+        p.textContent = 'Para desmarcar, ligue a escrita na aba Servidor, bloco "Escrita no '
+          + 'Digifarma". Ela vale 60 minutos e depois se fecha sozinha.';
+        return p;
+      })(),
+      acoes: [
+        { texto: 'Fechar', aoClicar: fecharModal },
+        { texto: 'Ir para Servidor', estilo: 'botao-principal', aoClicar: () => { fecharModal(); irPara('servidor'); } }
+      ]
+    });
+    return;
+  }
+  const corpo = criar('div');
+  const p = criar('p', 'sublinha');
+  p.textContent = (i.descricao || 'Produto') + ' (código ' + i.codigo + '). Desmarcado, o produto '
+    + 'sai do SNGPC: as vendas dele deixam de ser escrituradas. Use só para produto marcado '
+    + 'por engano. Para voltar, marque a caixa de novo no cadastro do Digifarma.';
+  const rotulo = criar('label', 'campo');
+  const span = criar('span'); span.textContent = 'Desmarcar';
+  const sel = criar('select');
+  [['ambos', 'Psicotrópico e antimicrobiano'], ['psicotropico', 'Só psicotrópico'],
+   ['antimicrobiano', 'Só antimicrobiano']].forEach(([v, t]) => {
+    const o = criar('option'); o.value = v; o.textContent = t; sel.appendChild(o);
+  });
+  rotulo.append(span, sel);
+  corpo.append(p, rotulo);
+  abrirModal({
+    titulo: 'Desmarcar no Digifarma',
+    corpo,
+    acoes: [
+      { texto: 'Cancelar', aoClicar: fecharModal },
+      { texto: 'Desmarcar', estilo: 'botao-perigo', aoClicar: () => {
+        fecharModal();
+        db.ref('farmacia/comando').set({
+          acao: 'desmarcar_controlado', produtoId: String(i.codigo), desmarcar: sel.value,
+          pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+        }).then(() => avisar('Pedido enviado. O agente desmarca na próxima passagem dele.'))
+          .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
+      } }
+    ]
+  });
 }
 
 function pintarSaldo() {
@@ -1076,15 +1135,33 @@ function pintarFerramentas() {
     alvo.appendChild(b);
   });
 
-  // Desligar a escrita e de mao unica: o app fecha a porta, nunca abre.
-  // Ligar continua sendo ato local no servidor, que e a direcao perigosa.
+  // Ligar pelo app vale 60 minutos e se fecha sozinho (o agente grava o
+  // prazo). Sem isso, desmarcar controlado pelo celular dependeria de
+  // alguem no servidor, que a farmacia nem sempre alcanca.
+  if (estado.inventario?.escrita && !estado.inventario.escrita.ligada) {
+    const b = criar('button', 'botao botao-secundario');
+    b.textContent = 'Ligar a escrita por 60 minutos';
+    b.onclick = async () => {
+      if (!(await confirmar('Ligar a escrita no Digifarma',
+        'Libera, por 60 minutos, desmarcar controlado/antibiótico pelo app. '
+        + 'Depois se fecha sozinha.', 'Ligar'))) return;
+      await db.ref('farmacia/comando').set({
+        acao: 'config', chave: 'permitir_ajuste_estoque', valor: 'true',
+        pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+      }).then(() => avisar('Pedido de ligar enviado. O agente atende na próxima passagem dele.'))
+        .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
+    };
+    alvo.appendChild(b);
+  }
+
+  // Desligar antes do prazo tambem e pelo app.
   if (estado.inventario?.escrita?.ligada) {
     const b = criar('button', 'botao botao-perigo');
     b.textContent = 'Desligar a escrita agora';
     b.onclick = async () => {
       if (!(await confirmar('Desligar a escrita no Digifarma',
-        'Fecha a porta que permite zerar lote negativo e gravar contagem. '
-        + 'Religar so no servidor.', 'Desligar', 'botao-perigo'))) return;
+        'Fecha a porta que permite alterar o Digifarma (desmarcar controlado, '
+        + 'zerar lote negativo, gravar contagem).', 'Desligar', 'botao-perigo'))) return;
       await db.ref('farmacia/comando').set({
         acao: 'config', chave: 'permitir_ajuste_estoque', valor: 'false',
         pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'

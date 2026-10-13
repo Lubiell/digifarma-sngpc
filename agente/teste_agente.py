@@ -548,6 +548,100 @@ def principal():
     finally:
         ag.consultar = guardado
 
+    # --- desmarcar controlado pelo app ---
+    escritos, ajustes = [], []
+
+    def banco_desmarcar(psico='S', anti='N', tem_n=True):
+        def falso(_conexao, sql, parametros=()):
+            if 'WHERE PRODUTO_ID = ?' in sql:
+                return [{'PRODUTO_ID': 13139, 'PRODUTO': 'OLANZAPINA 2,5MG',
+                         'REGISTRO_MS': '1.0573.0642.003-0',
+                         'PSICOTROPICO': psico, 'ANTIMICROBIANO': anti}]
+            if "= 'N'" in sql:
+                return [{'PRODUTO_ID': 1}] if tem_n else []
+            if sql == ag.CONSULTAS['produtos_controlados']:
+                return [{'PRODUTO_ID': 13139, 'PRODUTO': 'OLANZAPINA 2,5MG',
+                         'REGISTRO_MS': '1057306420030', 'PSICOTROPICO': psico,
+                         'ANTIMICROBIANO': anti},
+                        {'PRODUTO_ID': 777, 'PRODUTO': 'OLANZAPINA 2,5MG GENERICO',
+                         'REGISTRO_MS': '1057306420030', 'PSICOTROPICO': 'S',
+                         'ANTIMICROBIANO': 'N'}]
+            raise AssertionError('consulta não simulada:\n' + sql[:120])
+        return falso
+
+    guardados = (ag.consultar, ag.executar, ag.conectar_firebird, ag.fechar,
+                 ag.modo_auto, ag.registrar_ajuste)
+    ligada = {'permitir_ajuste_estoque': True}
+    pedido = {'produtoId': '13139', 'desmarcar': 'ambos', 'pedidoPor': 'jefferson'}
+    try:
+        ag.executar = lambda _c, sql, p=(): escritos.append((sql, p)) or 1
+        ag.conectar_firebird = lambda _config: None
+        ag.fechar = lambda _c: None
+        ag.modo_auto = lambda _config: None
+        ag.registrar_ajuste = lambda _db, dados: ajustes.append(dados)
+
+        ag.consultar = banco_desmarcar()
+        try:
+            ag.desmarcar_controlado({}, None, pedido)
+            conferir('desmarcar com a escrita desligada é recusado', False)
+        except RuntimeError as e:
+            conferir('desmarcar com a escrita desligada é recusado',
+                     'desligada' in str(e) and not escritos, e)
+
+        recado = ag.desmarcar_controlado(ligada, None, pedido)
+        conferir('desmarca só a coluna que estava marcada, só naquele produto',
+                 len(escritos) == 1
+                 and escritos[0][0].startswith("UPDATE PRODUTOS SET PSICOTROPICO = 'N' WHERE PRODUTO_ID = ?")
+                 and 'ANTIMICROBIANO' not in escritos[0][0] and escritos[0][1] == (13139,),
+                 escritos)
+        conferir('o desmarcar fica registrado com o antes e o depois',
+                 ajustes and ajustes[0]['tipo'] == 'desmarcar_controlado'
+                 and ajustes[0]['colunas'] == [{'coluna': 'PSICOTROPICO', 'de': 'S', 'para': 'N'}]
+                 and ajustes[0]['por'] == 'jefferson', ajustes)
+        conferir('a resposta diz como voltar', 'marque a caixa de novo' in recado, recado)
+
+        escritos.clear()
+        ag.consultar = banco_desmarcar(psico='N', anti='N')
+        recado = ag.desmarcar_controlado(ligada, None, pedido)
+        conferir('produto já desmarcado não é alterado', not escritos and 'já não' in recado, recado)
+        conferir('diz qual outro cadastro com o mesmo M.S. continua marcado',
+                 'código 777' in recado, recado)
+
+        ag.consultar = banco_desmarcar()
+
+        def sincronizacao_quebrada(_config):
+            raise RuntimeError('firebird caiu')
+        ag.modo_auto = sincronizacao_quebrada
+        recado = ag.desmarcar_controlado(ligada, None, pedido)
+        conferir('sincronização falhando depois de desmarcar avisa que a lista demora',
+                 'próxima sincronização' in recado and len(escritos) == 1, recado)
+        escritos.clear()
+        ag.modo_auto = lambda _config: None
+
+        ag.consultar = banco_desmarcar(tem_n=False)
+        try:
+            ag.desmarcar_controlado(ligada, None, pedido)
+            conferir('sem N no cadastro, não inventa o valor de desmarcado', False)
+        except RuntimeError as e:
+            conferir('sem N no cadastro, não inventa o valor de desmarcado',
+                     not escritos and 'Desmarque no Digifarma' in str(e), e)
+
+        try:
+            ag.desmarcar_controlado(ligada, None, dict(pedido, desmarcar='tudo'))
+            conferir('o que desmarcar inválido é recusado', False)
+        except RuntimeError:
+            conferir('o que desmarcar inválido é recusado', not escritos)
+
+        for ruim in ('13139 OR 1=1', '', 'abc'):
+            try:
+                ag.desmarcar_controlado(ligada, None, dict(pedido, produtoId=ruim))
+                conferir('código de produto inválido é recusado (%r)' % ruim, False)
+            except RuntimeError:
+                conferir('código de produto inválido é recusado (%r)' % ruim, not escritos)
+    finally:
+        (ag.consultar, ag.executar, ag.conectar_firebird, ag.fechar,
+         ag.modo_auto, ag.registrar_ajuste) = guardados
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0
