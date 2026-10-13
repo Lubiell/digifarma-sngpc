@@ -495,6 +495,51 @@ def principal():
     finally:
         ag.achar_log_anvisa = original_achar
 
+    # --- o laboratorio de cada medicamento, descoberto pelo esquema ---
+    def banco_com_laboratorio(colunas_produtos, laboratorios=None):
+        def falso(_conexao, sql, _parametros=()):
+            if 'RDB$RELATION_FIELDS' in sql:
+                tabelas = {'PRODUTOS': colunas_produtos}
+                if laboratorios is not None:
+                    tabelas['LABORATORIOS'] = ('LABORATORIO_ID', 'NOME_FANTASIA')
+                return [{'TABELA': t, 'CAMPO': c}
+                        for t, cs in tabelas.items() for c in cs]
+            if 'RDB$RELATION_CONSTRAINTS' in sql:
+                return []
+            if 'FROM LABORATORIOS' in sql:
+                return [{'CODIGO': k, 'NOME': v} for k, v in (laboratorios or {}).items()]
+            if 'FROM PRODUTOS' in sql:
+                return [{'PRODUTO_ID': 13139, 'REGISTRO_MS': '1.0573.0642.003-0',
+                         'LABORATORIO': 7 if laboratorios is not None else 'EMS'}]
+            raise AssertionError('consulta não simulada:\n' + sql[:120])
+        return falso
+
+    guardado = ag.consultar
+    try:
+        ag.consultar = banco_com_laboratorio(('PRODUTO_ID', 'REGISTRO_MS', 'LABORATORIO_ID'),
+                                             {7: 'Aché'})
+        por_produto, por_ms = ag.laboratorios_por_medicamento(None)
+        conferir('laboratorio traduzido pelo cadastro de apoio',
+                 por_produto.get('13139') == 'Aché' and por_ms.get('1057306420030') == 'Aché',
+                 (por_produto, por_ms))
+        itens = [{'codigo': 13139, 'ms': '1057306420030'},
+                 {'codigo': '', 'ms': '1.0573.0642.003-0'},
+                 {'codigo': 99, 'ms': '1111111111111'}]
+        ag.anotar_laboratorio(itens, por_produto, por_ms)
+        conferir('o laboratorio vai para o item pelo codigo ou pelo M.S.',
+                 [i.get('laboratorio') for i in itens] == ['Aché', 'Aché', None], itens)
+
+        ag.consultar = banco_com_laboratorio(('PRODUTO_ID', 'REGISTRO_MS', 'LABORATORIO'))
+        conferir('laboratorio guardado por extenso no PRODUTOS sai como esta',
+                 ag.laboratorios_por_medicamento(None)[0].get('13139') == 'EMS')
+
+        ag.consultar = banco_com_laboratorio(('PRODUTO_ID', 'REGISTRO_MS',
+                                              'DATA_FABRICACAO'))
+        conferir('sem coluna de laboratorio, nada e inventado',
+                 ag.laboratorios_por_medicamento(None) == ({}, {}))
+    finally:
+        ag.consultar = guardado
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0

@@ -1362,6 +1362,61 @@ def classes_por_medicamento(conexao):
     return por_produto, por_ms
 
 
+# Onde o PRODUTOS guarda o laboratório. Como o vendedor e a distribuidora,
+# o nome da coluna não foi visto no banco real: quem decide é o esquema, lido
+# em tempo de execução. 'FABRIC' sozinho ficou de fora das pistas porque
+# casaria com uma data de fabricação, e a tela mostraria uma data no lugar
+# do laboratório.
+COLUNAS_LABORATORIO = ('LABORATORIO_ID', 'LABORATORIO', 'FABRICANTE_ID',
+                       'FABRICANTE', 'LAB_ID')
+PISTAS_LABORATORIO = ('LABORAT', 'FABRICANTE')
+
+
+def laboratorios_por_medicamento(conexao):
+    """O laboratório de cada medicamento controlado, pelo cadastro.
+
+    Quem confere a caixa na prateleira lê o laboratório antes do M.S. — e é
+    ele que separa dois fabricantes que usam o mesmo número de lote.
+
+    Devolve (por_produto, por_ms), como classes_por_medicamento. Vazios
+    quando esta instalação não guarda o laboratório: a tela segue sem ele,
+    sem inventar nome."""
+    mapa = campos_por_tabela(conexao)
+    coluna, apoio, rotulo, chave = descobrir_quem(mapa, 'PRODUTOS',
+                                                  COLUNAS_LABORATORIO,
+                                                  PISTAS_LABORATORIO,
+                                                  chaves_estrangeiras(conexao))
+    if not coluna:
+        return {}, {}
+    nomes = nomes_de_apoio(conexao, apoio, chave, rotulo) if apoio else {}
+    por_produto, por_ms = {}, {}
+    for linha in consultar(conexao,
+                           'SELECT P.PRODUTO_ID, P.REGISTRO_MS, P.%s AS LABORATORIO '
+                           'FROM PRODUTOS P WHERE %s' % (coluna, SQL_CONTROLADO)):
+        codigo = texto(linha.get('LABORATORIO')).strip()
+        # o nome do cadastro; sem ele, o próprio valor da coluna — que já é
+        # o nome quando a instalação guarda o laboratório por extenso
+        nome = nomes.get(codigo) or codigo
+        if not nome:
+            continue
+        produto = texto(linha.get('PRODUTO_ID'))
+        if produto:
+            por_produto[produto] = nome
+        ms = so_digitos(linha.get('REGISTRO_MS'))
+        if ms and ms not in por_ms:
+            por_ms[ms] = nome
+    return por_produto, por_ms
+
+
+def anotar_laboratorio(itens, por_produto, por_ms, chave_produto='codigo'):
+    """Pendura o laboratório em cada item que o cadastro conhece."""
+    for i in itens or ():
+        nome = (por_produto.get(texto(i.get(chave_produto)))
+                or por_ms.get(so_digitos(i.get('ms'))))
+        if nome:
+            i['laboratorio'] = nome
+
+
 def ler_inventario_anvisa(conexao):
     """Lê INVENTARIO_SNGPC — a tabela que o Anvisa.exe regrava com o
     inventário do site da ANVISA.
@@ -1522,7 +1577,7 @@ def vendas_recentes(conexao, dias=DIAS_VENDAS_RECENTES):
     nomes = nomes_de_apoio(conexao, apoio, chave, rotulo) if apoio else {}
 
     linhas = consultar(conexao, sql, (corte,))
-    return [{
+    vendas = [{
         'venda': l.get('VENDA'),
         'quando': texto_hora(l.get('QUANDO')),
         'descricao': texto(l.get('PRODUTO')),
@@ -1535,6 +1590,13 @@ def vendas_recentes(conexao, dias=DIAS_VENDAS_RECENTES):
         # o app mostra a venda do mesmo jeito, sem inventar um nome
         'vendedor': nomes.get(texto(l.get('VENDEDOR'))) or texto(l.get('VENDEDOR')),
     } for l in linhas]
+    # sem laboratório a venda aparece do mesmo jeito: falhar aqui não pode
+    # derrubar a lista do balcão
+    try:
+        anotar_laboratorio(vendas, *laboratorios_por_medicamento(conexao))
+    except Exception as e:
+        registrar('Não consegui levantar o laboratório das vendas: %s' % e)
+    return vendas
 
 
 DIAS_ENTRADAS_RECENTES = 90
@@ -2499,6 +2561,14 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
     except Exception as e:
         registrar('Falha ao classificar psicotrópico/antimicrobiano: %s' % e)
 
+    # o laboratório, para quem confere a caixa na prateleira
+    try:
+        laboratorios = laboratorios_por_medicamento(conexao)
+        anotar_laboratorio(itens, *laboratorios)
+    except Exception as e:
+        laboratorios = ({}, {})
+        registrar('Falha ao levantar o laboratório dos produtos: %s' % e)
+
     resultado['itens'] = itens
     resultado['resumoSaldo'] = {}
     for i in itens:
@@ -2534,6 +2604,7 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
         for d in divergencias:
             d['periodo'] = periodo
             d['arquivo'] = dados_xml['arquivo']
+        anotar_laboratorio(divergencias, *laboratorios)
         resultado['conferencia_xml'] = divergencias
         resumo_xml.update({
             'conferiu': True,
@@ -2574,6 +2645,7 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
             })
     except Exception as e:
         registrar('Falha ao levantar vendas com problema: %s' % e)
+    anotar_laboratorio(problemas, *laboratorios)
     resultado['vendas_problema'] = problemas
     # a consulta corta por data: sem dizer desde quando, "nenhuma venda com
     # problema" parece valer para sempre
@@ -6707,16 +6779,17 @@ def snapshot_diagnostico(conexao):
     except Exception as e:
         registrar('Diagnóstico: não consegui classificar o inventário: %s' % e)
 
-    # O que a instalação respondeu sobre vendedor e distribuidora. Sem isto,
-    # coluna que não existe vira campo vazio na tela e ninguém descobre a
-    # diferença entre "não achei a coluna" e "a venda não tem vendedor".
+    # O que a instalação respondeu sobre vendedor, distribuidora e
+    # laboratório. Sem isto, coluna que não existe vira campo vazio na tela e
+    # ninguém descobre a diferença entre "não achei a coluna" e "a venda não tem vendedor".
     quem = {}
     try:
         mapa = campos_por_tabela(conexao)
         fks = chaves_estrangeiras(conexao)
         for rotulo, tabela, candidatas, pistas in (
                 ('vendedor', 'CAB_VENDAS', COLUNAS_VENDEDOR, PISTAS_VENDEDOR),
-                ('fornecedor', 'CAB_NOTAS', COLUNAS_FORNECEDOR, PISTAS_FORNECEDOR)):
+                ('fornecedor', 'CAB_NOTAS', COLUNAS_FORNECEDOR, PISTAS_FORNECEDOR),
+                ('laboratorio', 'PRODUTOS', COLUNAS_LABORATORIO, PISTAS_LABORATORIO)):
             coluna, apoio, nome, _ = descobrir_quem(mapa, tabela, candidatas,
                                                     pistas, fks)
             quem[rotulo] = {
@@ -6726,7 +6799,8 @@ def snapshot_diagnostico(conexao):
                 # não achando a COLUNA, as que parecem gente naquela tabela
                 'parecidas': sorted(
                     c for c in mapa.get(tabela, ())
-                    if any(p in c for p in PARECEM_GENTE)) if not coluna else [],
+                    if any(p in c for p in (pistas if tabela == 'PRODUTOS'
+                                            else PARECEM_GENTE))) if not coluna else [],
                 # achando a coluna e não o CADASTRO, por que cada candidata
                 # foi recusada. "Não achei" manda abrir o banco; "olhei a
                 # FORNECEDORES e ela não tem coluna de nome" resolve na hora

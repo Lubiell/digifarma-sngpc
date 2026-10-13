@@ -589,6 +589,7 @@ function pintarConfiancaDoSaldo() {
 function detalheDoSaldo(i, dif) {
   const pares = [
     ['Código', i.codigo],
+    ['Laboratório', i.laboratorio],
     ['Saldo Digifarma', i.saldoDigifarma],
     ['Saldo do inventário SNGPC', i.saldoSngpc],
     ['Diferença', (dif > 0 ? '+' : '') + dif],
@@ -627,7 +628,7 @@ function pintarSaldo() {
     return p < 0 ? ORDEM_MOTIVO.length : p;
   };
   const itens = divergenciasDeSaldo()
-    .filter((i) => combina(i, estado.buscaSaldo, ['descricao', 'ms', 'ean', 'lote', 'codigo']))
+    .filter((i) => combina(i, estado.buscaSaldo, ['descricao', 'laboratorio', 'ms', 'ean', 'lote', 'codigo']))
     .sort((a, b) => peso(a) - peso(b)
       || Math.abs(Number(b.diferenca || 0)) - Math.abs(Number(a.diferenca || 0)));
   $('saldo-vazio').hidden = itens.length > 0 || !!estado.buscaSaldo;
@@ -638,6 +639,7 @@ function pintarSaldo() {
       chave: 'saldo:' + (i.codigo || n) + ':' + (i.lote || ''),
       titulo: i.descricao || i.codigo || '(sem descrição)',
       meta: [
+        i.laboratorio && 'Lab. ' + i.laboratorio,
         i.ms && 'M.S. ' + i.ms,
         i.ean && 'EAN ' + i.ean,
         i.lote && 'Lote ' + i.lote,
@@ -672,6 +674,7 @@ function pintarConfiancaDoXml() {
 
 function detalheDoXml(c) {
   const pares = [
+    ['Laboratório', c.laboratorio],
     ['Registro M.S.', c.ms],
     ['Lote', c.lote],
     ['Quantidade no banco', c.qtdBanco],
@@ -697,7 +700,7 @@ function pintarXml() {
   alvo.innerHTML = '';
   pintarConfiancaDoXml();
   const itens = pendenciasXml()
-    .filter((c) => combina(c, estado.buscaXml, ['descricao', 'ms', 'lote']));
+    .filter((c) => combina(c, estado.buscaXml, ['descricao', 'laboratorio', 'ms', 'lote']));
   $('xml-vazio').hidden = itens.length > 0 || !!estado.buscaXml;
 
   const ROTULO = {
@@ -713,6 +716,7 @@ function pintarXml() {
       chave: 'xml:' + (c.ms || n) + ':' + (c.lote || ''),
       titulo: c.descricao || ('M.S. ' + (c.ms || '?')),
       meta: [
+        c.laboratorio && 'Lab. ' + c.laboratorio,
         c.ms && 'M.S. ' + c.ms,
         c.lote && 'Lote ' + c.lote,
         c.periodo && 'Período ' + c.periodo
@@ -764,13 +768,15 @@ function pintarVendasDeHoje() {
     alvo.appendChild(linha({
       chave: 'hoje:' + (v.venda ?? n) + ':' + (v.lote || n),
       titulo: v.descricao || ('Venda ' + (v.venda ?? '?')),
-      meta: [hora, v.venda && 'Venda ' + v.venda, v.lote ? 'Lote ' + v.lote : 'Sem lote', v.vendedor],
+      meta: [hora, v.venda && 'Venda ' + v.venda, v.laboratorio && 'Lab. ' + v.laboratorio,
+             v.lote ? 'Lote ' + v.lote : 'Sem lote', v.vendedor],
       tarja: [v.receita ? 'Receita lançada' : 'Falta lançar a receita', 'Qtd ' + (v.quantidade ?? '—')],
       tarjaClasse: v.receita ? 'ok' : 'sobra',
       detalhe: definicoes([
         ['Venda', v.venda],
         ['Hora', hora],
         ['Produto', v.descricao],
+        ['Laboratório', v.laboratorio],
         ['Registro M.S.', v.ms],
         ['Lote', v.lote],
         ['Quantidade', v.quantidade],
@@ -799,6 +805,7 @@ function pintarVendas() {
       ['Venda', v.venda],
       ['Data', dataBR(v.data)],
       ['Produto', v.descricao],
+      ['Laboratório', v.laboratorio],
       ['Registro M.S.', v.ms],
       ['Lote', v.lote],
       ['Quantidade', v.quantidade],
@@ -811,7 +818,8 @@ function pintarVendas() {
     alvo.appendChild(linha({
       chave: 'venda:' + (v.venda || n),
       titulo: v.descricao || ('Venda ' + (v.venda ?? '?')),
-      meta: [v.data && dataBR(v.data), v.ms && 'M.S. ' + v.ms, v.lote ? 'Lote ' + v.lote : 'Sem lote'],
+      meta: [v.data && dataBR(v.data), v.laboratorio && 'Lab. ' + v.laboratorio,
+             v.ms && 'M.S. ' + v.ms, v.lote ? 'Lote ' + v.lote : 'Sem lote'],
       tarja: ['Corrigir no Digifarma antes do próximo envio', 'Venda ' + (v.venda ?? '—')],
       tarjaClasse: 'falta',
       detalhe
