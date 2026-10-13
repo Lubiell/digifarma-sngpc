@@ -2902,18 +2902,36 @@ def _messaging():
 
 
 def ler_avisos():
+    """O que já foi avisado. Arquivo estranho vale como vazio: memória
+    perdida custa um aviso repetido; memória que trava custa todos."""
     caminho = os.path.join(PASTA, ARQUIVO_AVISOS)
     try:
         with open(caminho, encoding='utf-8') as f:
-            return json.load(f)
+            estado = json.load(f)
     except Exception:
         return {}
+    if not isinstance(estado, dict):
+        return {}
+    if not isinstance(estado.get('vendas', []), list):
+        estado['vendas'] = []
+    return estado
 
 
-def gravar_avisos(estado):
+def gravar_avisos(chave, valor):
+    """Grava UMA chave, relendo o arquivo na hora.
+
+    A fila (5 min) grava 'vendas' e a sincronização (1 h) grava 'resumo', e
+    as duas coincidem na hora cheia. Gravar o estado lido lá no começo
+    devolvia ao disco a chave velha da outra — e a venda era avisada de
+    novo. Relida aqui, cada uma só mexe na sua. Escrita em arquivo à parte
+    e troca atômica: queda de energia no meio não deixa JSON pela metade."""
     try:
-        with open(os.path.join(PASTA, ARQUIVO_AVISOS), 'w', encoding='utf-8') as f:
+        estado = ler_avisos()
+        estado[chave] = valor
+        caminho = os.path.join(PASTA, ARQUIVO_AVISOS)
+        with open(caminho + '.tmp', 'w', encoding='utf-8') as f:
             json.dump(estado, f, ensure_ascii=False)
+        os.replace(caminho + '.tmp', caminho)
     except Exception as e:
         registrar('Não consegui guardar o que já foi avisado: %s' % e)
 
@@ -2976,8 +2994,7 @@ def avisar_vendas_sem_receita(db, sem_receita):
     if not novas:
         # venda corrigida sai da memória — senão a lista cresce para sempre
         if ja - set(pendentes):
-            estado['vendas'] = sorted(ja & set(pendentes), key=numero)
-            gravar_avisos(estado)
+            gravar_avisos('vendas', sorted(ja & set(pendentes), key=numero))
         return 0
     if len(novas) == 1:
         corpo = 'Venda %s: %s sem receita. Lance antes do próximo envio.' % (
@@ -2988,8 +3005,7 @@ def avisar_vendas_sem_receita(db, sem_receita):
     entregues = enviar_aviso(db, 'Venda sem receita', corpo)
     if entregues:
         # só as que ainda estão pendentes: a lista não cresce para sempre
-        estado['vendas'] = sorted((ja | set(novas)) & set(pendentes), key=numero)
-        gravar_avisos(estado)
+        gravar_avisos('vendas', sorted((ja | set(novas)) & set(pendentes), key=numero))
     return entregues
 
 
@@ -3010,8 +3026,7 @@ def avisar_resumo_do_dia(db, dados, agora=None):
         r['divergencias'], r['vendasProblema'], sem_receita)
     entregues = enviar_aviso(db, 'Conferência do dia', corpo)
     if entregues:
-        estado['resumo'] = hoje
-        gravar_avisos(estado)
+        gravar_avisos('resumo', hoje)
     return entregues
 
 
@@ -3754,8 +3769,12 @@ def conferir_importacao(pasta, modulos):
     tarefa agendada, com o agente parado e ninguém no servidor."""
     import subprocess
     codigo = 'import ' + ', '.join(modulos)
+    # sem janela piscando na tela de quem usa o servidor, e sem herdar um
+    # teclado que a tarefa agendada não tem
     r = subprocess.run([sys.executable, '-c', codigo], cwd=pasta,
-                       capture_output=True, text=True, timeout=120)
+                       capture_output=True, text=True, timeout=120,
+                       stdin=subprocess.DEVNULL,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     if r.returncode != 0:
         raise RuntimeError('o agente novo não carrega: %s'
                            % (r.stderr.strip().splitlines() or ['erro sem mensagem'])[-1])
@@ -3781,7 +3800,7 @@ def atualizar_agente(config):
 
     # tudo baixado e conferido: só agora encosta no disco
     antes = versao_do_agente()
-    carimbo = datetime.datetime.now().strftime('%Y-%m-%d_%H%M')
+    carimbo = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
     trocados = []          # (destino, backup ou None se o arquivo é novo)
     try:
         for nome, texto_novo in novos.items():

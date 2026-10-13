@@ -661,6 +661,20 @@ def principal():
         conferir('venda corrigida sai da memória dos avisos',
                  ag.ler_avisos()['vendas'] == ['46511'], ag.ler_avisos())
 
+        # a sincronização grava o resumo enquanto a fila trabalha nas vendas
+        ag.gravar_avisos('resumo', '2026-10-14')
+        ag.gravar_avisos('vendas', ['46511'])
+        conferir('uma gravação dos avisos não apaga a chave da outra',
+                 ag.ler_avisos() == {'resumo': '2026-10-14', 'vendas': ['46511']}, ag.ler_avisos())
+        with open(os.path.join(pasta_avisos, ag.ARQUIVO_AVISOS), 'w') as f:
+            f.write('[]')
+        enviados.clear()
+        ag.avisar_vendas_sem_receita(celulares, [{'venda': 50000, 'descricao': 'X'}])
+        conferir('memória de avisos estragada não trava os avisos',
+                 len(enviados) == 1 and ag.ler_avisos().get('vendas') == ['50000'], ag.ler_avisos())
+        with open(os.path.join(pasta_avisos, ag.ARQUIVO_AVISOS), 'w') as f:
+            f.write('{}')
+
         enviados.clear()
         com_pendencia = {'itens': [{'diferenca': 1}], 'vendas_problema': [], 'vendasSemReceita': [1]}
         cedo = datetime.datetime(2026, 10, 14, 7, 30)
