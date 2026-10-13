@@ -46,6 +46,7 @@ const estado = {
   buscaSaldo: '',
   buscaXml: '',
   relatorios: {},       // farmacia/relatorios
+  historico: {},        // farmacia/historico (ultimos 30 dias)
   relatorioPedido: null,
   abertos: new Set()
 };
@@ -361,6 +362,12 @@ function ligarEscutas() {
     estado.relatorios = v || {};
     if (estado.vista === 'servidor') pintarRelatorio();
   });
+  // So os ultimos 30 dias: o no cresce um registro por dia.
+  const historico = db.ref('farmacia/historico').limitToLast(30);
+  const cbHistorico = historico.on('value',
+    (s) => { estado.historico = s.val() || {}; pintarEvolucao(); },
+    (e) => console.error('farmacia/historico', e));
+  escutas.push({ ref: historico, cb: cbHistorico });
   escutar('farmacia/operadores', (v) => {
     estado.operadores = Array.isArray(v) ? v.filter(Boolean) : Object.values(v || {});
     pintarOperadores();
@@ -461,6 +468,7 @@ function pintar() {
     : 'O agente ainda não publicou nada. Rode o INSTALAR_AGENTE.bat no servidor.';
 
   pintarEnvio();
+  pintarEvolucao();
   pintarPendentes();
   avisarSobreAnvisa();
   if (estado.vista === 'saldo') pintarSaldo();
@@ -476,6 +484,48 @@ const ROTULO_PENDENTE = {
   vendas: 'Vendas', entradas: 'Entradas',
   perdas: 'Perdas', transferencias: 'Transferências'
 };
+
+/* Os numeros do placar dia a dia (farmacia/historico, gravado pelo agente).
+   Sem isto "14 divergencias" nao diz se a conferencia esta ganhando ou
+   perdendo. Dia em que a comparacao estava prejudicada vai marcado. */
+function pintarEvolucao() {
+  const dl = $('dados-evolucao');
+  const resumo = $('evolucao-resumo');
+  if (!dl) return;
+  dl.innerHTML = '';
+  const dias = Object.keys(estado.historico || {}).sort().reverse();
+  if (!dias.length) {
+    resumo.textContent = 'O agente ainda não gravou nenhum dia. O histórico começa na próxima sincronização.';
+    return;
+  }
+  const hoje = estado.historico[dias[0]];
+  const base = dias.find((d) => d <= anteriorEmDias(dias[0], 7));
+  const antes = base ? estado.historico[base] : null;
+  const variacao = (agora, ant) => {
+    const d = Number(agora || 0) - Number(ant || 0);
+    return d === 0 ? 'igual' : (d > 0 ? '+' + d : String(d));
+  };
+  resumo.textContent = antes
+    ? 'Divergências de saldo: ' + (hoje.divergencias ?? 0) + ' em ' + dataBR(dias[0])
+      + ' (' + variacao(hoje.divergencias, antes.divergencias) + ' desde ' + dataBR(base) + '). '
+      + 'Vendas com problema: ' + (hoje.vendasProblema ?? 0)
+      + ' (' + variacao(hoje.vendasProblema, antes.vendasProblema) + ').'
+    : 'Ainda não há uma semana de histórico para comparar.';
+  dias.slice(0, 14).forEach((d) => {
+    const h = estado.historico[d] || {};
+    const dt = criar('dt'); dt.textContent = dataBR(d);
+    const dd = criar('dd');
+    dd.textContent = (h.divergencias ?? 0) + ' saldo · ' + (h.xml ?? 0) + ' XML · '
+      + (h.vendasProblema ?? 0) + ' vendas' + (h.confiavel === false ? ' · comparação prejudicada' : '');
+    dl.append(dt, dd);
+  });
+}
+
+function anteriorEmDias(iso, n) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() - n);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 
 function pintarPendentes() {
   const dl = $('dados-pendentes');

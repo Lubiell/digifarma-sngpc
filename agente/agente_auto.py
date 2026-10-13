@@ -2852,12 +2852,45 @@ def recado_de_permissao(config):
         'esse UID e as regras valem para ele igual valem para o app.' % uid)
 
 
+def resumo_do_dia(dados):
+    """Os números do placar da Situação, para farmacia/historico/<dia>.
+
+    A tela mostrava só a foto de agora: "14 divergências" não diz se a
+    conferência está ganhando ou perdendo. As contas são as MESMAS do app
+    (diferença diferente de zero, XML fora de 'ok', vendas com problema) —
+    histórico que conta de outro jeito que o placar só gera discussão."""
+    itens = dados.get('itens') or []
+    confianca = (dados.get('inventario') or {}).get('confianca') or {}
+    return {
+        'em': dados.get('atualizadoEm')
+              or datetime.datetime.now().isoformat(timespec='seconds'),
+        'divergencias': sum(1 for i in itens if round(numero(i.get('diferenca')), 3)),
+        'porMotivo': dict(dados.get('resumoSaldo') or {}),
+        'xml': sum(1 for c in (dados.get('conferencia_xml') or [])
+                   if c and c.get('situacao') != 'ok'),
+        'vendasProblema': len(dados.get('vendas_problema') or []),
+        # dia com a comparação prejudicada não se compara com os outros
+        'confiavel': bool(confianca.get('confiavel', True)),
+    }
+
+
+def publicar_historico(db, dados):
+    """Um nó por dia; cada sincronização do dia regrava o mesmo — fica o
+    último retrato do dia, e o histórico cresce um registro por dia."""
+    dia = datetime.date.today().isoformat()
+    db.reference('farmacia/historico/%s' % dia).set(resumo_do_dia(dados))
+
+
 def publicar(db, dados):
     db.reference('farmacia/inventario').set(dados)
     try:
         publicar_publico(db, dados)
     except Exception as e:
         registrar('Não consegui publicar o quadro do balcão: %s' % e)
+    try:
+        publicar_historico(db, dados)
+    except Exception as e:
+        registrar('Não consegui gravar o histórico do dia: %s' % e)
     # O .set() acima troca o nó INTEIRO. Se alguma consulta falhou ao montar
     # os dados, o ramo dela nem entra no dicionário — e some do Firebase.
     #

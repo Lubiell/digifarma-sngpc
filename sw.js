@@ -5,7 +5,7 @@
    fetch aqui e cache-first, e o activate apaga todo cache cujo nome nao
    seja este. Publicar sem trocar deixa quem ja abriu o app vendo a versao
    antiga para sempre. */
-const VERSAO = 'farmacia-sngpc-v14';
+const VERSAO = 'farmacia-sngpc-v15';
 const CASCA = [
   './',
   './index.html',

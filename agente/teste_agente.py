@@ -548,6 +548,44 @@ def principal():
     finally:
         ag.consultar = guardado
 
+    # --- histórico do dia: as mesmas contas do placar do app ---
+    resumo = ag.resumo_do_dia({
+        'atualizadoEm': '2026-10-13T10:00:00',
+        'itens': [{'diferenca': 2, 'motivo': 'quantidade'}, {'diferenca': 0.0},
+                  {'diferenca': -1, 'motivo': 'negativo'}, {'diferenca': 0.0004}],
+        'resumoSaldo': {'quantidade': 1, 'negativo': 1},
+        'conferencia_xml': [{'situacao': 'ok'}, {'situacao': 'fora_do_xml'}],
+        'vendas_problema': [{'venda': 1}, {'venda': 2}, {'venda': 3}],
+        'inventario': {'confianca': {'confiavel': False}},
+    })
+    conferir('o histórico conta como o placar (diferença ≠ 0, XML fora de ok, vendas)',
+             (resumo['divergencias'], resumo['xml'], resumo['vendasProblema'])
+             == (2, 1, 3), resumo)
+    conferir('o histórico marca o dia de comparação prejudicada',
+             resumo['confiavel'] is False and resumo['porMotivo'] == {'quantidade': 1, 'negativo': 1},
+             resumo)
+    conferir('dia sem nada publicado vira zeros, não erro',
+             ag.resumo_do_dia({})['divergencias'] == 0 and ag.resumo_do_dia({})['confiavel'] is True)
+
+    gravados = {}
+
+    class RefHistorico:
+        def __init__(self, caminho):
+            self.caminho = caminho
+
+        def set(self, valor):
+            gravados[self.caminho] = valor
+
+    class DbHistorico:
+        def reference(self, caminho):
+            return RefHistorico(caminho)
+
+    ag.publicar_historico(DbHistorico(), {'itens': [{'diferenca': 1}]})
+    hoje_hist = 'farmacia/historico/%s' % datetime.date.today().isoformat()
+    conferir('um nó por dia em farmacia/historico/<data>',
+             list(gravados) == [hoje_hist] and gravados[hoje_hist]['divergencias'] == 1,
+             gravados)
+
     # --- desmarcar controlado pelo app ---
     escritos, ajustes = [], []
 

@@ -54,6 +54,10 @@
         ".read": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
         ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
       },
+      "historico": {
+        ".read": "auth != null && (root.child('farmacia/autorizados').child(auth.uid).val() === true || root.child('farmacia/agentes').child(auth.uid).val() === true)",
+        ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
+      },
       "relatorios": {
         ".read": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
         ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
