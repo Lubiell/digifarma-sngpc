@@ -1,10 +1,13 @@
 @echo off
 rem Abre o programa que desmarca Psicotropico/Antimicrobiano no Digifarma.
 rem Deixe este arquivo na mesma pasta do desmarcar-controlados.ps1.
-rem Se o banco ou a coluna de estoque forem outros, ajuste as duas linhas abaixo.
+rem Se o banco ou a coluna de estoque forem outros, ajuste as linhas abaixo.
+rem LABORATORIO vazio: o programa acha a coluna sozinho. Se nao achar, ponha
+rem por exemplo: set "LABORATORIO=-CampoLaboratorio NOME_DA_COLUNA"
 setlocal
 set "BANCO=localhost:C:\Digifarma\Dados\Digifarma6.FDB"
 set "ESTOQUE=-Estoque ComEstoque -CampoEstoque PROD_SALDO"
+set "LABORATORIO="
 set "PROGRAMA=%~dp0desmarcar-controlados.ps1"
 
 if not exist "%PROGRAMA%" (
@@ -33,11 +36,11 @@ if errorlevel 2 goto aplicar
 goto simular
 
 :simular
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PROGRAMA%" -Banco "%BANCO%" %ESTOQUE% -Escolher
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROGRAMA%" -Banco "%BANCO%" %ESTOQUE% %LABORATORIO% -Escolher
 goto pausa
 
 :aplicar
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PROGRAMA%" -Banco "%BANCO%" %ESTOQUE% -Escolher -Aplicar
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROGRAMA%" -Banco "%BANCO%" %ESTOQUE% %LABORATORIO% -Escolher -Aplicar
 goto pausa
 
 :desfazer

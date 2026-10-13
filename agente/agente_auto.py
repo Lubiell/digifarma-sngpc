@@ -1372,6 +1372,27 @@ COLUNAS_LABORATORIO = ('LABORATORIO_ID', 'LABORATORIO', 'FABRICANTE_ID',
 PISTAS_LABORATORIO = ('LABORAT', 'FABRICANTE')
 
 
+def coluna_de_laboratorio(mapa, fks=None):
+    """(coluna, tabela_de_apoio, coluna_do_nome, chave) do laboratório na
+    PRODUTOS — os três últimos None quando não há cadastro que traduza.
+
+    No Digifarma as colunas da PRODUTOS costumam vir com PROD_ na frente
+    (PROD_SALDO, PROD_ATIVO). A coluna sai pela pista mesmo assim, mas o
+    cadastro de apoio era procurado pela raiz PROD_LABORATORIO, que não é
+    nome de tabela nenhuma. Sem o prefixo, a raiz volta a ser LABORATORIO."""
+    coluna, apoio, rotulo, chave = descobrir_quem(mapa, 'PRODUTOS',
+                                                  COLUNAS_LABORATORIO,
+                                                  PISTAS_LABORATORIO, fks)
+    if coluna and not apoio:
+        sem_prefixo = re.sub(r'^(PROD_|COD_|CODIGO_)', '', coluna)
+        if sem_prefixo != coluna:
+            apoio, rotulo, chave = tabela_de_apoio(mapa, sem_prefixo,
+                                                   PISTAS_LABORATORIO)
+            # a chave da tabela de apoio casa com o valor da coluna da
+            # PRODUTOS; o nome dela não precisa ser o mesmo
+    return coluna, apoio, rotulo, chave
+
+
 def laboratorios_por_medicamento(conexao):
     """O laboratório de cada medicamento controlado, pelo cadastro.
 
@@ -1382,10 +1403,8 @@ def laboratorios_por_medicamento(conexao):
     quando esta instalação não guarda o laboratório: a tela segue sem ele,
     sem inventar nome."""
     mapa = campos_por_tabela(conexao)
-    coluna, apoio, rotulo, chave = descobrir_quem(mapa, 'PRODUTOS',
-                                                  COLUNAS_LABORATORIO,
-                                                  PISTAS_LABORATORIO,
-                                                  chaves_estrangeiras(conexao))
+    coluna, apoio, rotulo, chave = coluna_de_laboratorio(
+        mapa, chaves_estrangeiras(conexao))
     if not coluna:
         return {}, {}
     nomes = nomes_de_apoio(conexao, apoio, chave, rotulo) if apoio else {}
@@ -6790,8 +6809,11 @@ def snapshot_diagnostico(conexao):
                 ('vendedor', 'CAB_VENDAS', COLUNAS_VENDEDOR, PISTAS_VENDEDOR),
                 ('fornecedor', 'CAB_NOTAS', COLUNAS_FORNECEDOR, PISTAS_FORNECEDOR),
                 ('laboratorio', 'PRODUTOS', COLUNAS_LABORATORIO, PISTAS_LABORATORIO)):
-            coluna, apoio, nome, _ = descobrir_quem(mapa, tabela, candidatas,
-                                                    pistas, fks)
+            if rotulo == 'laboratorio':
+                coluna, apoio, nome, _ = coluna_de_laboratorio(mapa, fks)
+            else:
+                coluna, apoio, nome, _ = descobrir_quem(mapa, tabela, candidatas,
+                                                        pistas, fks)
             quem[rotulo] = {
                 'coluna': coluna or '',
                 'tabela': apoio or '',
@@ -6807,6 +6829,17 @@ def snapshot_diagnostico(conexao):
                 'tentadas': apoios_tentados(mapa, coluna, pistas)
                             if coluna and not apoio else [],
             }
+        # O laboratório nunca foi visto no banco real. Sem achar, sobe a
+        # lista inteira da PRODUTOS e as tabelas com cara de laboratório:
+        # nome de coluna não é dado de ninguém, e é com ele que a próxima
+        # correção deixa de ser palpite.
+        lab = quem['laboratorio']
+        if not lab['coluna'] or not lab['tabela']:
+            lab['colunasDaTabela'] = sorted(mapa.get('PRODUTOS', ()))
+            lab['tabelasParecidas'] = [
+                {'tabela': t, 'colunas': sorted(mapa[t])[:40]}
+                for t in sorted(mapa)
+                if any(p in t for p in ('LABORAT', 'FABRIC', 'LAB_'))][:10]
         # A chave de acesso é o caminho que não depende de cadastro: dela
         # sai o CNPJ do emitente por aritmética, e o XML da nota traz o
         # nome. Sem saber se a coluna existe, isso é palpite outra vez.
