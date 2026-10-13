@@ -357,7 +357,7 @@ function ligarEscutas() {
   escutar('farmacia/inventario', (v) => { estado.inventario = v || {}; anotarLaboratorios(); pintar(); });
   escutar('farmacia/aceites', (v) => { estado.aceites = v || {}; if (estado.vista === 'aceites') pintarAceites(); });
   escutar('farmacia/comando', (v) => { estado.comando = v; pintarComando(); });
-  escutar('farmacia/config', (v) => { estado.config = v || {}; });
+  escutar('farmacia/config', (v) => { estado.config = v || {}; if (estado.vista === 'servidor') pintarAvisos(); });
   escutar('farmacia/relatorios', (v) => {
     estado.relatorios = v || {};
     if (estado.vista === 'servidor') pintarRelatorio();
@@ -1305,7 +1305,105 @@ function pintarRelatorio() {
   bloco.hidden = false;
 }
 
+/* ============================================================
+   11c. AVISOS NO CELULAR (Firebase Cloud Messaging)
+   ============================================================ */
+/* A chave publica de Web Push (VAPID) e gerada no console do Firebase:
+   Configuracoes do projeto > Cloud Messaging > Certificados push da Web.
+   E publica por natureza (vai para o navegador); fica em farmacia/config
+   para ser colada pelo app, sem publicar versao nova. */
+const CHAVE_AVISO_LOCAL = 'farmacia.aviso';
+
+function avisosSuportados() {
+  return 'Notification' in window && 'serviceWorker' in navigator
+    && typeof firebase.messaging === 'function';
+}
+
+function pintarAvisos() {
+  const p = $('avisos-estado');
+  const alvo = $('avisos-acoes');
+  if (!p || !alvo) return;
+  alvo.innerHTML = '';
+  const chave = estado.config?.vapidKey;
+  const ligado = localStorage.getItem(CHAVE_AVISO_LOCAL);
+  const botao = (texto, estilo, acao) => {
+    const b = criar('button', 'botao ' + estilo);
+    b.textContent = texto;
+    b.onclick = acao;
+    alvo.appendChild(b);
+  };
+
+  if (!avisosSuportados()) {
+    p.textContent = 'Este navegador não recebe avisos. No iPhone: Compartilhar > Adicionar à Tela de Início, e abra o app por lá.';
+    return;
+  }
+  if (!chave) {
+    p.textContent = 'Falta a chave de avisos do Firebase (uma vez só, para todos os celulares).';
+    botao('Colar a chave de avisos', 'botao-secundario', pedirChaveDeAviso);
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    p.textContent = 'Os avisos foram bloqueados neste celular. Libere nas configurações do navegador para este site.';
+    return;
+  }
+  p.textContent = ligado && Notification.permission === 'granted'
+    ? 'Avisos ligados neste celular desde ' + dataHora(ligado) + '.'
+    : 'Avisos desligados neste celular.';
+  botao(ligado ? 'Religar avisos' : 'Ligar avisos neste celular', 'botao-secundario', ligarAvisos);
+  if (ligado) {
+    botao('Mandar um aviso de teste', 'botao-fantasma', () => pedirRelatorio('testar_aviso', 'Aviso de teste'));
+  }
+}
+
+function pedirChaveDeAviso() {
+  const corpo = criar('div');
+  const p = criar('p', 'sublinha');
+  p.textContent = 'No console do Firebase: Configurações do projeto > Cloud Messaging > '
+    + 'Certificados push da Web > Gerar par de chaves. Copie a chave e cole aqui.';
+  const campo = criar('input', 'busca');
+  campo.placeholder = 'Chave pública (começa com B…)';
+  corpo.append(p, campo);
+  abrirModal({
+    titulo: 'Chave de avisos',
+    corpo,
+    acoes: [
+      { texto: 'Cancelar', aoClicar: fecharModal },
+      { texto: 'Salvar', estilo: 'botao-principal', aoClicar: () => {
+        const v = campo.value.trim();
+        // chave VAPID publica: base64url de 65 bytes, ~87 caracteres
+        if (!/^[A-Za-z0-9_-]{80,100}$/.test(v)) { avisar('Isso não parece a chave pública de Web Push.'); return; }
+        fecharModal();
+        db.ref('farmacia/config').update({ vapidKey: v })
+          .then(() => avisar('Chave salva. Agora ligue os avisos neste celular.'))
+          .catch((e) => avisar('O Firebase recusou: ' + (e.message || e)));
+      } }
+    ]
+  });
+}
+
+async function ligarAvisos() {
+  try {
+    const permissao = await Notification.requestPermission();
+    if (permissao !== 'granted') { avisar('Sem permissão, o celular não recebe avisos.'); pintarAvisos(); return; }
+    const registro = await navigator.serviceWorker.ready;
+    const token = await firebase.messaging().getToken({
+      vapidKey: estado.config.vapidKey, serviceWorkerRegistration: registro
+    });
+    if (!token) throw new Error('o Firebase não devolveu o token');
+    const id = (await sha256(token)).slice(0, 24);
+    await db.ref('farmacia/notificacoes/' + id).set({
+      token, em: agora(), operador: estado.operador || '', aparelho: navigator.userAgent.slice(0, 120)
+    });
+    localStorage.setItem(CHAVE_AVISO_LOCAL, agora());
+    avisar('Avisos ligados. Use "Mandar um aviso de teste" para conferir.');
+  } catch (e) {
+    avisar('Não consegui ligar os avisos: ' + (e.message || e));
+  }
+  pintarAvisos();
+}
+
 function pintarServidor() {
+  pintarAvisos();
   pintarFerramentas();
   pintarRelatorio();
   pintarAgenteParado();

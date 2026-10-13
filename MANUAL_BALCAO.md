@@ -6,6 +6,9 @@ responsável antes do próximo envio.
 
 ## Rotina do dia
 
+0. **Uma vez em cada celular:** Servidor → **Ligar avisos neste celular** e
+   depois **Mandar um aviso de teste**. O celular passa a avisar a venda sem
+   receita na hora, e de manhã manda o resumo do dia.
 1. **Vendas → Com problema.** Toda venda listada ali vai ser recusada ou
    escriturada errada no próximo envio. Corrija no Digifarma **antes** do
    envio. Esta é a prioridade do dia.

@@ -586,6 +586,107 @@ def principal():
              list(gravados) == [hoje_hist] and gravados[hoje_hist]['divergencias'] == 1,
              gravados)
 
+    # --- avisos no celular (FCM simulado) ---
+    enviados = []
+
+    class TokenMorto(Exception):
+        pass
+    TokenMorto.__name__ = 'UnregisteredError'
+
+    class MessagingFalso:
+        class Message:
+            def __init__(self, token, data, webpush):
+                self.token, self.data, self.webpush = token, data, webpush
+
+        def WebpushConfig(self, **k):
+            return k
+
+        def WebpushNotification(self, **k):
+            return k
+
+        def WebpushFCMOptions(self, **k):
+            return k
+
+        def send(self, mensagem):
+            if mensagem.token == 'morto':
+                raise TokenMorto('Requested entity was not found.')
+            enviados.append((mensagem.token, mensagem.data['titulo'], mensagem.data['texto']))
+
+    apagados = []
+
+    class DbAvisos:
+        def __init__(self, cadastro):
+            self.cadastro = cadastro
+
+        def reference(self, caminho):
+            db = self
+
+            class Ref:
+                def get(self):
+                    return db.cadastro
+
+                def delete(self):
+                    apagados.append(caminho)
+            return Ref()
+
+    pasta_avisos = tempfile.mkdtemp()
+    guardados = (ag._messaging, ag.PASTA)
+    try:
+        ag._messaging = lambda: MessagingFalso()
+        ag.PASTA = pasta_avisos
+        celulares = DbAvisos({'a1': {'token': 'tok-1', 'em': 'x'}, 'a2': {'token': 'morto', 'em': 'x'}})
+        venda = [{'venda': 46505, 'descricao': 'OLANZAPINA 10MG', 'ms': '1'}]
+
+        ag.avisar_vendas_sem_receita(DbAvisos({}), venda)
+        conferir('sem celular cadastrado, a venda não conta como avisada',
+                 not enviados and not ag.ler_avisos().get('vendas'), ag.ler_avisos())
+
+        ag.avisar_vendas_sem_receita(celulares, venda)
+        conferir('venda sem receita nova vira aviso com o número da venda',
+                 enviados == [('tok-1', 'Venda sem receita',
+                               'Venda 46505: OLANZAPINA 10MG sem receita. Lance antes do próximo envio.')],
+                 enviados)
+        conferir('celular que desinstalou sai da lista', apagados == ['farmacia/notificacoes/a2'], apagados)
+
+        enviados.clear()
+        ag.avisar_vendas_sem_receita(celulares, venda)
+        conferir('a mesma venda não é avisada de novo a cada 5 minutos', not enviados, enviados)
+
+        ag.avisar_vendas_sem_receita(celulares, venda + [
+            {'venda': 46510, 'descricao': 'A'}, {'venda': 46511, 'descricao': 'B'}])
+        conferir('várias vendas novas viram um aviso só',
+                 len(enviados) == 1 and '2 vendas' in enviados[0][2] and '46510, 46511' in enviados[0][2],
+                 enviados)
+        ag.avisar_vendas_sem_receita(celulares, [{'venda': 46511, 'descricao': 'B'}])
+        conferir('venda corrigida sai da memória dos avisos',
+                 ag.ler_avisos()['vendas'] == ['46511'], ag.ler_avisos())
+
+        enviados.clear()
+        com_pendencia = {'itens': [{'diferenca': 1}], 'vendas_problema': [], 'vendasSemReceita': [1]}
+        cedo = datetime.datetime(2026, 10, 14, 7, 30)
+        ag.avisar_resumo_do_dia(celulares, com_pendencia, cedo)
+        conferir('o resumo do dia não sai de madrugada', not enviados)
+        manha = datetime.datetime(2026, 10, 14, 8, 5)
+        ag.avisar_resumo_do_dia(celulares, com_pendencia, manha)
+        ag.avisar_resumo_do_dia(celulares, com_pendencia, manha + datetime.timedelta(hours=1))
+        conferir('o resumo sai uma vez por dia, com os números',
+                 len(enviados) == 1 and enviados[0][2].startswith('1 divergência(s) de saldo, 0 venda(s)'),
+                 enviados)
+        enviados.clear()
+        ag.avisar_resumo_do_dia(celulares, {'itens': []}, datetime.datetime(2026, 10, 15, 9))
+        conferir('dia sem pendência não manda resumo', not enviados, enviados)
+
+        enviados.clear()
+        recado = ag.atender_pedido({}, DbAvisos({'a1': {'token': 'tok-1', 'em': 'x'}}),
+                                   {'acao': 'testar_aviso'})
+        conferir('o botão de teste manda um aviso e diz quantos receberam',
+                 len(enviados) == 1 and '1 de 1' in recado, recado)
+        recado = ag.atender_pedido({}, DbAvisos({}), {'acao': 'testar_aviso'})
+        conferir('teste sem celular cadastrado explica como ligar', 'Nenhum celular' in recado, recado)
+    finally:
+        ag._messaging, ag.PASTA = guardados
+        shutil.rmtree(pasta_avisos, ignore_errors=True)
+
     # --- desmarcar controlado pelo app ---
     escritos, ajustes = [], []
 

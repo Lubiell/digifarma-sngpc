@@ -151,6 +151,32 @@ conferir('sw.js lista só arquivos que existem', () => {
   });
 });
 
+/* O aviso do agente chega como Web Push e quem o mostra e o sw.js. Push
+   que nao vira notificacao o navegador pune, e aviso que nao aparece e
+   venda sem receita indo para o envio. So no app que tem o handler. */
+const textoSw = fs.readFileSync(path.join(pasta, 'sw.js'), 'utf8');
+if (textoSw.includes("addEventListener('push'")) {
+  conferir('aviso do agente (push) vira notificação na tela', () => {
+    const ouvintes = {};
+    const mostradas = [];
+    const self = {
+      addEventListener: (tipo, f) => { ouvintes[tipo] = f; },
+      registration: { scope: 'https://exemplo/', showNotification: (t, o) => { mostradas.push([t, o.body]); return Promise.resolve(); } },
+      clients: { matchAll: () => Promise.resolve([]), openWindow: () => Promise.resolve() },
+      location: { origin: 'https://exemplo' },
+      skipWaiting: () => Promise.resolve()
+    };
+    vm.runInNewContext(textoSw, { self, caches: {}, fetch: () => {}, URL, Promise, console });
+    const empurrar = (dados) => ouvintes.push({ data: dados, waitUntil: () => {} });
+    empurrar({ json: () => ({ notification: { title: 'Venda sem receita', body: 'Venda 46505' } }) });
+    empurrar({ json: () => ({ data: { titulo: 'Conferência do dia', texto: '2 divergências' } }) });
+    empurrar(null);
+    igual(mostradas.map((m) => m.join(': ')).join(' | '),
+      'Venda sem receita: Venda 46505 | Conferência do dia: 2 divergências | Farmácia SNGPC: Há pendências no SNGPC.',
+      'avisos mostrados');
+  });
+}
+
 /* ---------- 5. regressao: hidden tem que vencer o CSS ---------- */
 conferir('elemento com hidden nao aparece, mesmo com display no CSS', () => {
   // Sem [hidden]{display:none !important}, uma regra de autor como

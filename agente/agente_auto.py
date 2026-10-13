@@ -2881,6 +2881,140 @@ def publicar_historico(db, dados):
     db.reference('farmacia/historico/%s' % dia).set(resumo_do_dia(dados))
 
 
+# ============================================================
+# AVISOS NO CELULAR (Firebase Cloud Messaging)
+# ============================================================
+# O app só mostrava o problema para quem o abria. Venda de controlado sem
+# receita escriturada é o que derruba o envio, e o conserto é barato só
+# ANTES de transmitir: por isso o aviso vai ao celular sem ninguém pedir.
+#
+# Cada celular que ligou os avisos grava o seu token em
+# farmacia/notificacoes/<id>. O agente manda para todos; token que o FCM diz
+# que morreu (app desinstalado, permissão revogada) sai da lista.
+ARQUIVO_AVISOS = 'avisos_enviados.json'
+HORA_DO_RESUMO = 8          # o resumo do dia sai na 1ª sincronização depois disto
+URL_APP = 'https://lubiell.github.io/digifarma-sngpc/'
+
+
+def _messaging():
+    from firebase_admin import messaging
+    return messaging
+
+
+def ler_avisos():
+    caminho = os.path.join(PASTA, ARQUIVO_AVISOS)
+    try:
+        with open(caminho, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def gravar_avisos(estado):
+    try:
+        with open(os.path.join(PASTA, ARQUIVO_AVISOS), 'w', encoding='utf-8') as f:
+            json.dump(estado, f, ensure_ascii=False)
+    except Exception as e:
+        registrar('Não consegui guardar o que já foi avisado: %s' % e)
+
+
+def tokens_de_aviso(db):
+    """{id: token} dos celulares que ligaram os avisos."""
+    cadastro = db.reference('farmacia/notificacoes').get() or {}
+    return {chave: texto(d.get('token')) for chave, d in cadastro.items()
+            if isinstance(d, dict) and texto(d.get('token'))}
+
+
+def enviar_aviso(db, titulo, corpo, tokens=None):
+    """Manda para todos os celulares cadastrados. Devolve quantos receberam."""
+    messaging = _messaging()
+    if tokens is None:
+        tokens = tokens_de_aviso(db)
+    entregues = 0
+    for chave, token in tokens.items():
+        mensagem = messaging.Message(
+            token=token,
+            data={'titulo': titulo, 'texto': corpo},
+            webpush=messaging.WebpushConfig(
+                notification=messaging.WebpushNotification(
+                    title=titulo, body=corpo, icon='icon-192.png'),
+                fcm_options=messaging.WebpushFCMOptions(link=URL_APP)))
+        try:
+            messaging.send(mensagem)
+            entregues += 1
+        except Exception as e:
+            # celular que desligou os avisos ou apagou o app: o token não
+            # volta a valer, e tentar de novo a cada 5 minutos só suja o log
+            if type(e).__name__ in ('UnregisteredError', 'SenderIdMismatchError') \
+                    or 'registration token' in str(e).lower():
+                try:
+                    db.reference('farmacia/notificacoes/%s' % chave).delete()
+                except Exception:
+                    pass
+                registrar('Aviso: celular %s saiu da lista (%s).' % (chave, type(e).__name__))
+            else:
+                registrar('Não consegui avisar o celular %s: %s' % (chave, e))
+    return entregues
+
+
+def avisar_vendas_sem_receita(db, sem_receita):
+    """Avisa a venda de controlado sem receita que ainda NÃO foi avisada.
+
+    Uma vez por venda: o aviso que se repete a cada 5 minutos é o aviso que
+    se desliga. Só conta como avisada quando chegou a algum celular — sem
+    ninguém cadastrado, ela espera, e quem ligar os avisos recebe."""
+    if not sem_receita:
+        return 0
+    estado = ler_avisos()
+    pendentes = {}
+    for v in sem_receita:
+        venda = texto(v.get('venda'))
+        if venda:
+            pendentes.setdefault(venda, texto(v.get('descricao')).strip())
+    ja = set(estado.get('vendas', []))
+    novas = sorted((v for v in pendentes if v not in ja), key=numero)
+    if not novas:
+        # venda corrigida sai da memória — senão a lista cresce para sempre
+        if ja - set(pendentes):
+            estado['vendas'] = sorted(ja & set(pendentes), key=numero)
+            gravar_avisos(estado)
+        return 0
+    if len(novas) == 1:
+        corpo = 'Venda %s: %s sem receita. Lance antes do próximo envio.' % (
+            novas[0], pendentes[novas[0]][:40] or 'controlado')
+    else:
+        corpo = '%d vendas de controlado sem receita (%s%s). Lance antes do próximo envio.' % (
+            len(novas), ', '.join(novas[:5]), '…' if len(novas) > 5 else '')
+    entregues = enviar_aviso(db, 'Venda sem receita', corpo)
+    if entregues:
+        # só as que ainda estão pendentes: a lista não cresce para sempre
+        estado['vendas'] = sorted((ja | set(novas)) & set(pendentes), key=numero)
+        gravar_avisos(estado)
+    return entregues
+
+
+def avisar_resumo_do_dia(db, dados, agora=None):
+    """Um resumo por dia, de manhã, e só quando há o que corrigir."""
+    agora = agora or datetime.datetime.now()
+    if agora.hour < HORA_DO_RESUMO:
+        return 0
+    estado = ler_avisos()
+    hoje = agora.date().isoformat()
+    if estado.get('resumo') == hoje:
+        return 0
+    r = resumo_do_dia(dados)
+    sem_receita = len(dados.get('vendasSemReceita') or [])
+    if not (r['divergencias'] or r['vendasProblema'] or sem_receita):
+        return 0
+    corpo = '%d divergência(s) de saldo, %d venda(s) com problema, %d sem receita para o próximo envio.' % (
+        r['divergencias'], r['vendasProblema'], sem_receita)
+    entregues = enviar_aviso(db, 'Conferência do dia', corpo)
+    if entregues:
+        estado['resumo'] = hoje
+        gravar_avisos(estado)
+    return entregues
+
+
 def publicar(db, dados):
     db.reference('farmacia/inventario').set(dados)
     try:
@@ -2891,6 +3025,10 @@ def publicar(db, dados):
         publicar_historico(db, dados)
     except Exception as e:
         registrar('Não consegui gravar o histórico do dia: %s' % e)
+    try:
+        avisar_resumo_do_dia(db, dados)
+    except Exception as e:
+        registrar('Não consegui mandar o resumo do dia: %s' % e)
     # O .set() acima troca o nó INTEIRO. Se alguma consulta falhou ao montar
     # os dados, o ramo dela nem entra no dicionário — e some do Firebase.
     #
@@ -3378,6 +3516,14 @@ def publicar_vendas_recentes(config, db):
             continue
         db.reference('farmacia/inventario/%s' % caminho).set(valor)
         escritos.append(caminho)
+
+    # o aviso olha a lista inteira, não o "mudou": venda que chegou quando
+    # ninguém tinha ligado os avisos ainda precisa sair quando alguém ligar
+    if sem_receita:
+        try:
+            avisar_vendas_sem_receita(db, sem_receita)
+        except Exception as e:
+            registrar('Não consegui avisar as vendas sem receita: %s' % e)
 
     if escritos:
         db.reference('farmacia/inventario/vendasRecentesEm').set(
@@ -5581,6 +5727,14 @@ def atender_pedido(config, db, pedido):
 
     if acao == 'desmarcar_controlado':
         return desmarcar_controlado(config, db, pedido)
+
+    if acao == 'testar_aviso':
+        tokens = tokens_de_aviso(db)
+        if not tokens:
+            return 'Nenhum celular com avisos ligados. Ligue no app, aba Servidor.'
+        entregues = enviar_aviso(db, 'Teste de aviso',
+                                 'Os avisos deste celular estão funcionando.', tokens)
+        return 'Aviso de teste entregue a %d de %d celular(es).' % (entregues, len(tokens))
 
     if acao == 'config':
         recado = aplicar_config(config, pedido)

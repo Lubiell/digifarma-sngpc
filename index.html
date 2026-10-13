@@ -174,8 +174,16 @@
       <div class="bloco">
         <h3>Escrita no Digifarma</h3>
         <dl id="dados-escrita" class="dados"></dl>
-        <p class="nota">O agente faz <strong>SELECT</strong> em tudo. As duas únicas escritas são
-        zerar lote negativo e gravar contagem, e só enquanto esta janela estiver aberta.</p>
+        <p class="nota">O agente faz <strong>SELECT</strong> em tudo. As únicas escritas são
+        desmarcar controlado, zerar lote negativo e gravar contagem, e só enquanto esta janela estiver aberta.</p>
+      </div>
+
+      <div class="bloco">
+        <h3>Avisos neste celular</h3>
+        <p id="avisos-estado" class="sublinha"></p>
+        <div id="avisos-acoes" class="grade-botoes"></div>
+        <p class="nota">Venda de controlado sem receita avisa na hora; de manhã, um resumo do
+        dia se houver o que corrigir. No iPhone, só com o app instalado na tela de início.</p>
       </div>
 
       <div class="bloco">
@@ -223,6 +231,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
