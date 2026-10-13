@@ -1,0 +1,41 @@
+# Os três testes do projeto, a cada PR e a cada push na main.
+#
+# Eles já existiam, mas só rodavam quando alguém lembrava. Merge sem rodar é
+# como um agente quebrado chega ao servidor: o ATUALIZAR_AGENTE baixa da main.
+# Só biblioteca padrão do Python e do Node — nada a instalar.
+name: testes
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # a mesma versão que o INSTALAR_AGENTE.bat instala no servidor
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Agente (banco simulado)
+        working-directory: agente
+        run: python teste_agente.py
+
+      - name: Protocolo app x agente x regras, e os .bat
+        run: python teste_bat.py
+
+      - name: App (fumaça)
+        run: node teste-fumaca.js
