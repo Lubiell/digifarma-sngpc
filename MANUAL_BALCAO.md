@@ -1,13 +1,13 @@
 # Manual de balcão — app FARMÁCIA SNGPC
 
-Uma página para quem cobre folga ou férias. O app **só mostra**: quem corrige
-é o Digifarma. Na dúvida sobre o que lançar, fale com o farmacêutico
-responsável antes do próximo envio.
+Uma página de consulta rápida. O app roda num celular só, o do responsável.
+Ele **só mostra**: quem corrige é o Digifarma. Corrija antes do próximo
+envio.
 
 ## Rotina do dia
 
-0. **Uma vez em cada celular:** Servidor → **Ligar avisos neste celular** e
-   depois **Mandar um aviso de teste**. O celular passa a avisar a venda sem
+0. **Uma vez só:** Servidor → **Ligar avisos neste celular** e depois
+   **Mandar um aviso de teste**. O celular passa a avisar a venda sem
    receita na hora, e de manhã manda o resumo do dia.
 1. **Vendas → Com problema.** Toda venda listada ali vai ser recusada ou
    escriturada errada no próximo envio. Corrija no Digifarma **antes** do
@@ -16,8 +16,8 @@ responsável antes do próximo envio.
    Digifarma.
 3. **Saldo.** Confira na prateleira só os itens que aparecem ali (ver tabela).
 4. **Servidor.** Se a aba tiver um **!** ou o aviso "o agente não dá sinal
-   há N minutos", avise quem cuida do servidor: os números da tela pararam
-   de atualizar e não valem para conferir prateleira.
+   há N minutos", o servidor parou de mandar dados: os números da tela não
+   valem para conferir prateleira até ele voltar.
 
 ## Vendas → Com problema
 
