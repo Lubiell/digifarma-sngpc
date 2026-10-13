@@ -320,9 +320,40 @@ function escutar(caminho, aoMudar) {
   escutas.push({ ref, cb });
 }
 
+/* Laboratorio pelo registro M.S. Os digitos 2 a 5 do M.S. sao o numero da
+   empresa detentora na ANVISA (1.0235 e a EMS, 1.0573 o Ache); a tabela
+   laboratorios.json sai dos dados abertos da ANVISA
+   (ferramentas/gerar_laboratorios.py). O laboratorio que o agente le no
+   Digifarma, quando vem, tem preferencia. */
+let tabelaLaboratorios = null;
+if (typeof fetch === 'function') {
+  fetch('laboratorios.json')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((t) => { tabelaLaboratorios = t; if (estado.inventario) { anotarLaboratorios(); pintar(); } })
+    .catch(() => {});
+}
+
+function laboratorioPeloMs(ms) {
+  const d = String(ms || '').replace(/\D/g, '');
+  if (!tabelaLaboratorios || d.length < 9) return '';
+  return tabelaLaboratorios.registros?.[d.slice(0, 9)]
+    || tabelaLaboratorios.empresas?.[d.slice(1, 5)] || '';
+}
+
+function anotarLaboratorios() {
+  ['itens', 'conferencia_xml', 'vendas_problema', 'vendasRecentes'].forEach((no) => {
+    lista(no).forEach((i) => {
+      if (i && !i.laboratorio) {
+        const nome = laboratorioPeloMs(i.ms);
+        if (nome) i.laboratorio = nome;
+      }
+    });
+  });
+}
+
 function ligarEscutas() {
   if (escutas.length) return;
-  escutar('farmacia/inventario', (v) => { estado.inventario = v || {}; pintar(); });
+  escutar('farmacia/inventario', (v) => { estado.inventario = v || {}; anotarLaboratorios(); pintar(); });
   escutar('farmacia/aceites', (v) => { estado.aceites = v || {}; if (estado.vista === 'aceites') pintarAceites(); });
   escutar('farmacia/comando', (v) => { estado.comando = v; pintarComando(); });
   escutar('farmacia/config', (v) => { estado.config = v || {}; });
