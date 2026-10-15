@@ -1423,7 +1423,45 @@ function datasDeEnvio() {
   return [...datas].filter(Boolean).sort().reverse();
 }
 
+/* O que a ANVISA respondeu, como o Digifarma gravou em arquivo
+   (VerificaXML\retorno_sngpc). O agente manda o texto (sem CPF, e-mail nem
+   senha) e as linhas que falam de erro; a tela mostra como veio, sem
+   interpretar: o formato ainda nao foi visto com dado real. */
+function pintarRetornos() {
+  const alvo = $('lista-retornos');
+  const estadoTexto = $('retornos-estado');
+  if (!alvo) return;
+  alvo.innerHTML = '';
+  const publicado = Array.isArray(estado.inventario?.retornoArquivos);
+  const retornos = lista('retornoArquivos');
+  estadoTexto.textContent = !publicado
+    ? 'O agente do servidor ainda não manda as respostas. Atualize o agente na aba Servidor.'
+    : (retornos.length ? 'Os arquivos de retorno mais recentes, do mais novo para o mais velho.'
+      : 'Nenhum arquivo de retorno na pasta do Digifarma.');
+  retornos.slice(0, 5).forEach((r, n) => {
+    const temErro = (r.linhasDeErro || []).length > 0;
+    const corpo = criar('div');
+    if (temErro) {
+      const nota = criar('p', 'motivo');
+      nota.textContent = 'Linhas com erro: ' + r.linhasDeErro.join(' | ');
+      corpo.appendChild(nota);
+    }
+    const pre = criar('pre', 'texto-retorno');
+    pre.textContent = (r.texto || '(arquivo vazio)') + (r.cortado ? '\n(... cortado)' : '');
+    corpo.appendChild(pre);
+    alvo.appendChild(linha({
+      chave: 'retorno:' + (r.arquivo || n),
+      titulo: 'Resposta de ' + dataHora(r.em),
+      meta: [r.arquivo],
+      tarja: [temErro ? 'Tem erro — abra para ver' : 'Sem erro aparente', ''],
+      tarjaClasse: temErro ? 'falta' : 'ok',
+      detalhe: corpo
+    }));
+  });
+}
+
 function pintarAceites() {
+  pintarRetornos();
   const alvo = $('lista-aceites');
   alvo.innerHTML = '';
   const datas = datasDeEnvio();
