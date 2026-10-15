@@ -70,7 +70,7 @@
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60"
             },
             "em": {
-              ".validate": "newData.isString() && newData.val().length <= 40"
+              ".validate": "newData.isString() && newData.val().length <= 40 && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}T/)"
             },
             "$outro": {
               ".validate": false

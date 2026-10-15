@@ -24,7 +24,11 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((chaves) => Promise.all(chaves.filter((k) => k !== VERSAO).map((k) => caches.delete(k))))
+      // só o cache deste app: o módulo de receitas mora no mesmo endereço
+      // (lubiell.github.io), e o cache é do endereço, não da pasta
+      .then((chaves) => Promise.all(chaves
+        .filter((k) => k.startsWith('farmacia-sngpc-') && k !== VERSAO)
+        .map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
