@@ -353,5 +353,18 @@ if (exportado.pintarComando && exportado.pintarRelatorio) {
   });
 }
 
+if (exportado.retornoSemResposta) {
+  conferir('retorno vazio do Digifarma (datas 30/12/1899) é reconhecido', () => {
+    const vazio = 'HASH: \nDATA TRANSMISSÃO: 30/12/1899\nDATA VALIDAÇÃO: 30/12/1899\n'
+      + 'INICIO PERIODO: 30/12/1899\nFIM DO PERIODO: 30/12/1899\nMSG DE RETORNO: \n'
+      + '--------------------\n\nRETORNO COMPLETO: \n';
+    igual(exportado.retornoSemResposta(vazio), true, 'modelo vazio');
+    igual(exportado.retornoSemResposta(''), true, 'arquivo sem texto');
+    igual(exportado.retornoSemResposta(vazio.replace('HASH: ', 'HASH: 92606BDD')), false, 'com hash');
+    igual(exportado.retornoSemResposta(vazio + 'Arquivo aceito\n'), false, 'texto solto no fim');
+    igual(exportado.retornoSemResposta('DATA VALIDAÇÃO: 14/10/2026 21:22'), false, 'data de verdade');
+  });
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou.\n');
 process.exit(falhas ? 1 : 0);

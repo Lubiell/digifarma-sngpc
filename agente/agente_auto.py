@@ -1436,6 +1436,39 @@ def anotar_laboratorio(itens, por_produto, por_ms, chave_produto='codigo'):
             i['laboratorio'] = nome
 
 
+def descrever_pelo_cadastro(conexao, itens):
+    """Põe o nome do medicamento no item que chegou sem nome.
+
+    O XML do SNGPC traz só M.S., lote e quantidade. Quando a venda do XML
+    não é achada no banco ("está no XML e não achei no banco"), o nome não
+    vinha de lugar nenhum e a tela mostrava só o número do registro. O nome
+    vem do cadastro pelo M.S. — sem filtro de controlado, porque produto
+    desmarcado depois do envio é justamente um dos casos dessa divergência —
+    e, se o cadastro não tiver, do inventário da ANVISA."""
+    faltando = {so_digitos(i.get('ms')) for i in itens or ()
+                if not texto(i.get('descricao')).strip() and so_digitos(i.get('ms'))}
+    if not faltando:
+        return
+    nomes = {}
+    try:
+        for linha in consultar(conexao, 'SELECT P.REGISTRO_MS, P.PRODUTO FROM PRODUTOS P '
+                                        'WHERE P.REGISTRO_MS IS NOT NULL'):
+            ms = so_digitos(linha.get('REGISTRO_MS'))
+            nome = texto(linha.get('PRODUTO')).strip()
+            if ms in faltando and nome and ms not in nomes:
+                nomes[ms] = nome
+    except Exception as e:
+        registrar('Não consegui ler o nome dos produtos pelo M.S.: %s' % e)
+    for (ms, _lote), nome in DESCRICOES.items():
+        if ms in faltando and ms not in nomes and texto(nome).strip():
+            nomes[ms] = texto(nome).strip()
+    for i in itens:
+        if not texto(i.get('descricao')).strip():
+            nome = nomes.get(so_digitos(i.get('ms')))
+            if nome:
+                i['descricao'] = nome
+
+
 def ler_inventario_anvisa(conexao):
     """Lê INVENTARIO_SNGPC — a tabela que o Anvisa.exe regrava com o
     inventário do site da ANVISA.
@@ -2702,6 +2735,7 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
             d['periodo'] = periodo
             d['arquivo'] = dados_xml['arquivo']
         anotar_laboratorio(divergencias, *laboratorios)
+        descrever_pelo_cadastro(conexao, divergencias)
         resultado['conferencia_xml'] = divergencias
         resumo_xml.update({
             'conferiu': True,

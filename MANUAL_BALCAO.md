@@ -54,6 +54,14 @@ Não acerte estoque enquanto ela estiver na tela.
 | Está no XML e não achei no banco | Venda cancelada ou alterada depois do envio: avise o responsável. |
 | Mesmo lote, M.S. diferente no XML | O cadastro mudou depois do envio. O XML já enviado não se conserta. |
 
+## Aceites (resultado do envio na ANVISA)
+
+O arquivo de retorno do Digifarma costuma vir **vazio** (datas 30/12/1899):
+o app avisa "Vazio — sem resposta da ANVISA". O resultado de verdade está no
+site da ANVISA, em **Relatório Status de Transmissão**. Marque o envio na aba
+**Aceites**; se foi recusado, cole o erro do site na marcação (dá para editar
+depois em **Editar erro**).
+
 ## Desmarcar controlado/antibiótico (só produto marcado por engano)
 
 1. **Servidor → Ligar a escrita por 60 minutos** (fecha sozinha).

@@ -148,6 +148,9 @@ def principal():
             return [{'CAMPO': c} for c in ('LOTE_ID', 'PRODUTO_ID', 'NUM_LOTE', 'SALDO')]
         if sql in por_sql:
             return por_sql[sql]
+        # o nome pelo M.S., para a venda que só está no XML
+        if 'P.REGISTRO_MS IS NOT NULL' in sql:
+            return [{'REGISTRO_MS': '1.0047.0434.016-8', 'PRODUTO': 'FLUOXETINA 20MG'}]
         # saldo_digifarma tem o {SALDO} trocado antes de rodar
         if 'FROM LOTES' in sql:
             return RESPOSTAS['saldo_digifarma']
@@ -180,6 +183,10 @@ def principal():
     fora = [c for c in dados.get('conferencia_xml', []) if c['situacao'] == 'fora_do_xml']
     conferir('venda que não subiu no XML vira divergência',
              any(c['ms'] == '1999900090011' for c in fora), fora)
+    so_xml = {c['ms']: c['descricao'] for c in dados.get('conferencia_xml', [])
+              if c['situacao'] == 'so_no_xml'}
+    conferir('venda que só está no XML mostra o nome do cadastro',
+             so_xml.get('1004704340168') == 'FLUOXETINA 20MG', so_xml)
     conferir('entrada do XML não é confundida com venda',
              not any(c['ms'] == '1052500680092' for c in dados.get('conferencia_xml', [])))
 
@@ -547,6 +554,35 @@ def principal():
                  ag.laboratorios_por_medicamento(None) == ({}, {}))
     finally:
         ag.consultar = guardado
+
+    # --- nome do medicamento que veio só no XML (o XML não traz nome) ---
+    guardado = ag.consultar
+    try:
+        ag.consultar = lambda _c, sql, _p=(): (
+            [{'REGISTRO_MS': '1.0370.0540.005-2', 'PRODUTO': 'CLONAZEPAM 2MG TEUTO'},
+             {'REGISTRO_MS': None, 'PRODUTO': 'SEM REGISTRO'}]
+            if 'FROM PRODUTOS' in sql else [])
+        ag.DESCRICOES.clear()
+        ag.DESCRICOES[('1052500830027', 'OUTRO')] = 'SERTRALINA 50MG'
+        itens = [{'ms': '1037005400052', 'lote': '5118223', 'descricao': ''},
+                 {'ms': '1052500830027', 'lote': 'CLP3L028', 'descricao': ''},
+                 {'ms': '1999999999999', 'lote': 'X', 'descricao': ''},
+                 {'ms': '1037005400052', 'lote': 'Y', 'descricao': 'NOME DO BANCO'}]
+        ag.descrever_pelo_cadastro(None, itens)
+        conferir('item só no XML ganha o nome pelo M.S. (cadastro, depois ANVISA)',
+                 [i['descricao'] for i in itens] == ['CLONAZEPAM 2MG TEUTO', 'SERTRALINA 50MG',
+                                                     '', 'NOME DO BANCO'], itens)
+
+        def banco_quebrado(_c, _sql, _p=()):
+            raise RuntimeError('sem conexão')
+        ag.consultar = banco_quebrado
+        itens = [{'ms': '1052500830027', 'descricao': ''}]
+        ag.descrever_pelo_cadastro(None, itens)
+        conferir('falha no cadastro não derruba: usa o nome do inventário da ANVISA',
+                 itens[0]['descricao'] == 'SERTRALINA 50MG', itens)
+    finally:
+        ag.consultar = guardado
+        ag.DESCRICOES.clear()
 
     # --- arquivos de retorno da ANVISA (VerificaXML\retorno_sngpc) ---
     pasta_xml = tempfile.mkdtemp()

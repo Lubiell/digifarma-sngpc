@@ -1426,10 +1426,22 @@ function datasDeEnvio() {
   return [...datas].filter(Boolean).sort().reverse();
 }
 
+/* O arquivo que o Digifarma grava quando nao recebeu nada: so os rotulos
+   ("HASH:", "MSG DE RETORNO:") com valor vazio, e as datas em 30/12/1899,
+   que e a data zero do Delphi. Visto com dado real em 15/10/2026, no envio
+   que a ANVISA recusou: o arquivo nao trazia nem o hash nem o erro. */
+function retornoSemResposta(texto) {
+  const linhas = String(texto || '').split(/\r?\n/)
+    .map((l) => l.trim()).filter((l) => l && !/^-+$/.test(l));
+  return linhas.every((l) => {
+    const m = l.match(/^[^:]+:\s*(.*)$/);
+    return Boolean(m) && (m[1] === '' || /^30\/12\/1899\b/.test(m[1]));
+  });
+}
+
 /* O que a ANVISA respondeu, como o Digifarma gravou em arquivo
    (VerificaXML\retorno_sngpc). O agente manda o texto (sem CPF, e-mail nem
-   senha) e as linhas que falam de erro; a tela mostra como veio, sem
-   interpretar: o formato ainda nao foi visto com dado real. */
+   senha) e as linhas que falam de erro; a tela mostra como veio. */
 function pintarRetornos() {
   const alvo = $('lista-retornos');
   const estadoTexto = $('retornos-estado');
@@ -1443,7 +1455,16 @@ function pintarRetornos() {
       : 'Nenhum arquivo de retorno na pasta do Digifarma.');
   retornos.slice(0, 5).forEach((r, n) => {
     const temErro = (r.linhasDeErro || []).length > 0;
+    const vazio = !temErro && retornoSemResposta(r.texto);
     const corpo = criar('div');
+    if (vazio) {
+      const nota = criar('p', 'motivo');
+      nota.textContent = 'O Digifarma gravou este arquivo sem a resposta da ANVISA: hash e mensagem '
+        + 'em branco, e 30/12/1899 é a data zero do Digifarma (data vazia). Não quer dizer que o envio '
+        + 'foi aceito. Confira no site da ANVISA, em Relatório Status de Transmissão, e marque o '
+        + 'envio abaixo; se foi recusado, cole o erro na marcação.';
+      corpo.appendChild(nota);
+    }
     if (temErro) {
       const nota = criar('p', 'motivo');
       nota.textContent = 'Linhas com erro: ' + r.linhasDeErro.join(' | ');
@@ -1456,8 +1477,9 @@ function pintarRetornos() {
       chave: 'retorno:' + (r.arquivo || n),
       titulo: 'Resposta de ' + dataHora(r.em),
       meta: [r.arquivo],
-      tarja: [temErro ? 'Tem erro — abra para ver' : 'Sem erro aparente', ''],
-      tarjaClasse: temErro ? 'falta' : 'ok',
+      tarja: [temErro ? 'Tem erro — abra para ver'
+        : (vazio ? 'Vazio — sem resposta da ANVISA' : 'Sem erro aparente'), ''],
+      tarjaClasse: temErro ? 'falta' : (vazio ? 'sobra' : 'ok'),
       detalhe: corpo
     }));
   });
@@ -1483,6 +1505,11 @@ function pintarAceites() {
     sub.style.margin = '2px 0 0';
     sub.textContent = a.por ? `${estadoAtual === 'aceito' ? 'Aceite' : 'Recusa'} marcada por ${a.por} em ${dataHora(a.em)}` : 'Ainda não conferido no site da ANVISA';
     esquerda.appendChild(sub);
+    if (estadoAtual === 'recusado' && a.erro) {
+      const erro = criar('p', 'motivo');
+      erro.textContent = 'Erro da ANVISA: ' + a.erro;
+      esquerda.appendChild(erro);
+    }
     el.appendChild(esquerda);
 
     const direita = criar('div');
@@ -1506,6 +1533,11 @@ function pintarAceites() {
       nao.textContent = 'Marcar recusado';
       nao.onclick = () => marcarAceite(data, 'recusado');
       direita.appendChild(nao);
+    } else {
+      const editar = criar('button', 'botao botao-fantasma');
+      editar.textContent = a.erro ? 'Editar erro' : 'Anotar erro';
+      editar.onclick = () => marcarAceite(data, 'recusado');
+      direita.appendChild(editar);
     }
     el.appendChild(direita);
     alvo.appendChild(el);
@@ -1513,12 +1545,57 @@ function pintarAceites() {
 }
 
 async function marcarAceite(data, status) {
-  const texto = status === 'aceito'
-    ? `Confirma que o envio de ${dataBR(data)} aparece como aceito no site da ANVISA?`
-    : `Confirma que o envio de ${dataBR(data)} foi recusado? Vale anotar a recusa para conferir as vendas do período.`;
-  if (!(await confirmar('Marcar ' + status, texto, 'Marcar', status === 'aceito' ? 'botao-principal' : 'botao-perigo'))) return;
-  await db.ref('farmacia/aceites/' + data).set({ status, por: estado.operador, em: agora() });
-  avisar('Envio de ' + dataBR(data) + ' marcado como ' + status + '.');
+  if (status === 'recusado') { pedirRecusa(data); return; }
+  const texto = `Confirma que o envio de ${dataBR(data)} aparece como aceito no site da ANVISA?`;
+  if (!(await confirmar('Marcar ' + status, texto, 'Marcar', 'botao-principal'))) return;
+  gravarAceite(data, { status, por: estado.operador, em: agora() });
+}
+
+/* Mesmo limite das regras do Firebase (farmacia/aceites/$data/erro). */
+const LIMITE_ERRO_ACEITE = 2000;
+
+/* A recusa pede o erro que o site da ANVISA mostrou: o arquivo de retorno
+   do Digifarma vem vazio, e sem isto o "por que" da recusa se perdia. */
+function pedirRecusa(data) {
+  const anterior = estado.aceites?.[data]?.erro || '';
+  const corpo = criar('div');
+  const p = criar('p', 'sublinha');
+  p.textContent = `Envio de ${dataBR(data)} recusado. Cole o erro que aparece no site da ANVISA `
+    + '(Relatório Status de Transmissão). Pode deixar em branco.';
+  const campo = criar('textarea', 'busca');
+  campo.rows = 5;
+  campo.maxLength = LIMITE_ERRO_ACEITE;
+  campo.placeholder = 'Ex.: A quantidade vendida (1) do produto ... do lote ... é maior que a quantidade em estoque.';
+  campo.value = anterior;
+  corpo.append(p, campo);
+  abrirModal({
+    titulo: 'Marcar recusado',
+    corpo,
+    acoes: [
+      { texto: 'Cancelar', aoClicar: fecharModal },
+      { texto: 'Marcar recusado', estilo: 'botao-perigo', aoClicar: () => {
+        const erro = campo.value.trim().slice(0, LIMITE_ERRO_ACEITE);
+        fecharModal();
+        const registro = { status: 'recusado', por: estado.operador, em: agora() };
+        if (erro) registro.erro = erro;
+        gravarAceite(data, registro);
+      } }
+    ]
+  });
+}
+
+async function gravarAceite(data, registro) {
+  try {
+    await db.ref('farmacia/aceites/' + data).set(registro);
+    avisar('Envio de ' + dataBR(data) + ' marcado como ' + registro.status + '.');
+  } catch (e) {
+    // Regra velha no Firebase recusa o campo "erro" até o servidor publicar
+    // as novas, o que acontece no botão Atualizar o agente.
+    avisar(registro.erro
+      ? 'O Firebase recusou a marcação com o erro. Na aba Servidor, toque em Atualizar o agente '
+        + '(ele publica as regras novas) e tente de novo.'
+      : 'O Firebase recusou: ' + (e.message || e));
+  }
 }
 
 /* ============================================================
@@ -1587,5 +1664,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio };
+    pintarComando, pintarRelatorio, retornoSemResposta };
 }
