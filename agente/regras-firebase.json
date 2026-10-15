@@ -28,6 +28,9 @@
           "em": {
             ".validate": "newData.isString()"
           },
+          "erro": {
+            ".validate": "newData.isString() && newData.val().length <= 2000"
+          },
           "$outro": {
             ".validate": false
           }
