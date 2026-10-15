@@ -123,7 +123,10 @@ function abrirModal({ titulo, corpo, acoes }) {
     barra.appendChild(b);
   });
   $('modal').hidden = false;
-  fecharModalAtual = () => { $('modal').hidden = true; fecharModalAtual = null; };
+  fecharModalAtual = () => {
+    $('modal').hidden = true; fecharModalAtual = null;
+    if (recarregarAoFecharModal) window.location.reload();
+  };
   const primeiro = alvo.querySelector('input, select, textarea');
   if (primeiro) setTimeout(() => primeiro.focus(), 60);
 }
@@ -1521,9 +1524,38 @@ async function marcarAceite(data, status) {
 /* ============================================================
    13. PWA
    ============================================================ */
-if ('serviceWorker' in navigator) {
+/* Versao nova se instala sozinha. O sw.js e cache-first: sem isto, o
+   celular abria a copia antiga ate alguem fechar e abrir o app duas vezes,
+   e a tela nova de um conserto simplesmente nao aparecia. Agora, a cada
+   abertura e a cada volta ao app, ele pergunta se ha versao nova; o sw
+   novo assume (skipWaiting + clients.claim) e a pagina recarrega uma vez.
+   Com um modal aberto, espera ele fechar para nao perder o que se digitava. */
+let recarregarAoFecharModal = false;
+
+function recarregarParaVersaoNova() {
+  if (!$('modal').hidden) { recarregarAoFecharModal = true; return; }
+  window.location.reload();
+}
+
+// Em http:// sem ser localhost (o IP da rede da loja) a propriedade existe
+// e vem vazia: o navegador so libera service worker em origem segura.
+if (navigator.serviceWorker) {
+  // sem controlador antes = primeira instalacao, nao e versao nova
+  const tinhaVersao = Boolean(navigator.serviceWorker.controller);
+  let recarregou = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!tinhaVersao || recarregou) return;
+    recarregou = true;
+    recarregarParaVersaoNova();
+  });
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker não registrado:', e));
+    navigator.serviceWorker.register('sw.js').then((registro) => {
+      const procurar = () => registro.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') procurar();
+      });
+      setInterval(procurar, 60 * 60 * 1000);
+    }).catch((e) => console.warn('Service worker não registrado:', e));
   });
 }
 window.addEventListener('offline', () => {

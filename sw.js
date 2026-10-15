@@ -5,7 +5,7 @@
    fetch aqui e cache-first, e o activate apaga todo cache cujo nome nao
    seja este. Publicar sem trocar deixa quem ja abriu o app vendo a versao
    antiga para sempre. */
-const VERSAO = 'farmacia-sngpc-v17';
+const VERSAO = 'farmacia-sngpc-v18';
 const CASCA = [
   './',
   './index.html',
@@ -19,7 +19,11 @@ const CASCA = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSAO).then((c) => c.addAll(CASCA)).then(() => self.skipWaiting()));
+  // cache: 'reload' passa por cima do cache HTTP do navegador: sem isso a
+  // versao nova podia guardar o app.js velho que o navegador ainda tinha
+  e.waitUntil(caches.open(VERSAO)
+    .then((c) => c.addAll(CASCA.map((u) => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
