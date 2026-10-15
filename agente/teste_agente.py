@@ -548,6 +548,48 @@ def principal():
     finally:
         ag.consultar = guardado
 
+    # --- arquivos de retorno da ANVISA (VerificaXML\retorno_sngpc) ---
+    pasta_xml = tempfile.mkdtemp()
+    try:
+        os.makedirs(os.path.join(pasta_xml, 'retorno_sngpc'))
+        os.makedirs(os.path.join(pasta_xml, 'enviados'))
+
+        def escrever(rel, conteudo, quando, codificacao='utf-8'):
+            caminho = os.path.join(pasta_xml, rel)
+            with open(caminho, 'w', encoding=codificacao) as f:
+                f.write(conteudo)
+            os.utime(caminho, (quando, quando))
+
+        escrever('retorno_sngpc/retorno_anvisa_2026_10_15_43.txt',
+                 'Periodo 13/10/2026 a 13/10/2026\nERRO: lote 5R7387 inválido\n'
+                 'Responsável CPF 123.456.789-09 fulano@farmacia.com\nSenha: segredo\n',
+                 1760467000)
+        escrever('retorno_sngpc/retorno_anvisa_2026_10_14_42.txt',
+                 'Movimentação validada com sucesso', 1760380000, 'cp1252')
+        escrever('enviados/retorno_que_nao_e.txt', 'não deveria aparecer', 1760500000)
+        escrever('retorno_sngpc/outra_coisa.txt', 'não é retorno', 1760500000)
+
+        retornos = ag.retornos_em_arquivo({'pasta_xml': pasta_xml})
+        conferir('retornos da ANVISA: só os arquivos retorno*, fora da pasta enviados, do mais novo ao mais velho',
+                 [r['arquivo'] for r in retornos]
+                 == ['retorno_anvisa_2026_10_15_43.txt', 'retorno_anvisa_2026_10_14_42.txt'],
+                 [r['arquivo'] for r in retornos])
+        primeiro = retornos[0] if retornos else {}
+        conferir('retorno publicado sem CPF, e-mail nem linha de senha',
+                 '123.456.789-09' not in primeiro.get('texto', '')
+                 and 'fulano@' not in primeiro.get('texto', '')
+                 and 'segredo' not in primeiro.get('texto', '')
+                 and 'lote 5R7387' in primeiro.get('texto', ''), primeiro)
+        conferir('retorno separa as linhas que falam de erro',
+                 primeiro.get('linhasDeErro') == ['ERRO: lote 5R7387 inválido'], primeiro)
+        conferir('retorno gravado em cp1252 é lido com acento',
+                 len(retornos) > 1 and retornos[1]['texto'] == 'Movimentação validada com sucesso'
+                 and retornos[1]['linhasDeErro'] == [], retornos[1:])
+        conferir('sem pasta do XML, nenhum retorno e nenhum erro',
+                 ag.retornos_em_arquivo({'pasta_xml': '/nao/existe'}) == [])
+    finally:
+        shutil.rmtree(pasta_xml, ignore_errors=True)
+
     # --- histórico do dia: as mesmas contas do placar do app ---
     resumo = ag.resumo_do_dia({
         'atualizadoEm': '2026-10-13T10:00:00',

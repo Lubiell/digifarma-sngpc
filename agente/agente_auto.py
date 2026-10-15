@@ -1576,6 +1576,80 @@ def retorno_sngpc(conexao):
     return saida
 
 
+# O retorno que o Digifarma grava em ARQUIVO, na pasta do VerificaXML
+# (retorno_sngpc\retorno_anvisa_AAAA_MM_DD_NN.txt). Por muito tempo a pasta
+# esteve vazia e a tabela STATUS_CONFERENCIA_SNGPC também; o primeiro arquivo
+# apareceu em 14/10, depois que o envio passou a ser pela API (ENVIO_API=S).
+# O formato do conteúdo ainda não foi visto: por isso ele sobe como texto,
+# para a farmácia ler na aba Aceites, e nada é marcado sozinho a partir dele.
+NOME_RETORNO = re.compile(r'^retorno.*\.(txt|xml|json|log)$', re.IGNORECASE)
+RETORNOS_PUBLICADOS = 15
+MAX_TEXTO_RETORNO = 3000
+PALAVRAS_DE_ERRO = ('ERRO', 'RECUS', 'REJEIT', 'INVALID', 'INVÁLID', 'INCONSIST',
+                    'FALHA', 'NAO ACEIT', 'NÃO ACEIT')
+
+
+def mascarar_retorno(texto_cru):
+    """Tira do texto o que identifica pessoa: CPF, e-mail e qualquer linha
+    que fale de senha. O resto — período, hash, mensagem da ANVISA — é o que
+    a farmácia precisa ler, e fica."""
+    linhas = [l for l in texto_cru.splitlines() if 'SENHA' not in l.upper()]
+    t = '\n'.join(linhas)
+    t = re.sub(r'\b\d{3}\.\d{3}\.\d{3}-\d{2}\b', '***.***.***-**', t)
+    t = re.sub(r'(?<!\d)\d{11}(?!\d)', '***********', t)
+    t = re.sub(r'[\w.+-]+@[\w-]+\.[\w.-]+', '(e-mail)', t)
+    return t
+
+
+def ler_arquivo_de_retorno(caminho):
+    with open(caminho, 'rb') as f:
+        bruto = f.read(MAX_TEXTO_RETORNO * 4)
+    for codificacao in ('utf-8-sig', 'cp1252'):
+        try:
+            return bruto.decode(codificacao)
+        except UnicodeDecodeError:
+            continue
+    return bruto.decode('latin-1')
+
+
+def retornos_em_arquivo(config, limite=RETORNOS_PUBLICADOS):
+    """Os últimos arquivos de retorno da ANVISA, do mais novo ao mais velho,
+    com o texto (mascarado) e as linhas que falam de erro."""
+    pasta = (config or {}).get('pasta_xml') or ''
+    if not pasta or not os.path.isdir(pasta):
+        return []
+    achados = []
+    for raiz, pastas, arquivos in os.walk(pasta):
+        # o arquivo morto dos XMLs não tem retorno e é a pasta mais cheia
+        pastas[:] = [p for p in pastas if p.lower() != 'enviados']
+        for nome in arquivos:
+            if NOME_RETORNO.match(nome):
+                caminho = os.path.join(raiz, nome)
+                try:
+                    achados.append((os.path.getmtime(caminho), caminho))
+                except OSError:
+                    continue
+    saida = []
+    for quando, caminho in sorted(achados, reverse=True)[:limite]:
+        try:
+            texto_arquivo = mascarar_retorno(ler_arquivo_de_retorno(caminho))
+        except OSError as e:
+            registrar('Não consegui ler o retorno %s: %s' % (caminho, e))
+            continue
+        cortado = len(texto_arquivo) > MAX_TEXTO_RETORNO
+        saida.append({
+            'arquivo': os.path.basename(caminho),
+            'pasta': os.path.relpath(os.path.dirname(caminho), pasta),
+            'em': datetime.datetime.fromtimestamp(quando).isoformat(timespec='seconds'),
+            'texto': texto_arquivo[:MAX_TEXTO_RETORNO],
+            'cortado': cortado,
+            'linhasDeErro': [l.strip() for l in texto_arquivo.splitlines()
+                             if any(p in normalizar_texto(l) or p in l.upper()
+                                    for p in PALAVRAS_DE_ERRO)][:5],
+        })
+    return saida
+
+
 def vendas_recentes(conexao, dias=DIAS_VENDAS_RECENTES):
     """As últimas vendas de controlado, uma linha por lote vendido.
 
@@ -2302,6 +2376,10 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
     retorno = retorno_sngpc(conexao)
     if retorno is not None:
         resultado['retornoSngpc'] = retorno
+    try:
+        resultado['retornoArquivos'] = retornos_em_arquivo(config)
+    except Exception as e:
+        registrar('Falha ao ler os arquivos de retorno da ANVISA: %s' % e)
 
     # A escrita no Digifarma está aberta? Até quando?
     #
@@ -3512,6 +3590,13 @@ def publicar_vendas_recentes(config, db):
         retorno = retorno_sngpc(conexao)
     finally:
         fechar(conexao)
+    # o arquivo de retorno chega quando a ANVISA responde, a qualquer hora:
+    # esperar a sincronização de hora em hora é esperar à toa
+    try:
+        retorno_arquivos = retornos_em_arquivo(config)
+    except Exception as e:
+        registrar('Não consegui ler os arquivos de retorno da ANVISA: %s' % e)
+        retorno_arquivos = None
 
     # Só escreve o que mudou. A fila roda de minuto em minuto para o botão do
     # app responder rápido, e numa farmácia a maior parte desses minutos não
@@ -3523,6 +3608,7 @@ def publicar_vendas_recentes(config, db):
     for caminho, valor in (('vendasRecentes', linhas),
                            ('entradasPorNota', entradas),
                            ('retornoSngpc', retorno),
+                           ('retornoArquivos', retorno_arquivos),
                            ('vendasSemReceita', sem_receita),
                            ('diagnostico', diagnostico)):
         if valor is None:      # a consulta falhou: não apaga o que está lá
@@ -5185,6 +5271,18 @@ def modo_retorno_anvisa(config):
     for quando, tamanho, caminho in sorted(achados, reverse=True)[:40]:
         print('  %s  %8d B  %s' % (quando.strftime('%d/%m/%Y %H:%M'), tamanho, caminho))
     print('')
+
+    # O conteúdo dos últimos, mascarado (CPF, e-mail, linha de senha). Sem
+    # ver o texto não dá para ensinar o agente a ler aceite e recusa.
+    print('CONTEÚDO DOS ÚLTIMOS ARQUIVOS DE RETORNO')
+    print('=' * 78)
+    retornos = retornos_em_arquivo(config, limite=5)
+    if not retornos:
+        print('Nenhum arquivo retorno*.txt/.xml/.json na pasta.')
+    for r in retornos:
+        print('--- %s (%s, %s)' % (r['arquivo'], r['pasta'], r['em'].replace('T', ' ')))
+        print(r['texto'] + ('\n(... cortado)' if r['cortado'] else ''))
+        print('')
     print('Com esta saída na mão dá para escrever o leitor: o app passa a')
     print('mostrar aceito/recusado e o erro, sem ninguém abrir o Digifarma.')
     return True

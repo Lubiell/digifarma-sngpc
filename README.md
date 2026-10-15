@@ -205,9 +205,11 @@ repositório nem no aparelho.
 
 ## Decisões que valem lembrar
 
-- **O aceite da ANVISA não existe em arquivo local.** A pasta
-  `retorno_sngpc` está vazia e o Digifarma guarda o último envio
-  *enviado*, não o *aceito*. Confira no site e marque na aba Aceites.
+- **O retorno da ANVISA passou a vir em arquivo.** Até 13/10 a pasta
+  `retorno_sngpc` ficava vazia; em 14/10, com o envio pela API
+  (`ENVIO_API=S`), apareceu o primeiro `retorno_anvisa_*.txt`. O agente
+  publica o texto (sem CPF, e-mail nem senha) e a aba Aceites mostra. A
+  marcação continua à mão até o formato do arquivo ser conhecido.
 - **O XML é sobrescrito a cada transmissão.** `SNGPC.XML`,
   `MOVIMENTACAO.XML` e `sngpc.zip` são o mesmo conteúdo. Por isso o agente
   arquiva uma cópia em `VerificaXML\enviados\sngpc_AAAA-MM-DD.xml` antes de
