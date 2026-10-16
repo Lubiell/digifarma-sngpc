@@ -1345,7 +1345,7 @@ def principal():
              'Maria da Silva' not in saida and 'Q2hhdmVTZWNyZXRh' not in saida
              and 'não publicado' in saida, saida)
     conferir('API: a consulta vai com o token e ao endereço da ANVISA',
-             len(pedidos) == 2 and pedidos[1][3] == TOKEN
+             len([p for p in pedidos if '/swagger' not in p[1]]) == 2 and pedidos[1][3] == TOKEN
              and all(u.startswith('https://sngpc-api.anvisa.gov.br/') for _, u, _, _ in pedidos), pedidos)
 
     saida, pedidos = rodar_api([(200, json.dumps(TOKEN))], carimbo_antigo=False)
@@ -1374,7 +1374,7 @@ def principal():
 
     saida, pedidos = rodar_api([(200, json.dumps(TOKEN)), (200, resposta_ok)], cnpj_na_config=True)
     conferir('API: sem CNPJ na tabela SNGPC, usa o da CONFIG e consulta o envio',
-             'CONFIG.CNPJ' in saida and len(pedidos) == 2 and CNPJ in pedidos[1][1]
+             'CONFIG.CNPJ' in saida and len([p for p in pedidos if '/swagger' not in p[1]]) == 2 and CNPJ in pedidos[1][1]
              and sem_segredo(saida), saida)
 
     duplo = json.dumps(resposta_ok)   # objeto serializado dentro de uma string JSON
@@ -1526,6 +1526,25 @@ def principal():
     conferir('Saldo: período antigo revalidado depois da foto não mexe na conta',
              ag.foto_sem_envio_validado('2026-10-15', foto_hora, antigo) is None)
     shutil.rmtree(pasta_api, ignore_errors=True)
+
+    swagger = json.dumps({'paths': {
+        '/v1/Authentication/GetToken': {'post': {}},
+        '/v1/FileXml/ConsultaDadosArquivoXml/{email}/{cnpj}/{hash}': {'get': {}},
+        '/v1/FileXml/ListarArquivos/{cnpj}': {'get': {}, 'parameters': []}}})
+    balde_sw = io.StringIO()
+    pedidos_sw = []
+    with contextlib.redirect_stdout(balde_sw):
+        rotas = ag.listar_rotas_da_api(ag.API_SNGPC_PADRAO, chamar=lambda m, u, c=None, token=None, timeout=30:
+                                       (pedidos_sw.append((m, u, c, token)), (200, swagger))[1])
+    conferir('API: lista os endereços da documentação pública, sem login',
+             ('GET', '/v1/FileXml/ListarArquivos/{cnpj}') in rotas and len(rotas) == 3
+             and 'ListarArquivos' in balde_sw.getvalue()
+             and all(c is None and t is None for _, _, c, t in pedidos_sw), balde_sw.getvalue())
+    balde_sw = io.StringIO()
+    with contextlib.redirect_stdout(balde_sw):
+        ag.listar_rotas_da_api(ag.API_SNGPC_PADRAO, chamar=lambda *a, **k: (403, '<html>'))
+    conferir('API: documentação bloqueada é dita, sem quebrar',
+             'não respondeu (último HTTP 403)' in balde_sw.getvalue(), balde_sw.getvalue())
 
     saida, pedidos = rodar_api([], senha='')
     conferir('API: sem senha guardada não chama nada', not pedidos and 'nada a testar' in saida, saida)
