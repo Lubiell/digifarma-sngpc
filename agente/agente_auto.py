@@ -6892,7 +6892,15 @@ def atender_pedido(config, db, pedido):
         return 'Sincronização concluída.'
 
     if acao == 'atualizar_agente':
-        return atualizar_agente(config)
+        recado = atualizar_agente(config)
+        # a aba Servidor lê a versão do inventário, que só é republicado na
+        # sincronização de hora em hora: sem isto, o botão atualizava e a tela
+        # seguia mostrando o arquivo antigo por até uma hora (16/10)
+        try:
+            db.reference('farmacia/inventario/agente').set(versao_do_agente())
+        except Exception as e:
+            registrar('Não consegui publicar a versão nova do agente: %s' % e)
+        return recado
 
     if acao == 'anvisa':
         return abrir_anvisa(config)

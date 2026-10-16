@@ -793,6 +793,26 @@ def principal():
                  len(enviados) == 1 and '1 de 1' in recado, recado)
         recado = ag.atender_pedido({}, DbAvisos({}), {'acao': 'testar_aviso'})
         conferir('teste sem celular cadastrado explica como ligar', 'Nenhum celular' in recado, recado)
+
+        publicados = {}
+        class RefVersao:
+            def __init__(self, caminho):
+                self.caminho = caminho
+            def set(self, valor):
+                publicados[self.caminho] = valor
+        class DbVersao:
+            def reference(self, caminho):
+                return RefVersao(caminho)
+        guardado_atualizar = ag.atualizar_agente
+        ag.atualizar_agente = lambda _config: 'Agente atualizado: a -> b.'
+        try:
+            recado = ag.atender_pedido({}, DbVersao(), {'acao': 'atualizar_agente'})
+        finally:
+            ag.atualizar_agente = guardado_atualizar
+        conferir('o botão Atualizar o agente publica a versão nova na hora, sem esperar a sincronização',
+                 recado.startswith('Agente atualizado')
+                 and publicados.get('farmacia/inventario/agente', {}).get('bytes')
+                 == ag.versao_do_agente().get('bytes'), publicados)
     finally:
         ag._messaging, ag.PASTA = guardados
         shutil.rmtree(pasta_avisos, ignore_errors=True)
