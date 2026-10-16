@@ -1406,8 +1406,12 @@ def principal():
                        'validacao': '2026-10-08T23:00:02', 'situacao': 'validado',
                        'temMensagem': False}, envio)
     conferir('API: com mensagem é "com_erro", sem validação é "processando"',
-             ag.envio_da_resposta(resposta_real('', '', '', '15/10/2026 09:00:00', 'CID10 x'))['situacao'] == 'com_erro'
+             ag.envio_da_resposta(resposta_real('13/10/2026 00:00:00', '14/10/2026 00:00:00', '',
+                                                '15/10/2026 09:00:00', 'CID10 x'))['situacao'] == 'com_erro'
              and ag.envio_da_resposta(resposta_real('', '', '15/10/2026 07:00:00', ''))['situacao'] == 'processando')
+
+    conferir('API: "hash não encontrado" não vira envio',
+             ag.envio_da_resposta(json.dumps({'mensagem': 'Arquivo nao encontrado'})) is None)
 
     pasta_api = tempfile.mkdtemp()
     os.makedirs(os.path.join(pasta_api, 'enviados'))
@@ -1470,6 +1474,40 @@ def principal():
         ag.atualizar_api_sngpc(None, dict(cfg_api, consultar_api_sngpc=False), chamar=chamar_auto,
                                agora=agora_api + datetime.timedelta(hours=5))
         conferir('API: consultar_api_sngpc false desliga a consulta', not chamadas, chamadas)
+
+        # hash que a API não acha espera um dia; API fora do ar para a rodada
+        os.remove(ag.ARQUIVO_CACHE_API)
+        respostas_api.pop(hash_15)
+        chamadas.clear()
+        ag.atualizar_api_sngpc(None, cfg_api, chamar=chamar_auto, agora=agora_api)
+        chamadas.clear()
+        ag.atualizar_api_sngpc(None, cfg_api, chamar=chamar_auto, agora=agora_api + datetime.timedelta(hours=2))
+        conferir('API: hash sem resposta válida espera 24 h para nova tentativa', not chamadas, chamadas)
+        ag.atualizar_api_sngpc(None, cfg_api, chamar=chamar_auto, agora=agora_api + datetime.timedelta(hours=25))
+        conferir('API: depois de 24 h tenta de novo', any(hash_15 in u for u in chamadas), chamadas)
+
+        os.remove(ag.ARQUIVO_CACHE_API)
+        chamadas.clear()
+        ag.atualizar_api_sngpc(None, cfg_api, agora=agora_api,
+                               chamar=lambda m, u, c=None, token=None, timeout=30: (chamadas.append(u), (401, ''))[1])
+        ag.atualizar_api_sngpc(None, cfg_api, agora=agora_api + datetime.timedelta(hours=2),
+                               chamar=lambda m, u, c=None, token=None, timeout=30: (chamadas.append(u), (401, ''))[1])
+        conferir('API: login recusado espera 6 h (não trava a conta)', len(chamadas) == 1, chamadas)
+
+        os.remove(ag.ARQUIVO_CACHE_API)
+        respostas_api[hash_15] = 'x'
+        lentas = []
+
+        def chamar_lenta(metodo, url, corpo=None, token=None, timeout=30):
+            lentas.append(url)
+            return (200, json.dumps(TOKEN)) if metodo == 'POST' else (None, 'timeout')
+        ag.atualizar_api_sngpc(None, cfg_api, chamar=chamar_lenta, agora=agora_api)
+        conferir('API: sem resposta na consulta para a rodada (não segura a sincronização)',
+                 len(lentas) == 2, lentas)
+        os.remove(ag.ARQUIVO_CACHE_API)
+        respostas_api[hash_15] = resposta_real('13/10/2026 00:00:00', '14/10/2026 00:00:00',
+                                               '15/10/2026 07:21:00', '15/10/2026 09:42:00')
+        ag.atualizar_api_sngpc(None, cfg_api, chamar=chamar_auto, agora=agora_api)
     finally:
         ag.consultar = guardado
 
@@ -1481,6 +1519,12 @@ def principal():
     conferir('Saldo: foto tirada depois da validação não muda a conta',
              ag.foto_sem_envio_validado('2026-10-15', datetime.datetime(2026, 10, 15, 10, 0), envios_api) is None
              and ag.foto_sem_envio_validado('2026-10-16', None, envios_api) is None)
+    conferir('Saldo: sem a hora da foto, validação em dia seguinte à foto também conta',
+             ag.foto_sem_envio_validado('2026-10-14', None, envios_api) == '2026-10-12')
+    antigo = [{'de': '2026-09-01', 'ate': '2026-09-02', 'situacao': 'validado',
+               'validacao': '2026-10-15T20:00:00'}]
+    conferir('Saldo: período antigo revalidado depois da foto não mexe na conta',
+             ag.foto_sem_envio_validado('2026-10-15', foto_hora, antigo) is None)
     shutil.rmtree(pasta_api, ignore_errors=True)
 
     saida, pedidos = rodar_api([], senha='')

@@ -5926,6 +5926,9 @@ def testar_api_sngpc(conexao, chamar=None):
 ARQUIVO_CACHE_API = os.path.join(PASTA, 'api_sngpc_cache.json')
 API_CONSULTA_MINUTOS = 60
 API_CONSULTAS_POR_VEZ = 25
+API_RECUO_HASH_HORAS = 24      # hash sem resposta válida espera um dia
+API_RECUO_LOGIN_HORAS = 6      # login recusado: senha errada repetida trava a conta
+API_FOTO_JANELA_DIAS = 7       # envio de período mais antigo que isso não mexe no Saldo
 SITUACOES_FINAIS = ('validado', 'com_erro')
 NOME_FORMULA = {'md5': 'MD5 do XML', 'sha1': 'SHA-1 do XML', 'sha256': 'SHA-256 do XML',
                 'md5_limpo': 'MD5 do XML sem BOM e espaços nas pontas',
@@ -6013,6 +6016,13 @@ def envio_da_resposta(conteudo):
             if all(p in k for p in pedacos):
                 return v
         return ''
+    de = data_da_api(campo('inicio', 'refer'))[:10]
+    transmissao = data_da_api(campo('data', 'transmiss'))
+    if not (de or transmissao):
+        # "hash não encontrado" e afins também vêm como objeto: sem período
+        # nem transmissão não é envio, e virar 'com_erro' final o deixaria
+        # na tela como "validado com erro" de um arquivo que a ANVISA não achou
+        return None
     validacao = data_da_api(campo('data', 'validac'))
     mensagem = texto(campo('mensagem')).strip()
     if mensagem:
@@ -6022,9 +6032,9 @@ def envio_da_resposta(conteudo):
     else:
         situacao = 'processando'
     return {
-        'de': data_da_api(campo('inicio', 'refer'))[:10],
+        'de': de,
         'ate': data_da_api(campo('fim', 'refer'))[:10],
-        'transmissao': data_da_api(campo('data', 'transmiss')),
+        'transmissao': transmissao,
         'validacao': validacao,
         'situacao': situacao,
         'temMensagem': bool(mensagem),
@@ -6041,9 +6051,13 @@ def ler_cache_api():
 
 
 def gravar_cache_api(cache):
+    # arquivo temporário + os.replace: um corte no meio da escrita não deixa
+    # JSON pela metade (que faria refazer todas as consultas)
+    temporario = ARQUIVO_CACHE_API + '.tmp'
     try:
-        with open(ARQUIVO_CACHE_API, 'w', encoding='utf-8') as f:
+        with open(temporario, 'w', encoding='utf-8') as f:
             json.dump(cache, f, ensure_ascii=False, indent=1)
+        os.replace(temporario, ARQUIVO_CACHE_API)
     except OSError as e:
         registrar('Não consegui gravar o cache da API do SNGPC: %s' % e)
 
@@ -6060,6 +6074,11 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
     try:
         ultima = datetime.datetime.fromisoformat(cache.get('_em', ''))
         if 0 <= (agora - ultima).total_seconds() < API_CONSULTA_MINUTOS * 60:
+            return
+    except ValueError:
+        pass
+    try:
+        if agora < datetime.datetime.fromisoformat(cache.get('_loginRecusadoAte', '')):
             return
     except ValueError:
         pass
@@ -6092,8 +6111,19 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
                 alvos[hashes_do_arquivo(caminho)[formula]] = chave
             except (OSError, KeyError):
                 continue
-    envios = cache.setdefault('envios', {})
-    pendentes = [h for h in alvos if (envios.get(h) or {}).get('situacao') not in SITUACOES_FINAIS]
+    # o cache guarda só o que ainda é alvo: sem isto ele cresceria um envio por dia
+    envios = {h: v for h, v in (cache.get('envios') or {}).items() if h in alvos}
+    cache['envios'] = envios
+    falhas = {h: v for h, v in (cache.get('_falhas') or {}).items() if h in alvos}
+    cache['_falhas'] = falhas
+
+    def em_recuo(h):
+        try:
+            return agora < datetime.datetime.fromisoformat(falhas.get(h, ''))
+        except ValueError:
+            return False
+    pendentes = [h for h in alvos
+                 if (envios.get(h) or {}).get('situacao') not in SITUACOES_FINAIS and not em_recuo(h)]
     if not pendentes:
         gravar_cache_api(cache)
         return
@@ -6103,6 +6133,9 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
     token = token_da_resposta(conteudo) if status and 200 <= status < 300 else None
     if not token:
         cache['_erro'] = 'a API não deu token (HTTP %s)' % (status or 'sem resposta')
+        if status in (400, 401, 403):
+            cache['_loginRecusadoAte'] = (agora + datetime.timedelta(
+                hours=API_RECUO_LOGIN_HORAS)).isoformat(timespec='seconds')
         gravar_cache_api(cache)
         return
     from urllib.parse import quote
@@ -6115,9 +6148,19 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
             envio['arquivo'] = alvos[hash_] or (envios.get(hash_) or {}).get('arquivo', '')
             envio['consultadoEm'] = cache['_em']
             envios[hash_] = envio
-        elif status in (401, 403):
+            falhas.pop(hash_, None)
+            continue
+        if status in (401, 403):
             cache['_erro'] = 'a API recusou a consulta (HTTP %s)' % status
             break
+        if status is None or status == 429 or status >= 500:
+            # API lenta ou fora do ar: parar a rodada, e não segurar a
+            # sincronização com uma fila de chamadas de 30 s cada
+            cache['_erro'] = 'a API não respondeu bem (HTTP %s)' % (status or 'sem resposta')
+            break
+        # 404 ou formato que não é envio: espera um dia para tentar de novo
+        falhas[hash_] = (agora + datetime.timedelta(
+            hours=API_RECUO_HASH_HORAS)).isoformat(timespec='seconds')
     gravar_cache_api(cache)
 
 
@@ -6145,11 +6188,23 @@ def foto_sem_envio_validado(inventario_em, foto_hora, envios):
     foto = texto(inventario_em)[:10]
     if not foto:
         return None
+    try:
+        limite = (datetime.date.fromisoformat(foto)
+                  - datetime.timedelta(days=API_FOTO_JANELA_DIAS)).isoformat()
+    except ValueError:
+        return None
     candidatos = []
     for e in envios or []:
         if e.get('situacao') != 'validado' or not e.get('validacao') or not e.get('de'):
             continue
+        # período antigo validado depois da foto é retransmissão ou
+        # retificação: a foto já tem aquele movimento, e recuar a correção até
+        # lá somaria de novo semanas de venda
+        if (e.get('ate') or e['de']) < limite:
+            continue
         try:
+            # a API responde em hora de Brasília, a mesma do anvisa.log
+            # (transmissão de 15/10 07:21 x foto 07:18) [Provável]
             validado = datetime.datetime.fromisoformat(e['validacao'])
             inicio = datetime.date.fromisoformat(e['de'])
         except ValueError:

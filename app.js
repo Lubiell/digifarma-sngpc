@@ -1604,10 +1604,15 @@ const SITUACAO_API = {
 function envioDaApi(data) {
   const envios = estado.inventario?.apiSngpc?.envios || [];
   const periodo = estado.inventario?.periodosDeEnvio?.[data];
-  return envios.find((e) => e.arquivo === data)
-    || (periodo && envios.find((e) => e.de && e.de === String(periodo.de || '').slice(0, 10)
-      && e.ate === String(periodo.ate || '').slice(0, 10)))
-    || null;
+  const doArquivo = envios.find((e) => e.arquivo === data);
+  if (doArquivo || !periodo) return doArquivo || null;
+  // pelo periodo, so entre os que nao tem arquivo, e o mais recente: num
+  // reenvio do mesmo periodo (erro, depois ok) vale a ultima resposta
+  const mesmos = envios.filter((e) => !e.arquivo && e.de
+    && e.de === String(periodo.de || '').slice(0, 10)
+    && e.ate === String(periodo.ate || '').slice(0, 10));
+  mesmos.sort((x, y) => String(y.transmissao || '').localeCompare(String(x.transmissao || '')));
+  return mesmos[0] || null;
 }
 
 function linhaDaApi(e) {
