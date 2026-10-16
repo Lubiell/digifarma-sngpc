@@ -366,5 +366,41 @@ if (exportado.retornoSemResposta) {
   });
 }
 
+if (exportado.detalheDoSaldo && exportado.pintarConfiancaDoSaldo) {
+  conferir('saldo igual dos dois lados com movimento pendente mostra o movimento e não diz "saldos diferentes"', () => {
+    const criados = [];
+    const original = documento.createElement;
+    documento.createElement = (t) => { const e = original(t); criados.push(e); return e; };
+    try {
+      const textos = () => criados.map((e) => e.textContent);
+      exportado.detalheDoSaldo({ codigo: '13139', saldoDigifarma: 10, saldoSngpc: 10,
+        movimentoDesdeEnvio: -2, esperadoSngpc: 8, diferenca: 2, motivo: 'quantidade',
+        ms: '1234567890123', lote: 'AB12' }, 2);
+      const t = textos();
+      if (!t.includes('Movimento desde a foto') || !t.includes('-2')) throw new Error('movimento não aparece');
+      if (!t.includes('SNGPC esperado hoje (foto + movimento)') || !t.includes('8')) throw new Error('esperado não aparece');
+      if (t.some((x) => x.includes('com saldos diferentes'))) throw new Error('diz "saldos diferentes" com saldos iguais');
+      if (!t.some((x) => x.includes('mesmo número'))) throw new Error('sem a explicação do caso');
+
+      criados.length = 0;
+      exportado.detalheDoSaldo({ codigo: '1', saldoDigifarma: 7, saldoSngpc: 5, diferenca: 2,
+        motivo: 'quantidade', ms: '1', lote: 'X' }, 2);
+      if (textos().includes('Movimento desde a foto')) throw new Error('sem movimento, a linha não devia aparecer');
+      if (!textos().some((x) => x.includes('com saldos diferentes'))) throw new Error('divergência comum perdeu a nota');
+
+      const barra = documento.getElementById('saldo-confianca');
+      exportado.estado.inventario = { inventario: { confianca: { confiavel: true }, jaNaAnvisa: 3 } };
+      exportado.pintarConfiancaDoSaldo();
+      if (barra.hidden || !barra.innerHTML.includes('3 lote(s)')) throw new Error('lotes que já batem não avisados');
+      exportado.estado.inventario = { inventario: { confianca: { confiavel: true }, jaNaAnvisa: 0 } };
+      exportado.pintarConfiancaDoSaldo();
+      if (!barra.hidden) throw new Error('sem motivo, a barra devia sumir');
+    } finally {
+      documento.createElement = original;
+      exportado.estado.inventario = {};
+    }
+  });
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou.\n');
 process.exit(falhas ? 1 : 0);
