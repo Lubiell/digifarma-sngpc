@@ -385,13 +385,28 @@ function desligarEscutas() {
 /* ============================================================
    9. BOTÕES QUE PEDEM AO AGENTE (farmacia/comando)
    ============================================================ */
+/* farmacia/comando guarda UM pedido. Gravar por cima de um que o agente
+   ainda nao atendeu apagava o primeiro sem aviso: foi assim que a
+   investigacao de um lote sumiu, trocada por um "Sincronizar vendas" antes
+   da passagem do agente. Devolve false quando a pessoa desiste. */
+async function gravarPedido(pedido) {
+  const c = estado.comando;
+  // o mesmo pedido de novo (dois toques no botao) nao apaga nada
+  const repetido = c && c.acao === pedido.acao && (c.texto || '') === (pedido.texto || '');
+  if (c && c.estado === 'pendente' && !repetido && !(await confirmar('Já há um pedido na fila',
+    'O agente ainda não atendeu “' + c.acao + '”, pedido em ' + dataHora(c.pedidoEm)
+    + '. Mandar este agora apaga aquele.', 'Substituir'))) return false;
+  await db.ref('farmacia/comando').set(pedido);
+  return true;
+}
+
 async function pedirAoAgente(acao, rotulo) {
-  await db.ref('farmacia/comando').set({
+  if (!(await gravarPedido({
     acao,                    // 'sincronizar_vendas' | 'atualizar_envio'
     pedidoEm: agora(),
     pedidoPor: estado.operador,
     estado: 'pendente'
-  });
+  }))) return;
   avisar(rotulo + ' pedido. O agente atende na próxima passagem dele.');
 }
 
@@ -721,6 +736,20 @@ const NOTA_BATE_SO_SEM_MOVIMENTO = 'Hoje o Digifarma e a foto do SNGPC mostram o
   + 'ou ponteiro atrasado), o lote está certo e este aviso é falso. Confira no Relatório '
   + 'Status de Transmissão do site da ANVISA antes de mexer no estoque.';
 
+/* O veredito vem do agente a cada sincronizacao (anotar_vereditos), com a
+   mesma conta do relatorio do lote: as duas telas nao podem discordar. */
+const VEREDITO_SALDO = {
+  aviso_falso: ['Aviso falso provável', (i) => 'As vendas deste lote já constam na ANVISA: o site '
+    + 'recebeu até a venda ' + i.vereditoCorte + ' e o ponteiro deste Digifarma não andou (envio '
+    + 'feito por outra máquina). A conta desconta a mesma venda duas vezes. Confira no Relatório '
+    + 'Status de Transmissão do site e acerte o ponteiro para ' + i.vereditoCorte
+    + ' (aba Servidor, "Acertar o ponteiro"). Não mexa no estoque.'],
+  acaso: ['Erro compensado por acaso', (i) => 'As vendas deste lote ainda não subiram: estão no meio '
+    + 'da fila, com vendas mais antigas que não batem. Hoje os números coincidem por acaso; depois do '
+    + 'envio o SNGPC fica com ' + i.esperadoSngpc + ' e o Digifarma com ' + i.saldoDigifarma
+    + '. Conte a prateleira.']
+};
+
 function detalheDoSaldo(i, dif) {
   const movimento = Number(i.movimentoDesdeEnvio || 0);
   const pares = [
@@ -750,6 +779,8 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = i.totaisBatem
       ? 'Os totais do lote batem nos dois lados: a farmacia tem a quantidade certa, repartida entre os cadastros de um jeito diferente. E lancamento no cadastro errado, nao falta de mercadoria.'
       : MOTIVO_SALDO.lote_em_dois_ms[1];
+  } else if (VEREDITO_SALDO[i.veredito]) {   // lote_em_dois_ms vem antes: e cadastro
+    nota.textContent = VEREDITO_SALDO[i.veredito][1](i);
   } else if (bateSoSemMovimento(i)) {
     nota.textContent = NOTA_BATE_SO_SEM_MOVIMENTO;
   } else {
@@ -778,11 +809,12 @@ function detalheDoSaldo(i, dif) {
    compensado por acaso, falta ou sobra) e se o lote aparece nos XML
    transmitidos. Sem digitar nada: M.S. e lote vao do proprio item. */
 function investigarLote(i) {
-  estado.relatorioPedido = 'saldo';
-  return db.ref('farmacia/comando').set({
+  return gravarPedido({
     acao: 'saldo', texto: (i.ms || '') + '|' + i.lote,
     pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-  }).then(() => {
+  }).then((ok) => {
+    if (!ok) return;
+    estado.relatorioPedido = 'saldo';
     avisar('Investigação do lote ' + i.lote + ' pedida. A resposta aparece na aba Servidor.');
     irPara('servidor');
   }).catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
@@ -829,10 +861,10 @@ function pedirDesmarcar(i) {
       { texto: 'Cancelar', aoClicar: fecharModal },
       { texto: 'Desmarcar', estilo: 'botao-perigo', aoClicar: () => {
         fecharModal();
-        db.ref('farmacia/comando').set({
+        gravarPedido({
           acao: 'desmarcar_controlado', produtoId: String(i.codigo), desmarcar: sel.value,
           pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-        }).then(() => avisar('Pedido enviado. O agente desmarca na próxima passagem dele.'))
+        }).then((ok) => ok && avisar('Pedido enviado. O agente desmarca na próxima passagem dele.'))
           .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
       } }
     ]
@@ -866,7 +898,8 @@ function pintarSaldo() {
         i.lote && 'Lote ' + i.lote,
         i.validade && 'Val. ' + i.validade
       ],
-      tarja: [(bateSoSemMovimento(i) && 'Iguais hoje, com movimento pendente')
+      tarja: [(i.motivo !== 'lote_em_dois_ms' && VEREDITO_SALDO[i.veredito]?.[0])
+              || (bateSoSemMovimento(i) && 'Iguais hoje, com movimento pendente')
               || MOTIVO_SALDO[i.motivo]?.[0] || (dif < 0 ? 'Falta no Digifarma' : 'Sobra no Digifarma'),
               (dif > 0 ? '+' : '') + dif],
       tarjaClasse: dif < 0 ? 'falta' : 'sobra',
@@ -1136,10 +1169,10 @@ function pintarPonteiroSugerido() {
         'O agente volta a usar o ponteiro do próprio Digifarma'
         + (envio.ponteiroDoDigifarma ? ' (' + envio.ponteiroDoDigifarma + ')' : '')
         + ' e recalcula o Saldo.', 'Desfazer'))) return;
-      await db.ref('farmacia/comando').set({
+      if (!(await gravarPedido({
         acao: 'config', chave: 'transmitido_ate_venda', valor: '0',
         pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-      });
+      }))) return;
       avisar('Pedido enviado. O agente atende na próxima passagem dele.');
     };
     alvo.appendChild(desfazer);
@@ -1173,10 +1206,10 @@ function pintarPonteiroSugerido() {
     // acao 'config' com chave de CONFIG_REMOTO: e o protocolo que o agente
     // ja atende. Nao inventar acao nova - acao que o agente nao conhece
     // vira botao que nao faz nada, e ninguem descobre.
-    await db.ref('farmacia/comando').set({
+    if (!(await gravarPedido({
       acao: 'config', chave: 'transmitido_ate_venda', valor: String(p.corte),
       pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-    });
+    }))) return;
     avisar('Pedido enviado. O agente atende na próxima passagem dele.');
   };
   alvo.appendChild(b);
@@ -1250,10 +1283,13 @@ const RELATORIOS_SERVIDOR = [
 ];
 
 function pedirRelatorio(acao, rotulo) {
-  estado.relatorioPedido = acao;
-  return db.ref('farmacia/comando').set({
+  return gravarPedido({
     acao, pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-  }).then(() => avisar(rotulo + ' pedido. O agente atende na proxima passagem dele.'));
+  }).then((ok) => {
+    if (!ok) return;
+    estado.relatorioPedido = acao;
+    avisar(rotulo + ' pedido. O agente atende na proxima passagem dele.');
+  });
 }
 
 function pintarFerramentas() {
@@ -1281,10 +1317,10 @@ function pintarFerramentas() {
       if (!(await confirmar('Ligar a escrita no Digifarma',
         'Libera, por 60 minutos, desmarcar controlado/antibiótico pelo app. '
         + 'Depois se fecha sozinha.', 'Ligar'))) return;
-      await db.ref('farmacia/comando').set({
+      await gravarPedido({
         acao: 'config', chave: 'permitir_ajuste_estoque', valor: 'true',
         pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-      }).then(() => avisar('Pedido de ligar enviado. O agente atende na próxima passagem dele.'))
+      }).then((ok) => ok && avisar('Pedido de ligar enviado. O agente atende na próxima passagem dele.'))
         .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
     };
     alvo.appendChild(b);
@@ -1298,10 +1334,10 @@ function pintarFerramentas() {
       if (!(await confirmar('Desligar a escrita no Digifarma',
         'Fecha a porta que permite alterar o Digifarma (desmarcar controlado, '
         + 'zerar lote negativo, gravar contagem).', 'Desligar', 'botao-perigo'))) return;
-      await db.ref('farmacia/comando').set({
+      if (!(await gravarPedido({
         acao: 'config', chave: 'permitir_ajuste_estoque', valor: 'false',
         pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-      });
+      }))) return;
       avisar('Pedido de desligar enviado.');
     };
     alvo.appendChild(b);
@@ -1333,11 +1369,14 @@ function pintarFerramentas() {
         { texto: 'Cancelar', aoClicar: fecharModal },
         { texto: 'Buscar', estilo: 'botao-principal', aoClicar: () => {
           fecharModal();
-          estado.relatorioPedido = 'xml';
-          db.ref('farmacia/comando').set({
+          gravarPedido({
             acao: 'xml', texto: campo.value.trim(),
             pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
-          }).then(() => avisar('Busca pedida. O agente atende na proxima passagem dele.'))
+          }).then((ok) => {
+            if (!ok) return;
+            estado.relatorioPedido = 'xml';
+            avisar('Busca pedida. O agente atende na proxima passagem dele.');
+          })
             .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
         } }
       ]
@@ -1346,14 +1385,25 @@ function pintarFerramentas() {
   alvo.appendChild(busca);
 }
 
+function relatorioMaisNovo() {
+  const lista = Object.entries(estado.relatorios || {}).filter(([, r]) => r && r.texto);
+  lista.sort((a, b) => String(b[1].em || '').localeCompare(String(a[1].em || '')));
+  return lista.length ? lista[0][0] : '';
+}
+
 function pintarRelatorio() {
   const bloco = $('bloco-relatorio');
   // Quem fechou e abriu o app perdeu o relatorioPedido, que fica so na
   // memoria; o ultimo pedido da fila diz qual relatorio mostrar.
-  const acao = estado.relatorioPedido || estado.comando?.acao;
+  let acao = estado.relatorioPedido || estado.comando?.acao;
+  // Um "Sincronizar vendas" depois do relatorio escondia a resposta, que
+  // continuava no Firebase: sem relatorio do ultimo pedido, vale o mais novo
+  // - com titulo que nao o faz passar pela resposta do pedido de agora.
+  let anterior = false;
+  if (!(acao && estado.relatorios?.[acao]?.texto)) { acao = relatorioMaisNovo(); anterior = true; }
   const r = acao && estado.relatorios?.[acao];
   if (!r || !r.texto) { bloco.hidden = true; return; }
-  $('relatorio-titulo').textContent = 'Resposta do servidor — ' + acao;
+  $('relatorio-titulo').textContent = (anterior ? 'Último relatório recebido — ' : 'Resposta do servidor — ') + acao;
   $('relatorio-em').textContent = 'gerado em ' + dataHora(r.em)
     + (r.cortado ? ' · texto cortado por ser muito longo' : '');
   $('relatorio').textContent = r.texto;
@@ -1716,5 +1766,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo };
 }

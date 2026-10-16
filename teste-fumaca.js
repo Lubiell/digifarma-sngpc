@@ -410,5 +410,62 @@ if (exportado.detalheDoSaldo && exportado.pintarConfiancaDoSaldo) {
   });
 }
 
+if (exportado.gravarPedido && exportado.pintarRelatorio) {
+  conferir('pedido na fila não é apagado por outro sem perguntar', () => {
+    try {
+      gravados.length = 0;
+      exportado.estado.comando = { acao: 'saldo', estado: 'pendente', pedidoEm: '2026-10-16T09:10:00' };
+      exportado.gravarPedido({ acao: 'sincronizar_vendas', estado: 'pendente' });
+      if (gravados.some(([c]) => c === 'farmacia/comando')) throw new Error('gravou por cima sem confirmar');
+      exportado.estado.comando = { acao: 'sincronizar_vendas', estado: 'pendente' };
+      exportado.gravarPedido({ acao: 'sincronizar_vendas', estado: 'pendente' });
+      if (!gravados.some(([c]) => c === 'farmacia/comando')) throw new Error('mesmo pedido repetido pediu confirmação');
+      gravados.length = 0;
+      exportado.estado.comando = { acao: 'saldo', estado: 'concluido' };
+      exportado.gravarPedido({ acao: 'sincronizar_vendas', estado: 'pendente' });
+      if (!gravados.some(([c, v]) => c === 'farmacia/comando' && v.acao === 'sincronizar_vendas'))
+        throw new Error('com a fila livre, o pedido não foi gravado');
+    } finally {
+      exportado.estado.comando = null;
+    }
+  });
+
+  conferir('relatório continua visível depois de um "Sincronizar vendas"', () => {
+    try {
+      exportado.estado.relatorioPedido = null;
+      exportado.estado.comando = { acao: 'sincronizar_vendas', estado: 'concluido' };
+      exportado.estado.relatorios = {
+        xml: { texto: 'BUSCA ANTIGA', em: '2026-10-15T10:00:00' },
+        saldo: { texto: 'POR QUE O APP ACUSA ESTE LOTE', em: '2026-10-16T09:12:00' }
+      };
+      exportado.pintarRelatorio();
+      if (documento.getElementById('bloco-relatorio').hidden) throw new Error('resposta escondida');
+      igual(documento.getElementById('relatorio').textContent, 'POR QUE O APP ACUSA ESTE LOTE', 'relatório mostrado');
+      igual(documento.getElementById('relatorio-titulo').textContent, 'Último relatório recebido — saldo', 'título');
+    } finally {
+      exportado.estado.comando = null;
+      exportado.estado.relatorios = {};
+    }
+  });
+}
+
+if (exportado.detalheDoSaldo) {
+  conferir('veredito automático do agente aparece no detalhe do lote', () => {
+    const criados = [];
+    const original = documento.createElement;
+    documento.createElement = (t) => { const e = original(t); criados.push(e); return e; };
+    try {
+      exportado.detalheDoSaldo({ codigo: '1', saldoDigifarma: 10, saldoSngpc: 10, movimentoDesdeEnvio: -2,
+        esperadoSngpc: 8, diferenca: 2, motivo: 'quantidade', ms: '1', lote: 'A1',
+        veredito: 'aviso_falso', vereditoCorte: 48251 }, 2);
+      const t = criados.map((e) => e.textContent);
+      if (!t.some((x) => x.includes('recebeu até a venda 48251'))) throw new Error('sem o veredito');
+      if (t.some((x) => x.includes('compensado por acaso'))) throw new Error('nota genérica no lugar do veredito');
+    } finally {
+      documento.createElement = original;
+    }
+  });
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou.\n');
 process.exit(falhas ? 1 : 0);

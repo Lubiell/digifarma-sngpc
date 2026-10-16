@@ -105,6 +105,12 @@ def conferir(titulo, condicao, detalhe=''):
         print('  FALHA ' + titulo + ('\n        ' + str(detalhe) if detalhe else ''))
 
 
+def numero_ok(item):
+    """Lote cujo saldo do Digifarma é diferente da foto: nunca é o caso
+    "iguais com movimento"."""
+    return item.get('saldoDigifarma') != item.get('saldoSngpc')
+
+
 def principal():
     print('\nagente SNGPC\n------------')
 
@@ -172,6 +178,9 @@ def principal():
     diferencas = {i['ms']: i['diferenca'] for i in dados['itens']}
     conferir('diferença de saldo por M.S. + lote',
              diferencas.get('1023506630204') == -3.0, diferencas)
+    conferir('a sincronização roda o veredito sem quebrar nos lotes comuns',
+             not any(i.get('veredito') for i in dados['itens']
+                     if numero_ok(i)), [i for i in dados['itens'] if i.get('veredito')])
     conferir('lote que bate não vira divergência',
              diferencas.get('1057306610050') == 0.0, diferencas)
 
@@ -1256,6 +1265,21 @@ def principal():
     saida = explicar(dict(dados_lote([]), itens=[]), 'A1')
     conferir('Saldo vazio não vira "o lote bate"',
              'apuração falhou' in saida and 'o lote bate' not in saida, saida)
+    anotado = dados_lote([venda_a, venda_b])
+    ag.anotar_vereditos(anotado)
+    conferir('toda sincronização grava o veredito no lote: aviso falso e o corte',
+             anotado['itens'][0].get('veredito') == 'aviso_falso'
+             and anotado['itens'][0].get('vereditoCorte') == 100, anotado['itens'][0])
+    anotado = dados_lote([dict(venda_b, id=99), venda_a])
+    ag.anotar_vereditos(anotado)
+    conferir('veredito gravado no lote: compensado por acaso, sem corte',
+             anotado['itens'][0].get('veredito') == 'acaso'
+             and 'vereditoCorte' not in anotado['itens'][0], anotado['itens'][0])
+    comum = dados_lote([venda_a])
+    comum['itens'][0].update(saldoDigifarma=7.0, saldoSngpc=5.0)
+    ag.anotar_vereditos(comum)
+    conferir('lote com saldos diferentes não ganha veredito de "iguais"',
+             'veredito' not in comum['itens'][0], comum['itens'][0])
     conferir('o resumo de pendentes mantém os próprios rótulos',
              ag.NOME_PENDENTE.get('saidas') == 'VENDAS')
     conferir('M.S. errado com o lote certo não casa',

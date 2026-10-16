@@ -2653,6 +2653,14 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
                   'Pode ser entrada lançada no cadastro errado — ou dois '
                   'fabricantes com o mesmo número de lote.' % pares_ms)
 
+    # o veredito do caso "iguais com movimento", lote a lote: falhar aqui
+    # só tira o veredito da tela, nunca a sincronização
+    resultado['itens'] = itens
+    try:
+        anotar_vereditos(resultado)
+    except Exception as e:
+        registrar('Falha ao calcular o veredito dos lotes: %s' % e)
+
     # agora sim, com tudo apurado
     resultado['inventario']['confianca'] = confianca_do_saldo(
         data_do_inventario, ultimo_envio, resultado.get('retornoSngpc'),
@@ -6563,6 +6571,76 @@ def lote_procurado(item, filtro):
             and (not ms or so_digitos(item.get('ms')) == ms))
 
 
+def fila_do_lote(dados, chave):
+    """As linhas da fila (o que ainda não subiu, pelo ponteiro) de UM lote:
+    [(data, tipo, nº, quantidade com sinal)], na ordem em que aconteceram."""
+    fila = []
+    for tipo, linhas in (dados.get('pendentes') or {}).items():
+        sinal = 1 if tipo == 'entradas' else -1
+        for p in linhas or []:
+            if (so_digitos(p.get('ms')), texto(p.get('lote')).upper()) == chave:
+                fila.append((texto(p.get('data'))[:10], tipo, p.get('id'),
+                             sinal * numero(p.get('quantidade'))))
+    return sorted(fila, key=lambda x: (x[0], str(x[2])))
+
+
+def veredito_do_lote(item, dados, analise, fila):
+    """O que dá para afirmar do lote com Digifarma IGUAL à foto do SNGPC e
+    movimento pendente — o caso "está igual e o app diz que está errado".
+
+    Devolve (código, corte): 'aviso_falso' com o número da venda até onde o
+    site já recebeu, 'acaso', 'em_aberto', ou (None, None) quando o lote não
+    é desse caso. A mesma conta serve ao relatório do lote e ao Saldo de
+    toda sincronização, para as duas telas nunca discordarem.
+
+    Só se fala em ponteiro quando a conta usou a FILA e o movimento do lote
+    é inteiro de vendas da fila, com número: na base 'foto' o ponteiro não
+    entra na conta, e entrada ou perda na mistura não se resolve olhando a
+    sequência de vendas."""
+    movido = numero(item.get('movimentoDesdeEnvio'))
+    if not (numero(item.get('diferenca')) and movido
+            and numero(item.get('saldoDigifarma')) == numero(item.get('saldoSngpc'))):
+        return None, None
+    situacao, faltam, corte, ja = analise
+    chave = (so_digitos(item.get('ms')), texto(item.get('lote')).upper())
+    ids = sorted(int(numero(x[2])) for x in fila if x[2])
+    so_vendas = (dados.get('baseDaCorrecao', 'fila') == 'fila' and fila
+                 and len(ids) == len(fila)
+                 and all(x[1] == 'vendas' for x in fila)
+                 and round(sum(x[3] for x in fila), 3) == round(movido, 3))
+    if so_vendas and situacao == 'atrasado' and corte is not None and max(ids) <= corte:
+        return 'aviso_falso', corte
+    if so_vendas and situacao == 'coincidencia' and chave in ja \
+            and faltam and min(ids) > min(faltam):
+        return 'acaso', None
+    return 'em_aberto', None
+
+
+def analise_da_fila(dados):
+    """(situação, faltam, corte, lotes que já batem) — o analisar_ponteiro
+    uma vez só, para todos os lotes."""
+    situacao, _, faltam, corte = analisar_ponteiro(dados)
+    ja = {(c[0], c[1]) for c in ((dados.get('inventario') or {}).get('lotesJaNaAnvisa') or [])}
+    return situacao, faltam, corte, ja
+
+
+def anotar_vereditos(dados):
+    """Grava em cada lote do Saldo o veredito do caso "iguais com movimento",
+    para o app mostrar sem ninguém precisar pedir relatório."""
+    analise = analise_da_fila(dados)
+    for i in dados.get('itens') or []:
+        # a fila varre todos os pendentes: só para o lote que é do caso
+        if not (numero(i.get('diferenca')) and numero(i.get('movimentoDesdeEnvio'))
+                and numero(i.get('saldoDigifarma')) == numero(i.get('saldoSngpc'))):
+            continue
+        chave = (so_digitos(i.get('ms')), texto(i.get('lote')).upper())
+        codigo, corte = veredito_do_lote(i, dados, analise, fila_do_lote(dados, chave))
+        if codigo:
+            i['veredito'] = codigo
+            if corte is not None:
+                i['vereditoCorte'] = corte
+
+
 def explicar_lote(dados, filtro):
     """Para um lote do Saldo: a conta que o app fez, o movimento que entrou
     nela e o que isso quer dizer. Trabalha só com o que o montar_inventario
@@ -6593,8 +6671,7 @@ def explicar_lote(dados, filtro):
             print('dois lados. Confira se o lote foi digitado como no Digifarma.')
         return False
 
-    situacao, _, faltam, corte = analisar_ponteiro(dados)
-    ja = {(c[0], c[1]) for c in (inv.get('lotesJaNaAnvisa') or [])}
+    analise = analise_da_fila(dados)
     for i in achados:
         chave = (so_digitos(i.get('ms')), texto(i.get('lote')).upper())
         digi = numero(i.get('saldoDigifarma'))
@@ -6613,16 +6690,10 @@ def explicar_lote(dados, filtro):
         print('  SNGPC esperado hoje ....... %g' % esperado)
         print('  diferença ................. %s' % (('%+g' % dif) if dif else 'nenhuma'))
 
-        fila = []
-        for tipo, linhas in (dados.get('pendentes') or {}).items():
-            sinal = 1 if tipo == 'entradas' else -1
-            for p in linhas or []:
-                if (so_digitos(p.get('ms')), texto(p.get('lote')).upper()) == chave:
-                    fila.append((texto(p.get('data'))[:10], tipo, p.get('id'),
-                                 sinal * numero(p.get('quantidade'))))
+        fila = fila_do_lote(dados, chave)
         if fila:
             print('  na fila (ainda não transmitido, pelo ponteiro):')
-            for data, tipo, ident, qtd in sorted(fila, key=lambda x: (x[0], str(x[2]))):
+            for data, tipo, ident, qtd in fila:
                 print('    %s  %-13s nº %-8s %+g' % (br(data), TIPO_NA_FILA.get(tipo, tipo),
                                                    ident or '—', qtd))
         elif movido:
@@ -6632,23 +6703,14 @@ def explicar_lote(dados, filtro):
         if not dif:
             print('  VEREDITO: bate. O app não acusa este lote.')
         elif digi == foto and movido:
-            # Só dá para falar em ponteiro quando a conta usou a FILA e o
-            # movimento do lote é inteiro de vendas da fila, com número. Na
-            # base 'foto' o ponteiro não entra na conta, e entrada ou perda
-            # na mistura não se resolve olhando a sequência de vendas.
-            ids = sorted(int(numero(x[2])) for x in fila if x[2])
-            so_vendas = (base == 'fila' and fila and len(ids) == len(fila)
-                         and all(x[1] == 'vendas' for x in fila)
-                         and round(sum(x[3] for x in fila), 3) == round(movido, 3))
-            if so_vendas and situacao == 'atrasado' and corte is not None \
-                    and max(ids) <= corte:
+            codigo, corte = veredito_do_lote(i, dados, analise, fila)
+            if codigo == 'aviso_falso':
                 print('  VEREDITO: aviso FALSO, provável. As vendas deste lote estão no')
                 print('  começo da fila e já constam na ANVISA: o site recebeu até a venda')
                 print('  %d, e o ponteiro deste Digifarma não andou (envio feito por outra' % corte)
                 print('  máquina). A conta desconta a mesma venda duas vezes. Confira no')
                 print('  Relatório Status de Transmissão e acerte o ponteiro para %d.' % corte)
-            elif so_vendas and situacao == 'coincidencia' and chave in ja \
-                    and faltam and min(ids) > min(faltam):
+            elif codigo == 'acaso':
                 print('  VEREDITO: erro de verdade, compensado por acaso. As vendas deste')
                 print('  lote estão no MEIO da fila, com vendas mais antigas sem bater;')
                 print('  envio é sequencial, então elas ainda não subiram. Depois do envio')
