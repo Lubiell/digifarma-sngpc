@@ -1374,6 +1374,23 @@ def principal():
              'CONFIG.CNPJ' in saida and len(pedidos) == 2 and CNPJ in pedidos[1][1]
              and sem_segredo(saida), saida)
 
+    duplo = json.dumps(resposta_ok)   # objeto serializado dentro de uma string JSON
+    saida, pedidos = rodar_api([(200, json.dumps(TOKEN)), (200, duplo)])
+    conferir('API: objeto dentro de texto JSON é lido, com o mesmo filtro',
+             'objeto JSON (dentro de texto JSON)' in saida and 'Aceito' in saida
+             and 'Maria da Silva' not in saida and sem_segredo(saida), saida)
+    xml_resp = ('<retorno><situacao>Aceito</situacao><dataValidacao>2026-10-15T09:42:00</dataValidacao>'
+                '<mensagemValidacao>Paciente Maria da Silva</mensagemValidacao><hash>%s</hash></retorno>' % HASH)
+    saida, pedidos = rodar_api([(200, json.dumps(TOKEN)), (200, xml_resp)])
+    conferir('API: resposta em XML é lida, sem publicar texto livre nem hash',
+             'XML (raiz retorno)' in saida and 'Aceito' in saida
+             and 'Maria da Silva' not in saida and sem_segredo(saida), saida)
+    solto = json.dumps('Arquivo nao encontrado para o paciente Maria da Silva')
+    saida, pedidos = rodar_api([(200, json.dumps(TOKEN)), (200, solto)])
+    conferir('API: mensagem solta vira palavras-chave, nunca o texto',
+             'palavras: ' in saida and 'nao encontrad' in saida and 'arquivo' in saida
+             and 'Maria' not in saida, saida)
+
     saida, pedidos = rodar_api([], senha='')
     conferir('API: sem senha guardada não chama nada', not pedidos and 'nada a testar' in saida, saida)
 
