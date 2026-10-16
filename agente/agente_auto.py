@@ -5566,9 +5566,279 @@ def modo_login_sngpc(config):
             print('Nesse caso o login continua sendo de uma pessoa. Vale abrir')
             print('chamado no Digifarma perguntando por que o Anvisa.exe não usa')
             print('as credenciais que a própria tabela dele guarda.')
+        print('')
+        try:
+            testar_api_sngpc(conexao)
+        except Exception as e:
+            # o teste da API é acréscimo: falhar nele não pode levar o
+            # relatório de cima junto, nem mostrar mensagem que cite segredo
+            print('O teste da API parou num erro (%s).' % type(e).__name__)
         return True
     finally:
         fechar(conexao)
+
+
+# ------------------------------------------------------------
+# API oficial do SNGPC — etapa 1 da docs/specs/2026-10-16-aceite-pela-api-sngpc.md
+# ------------------------------------------------------------
+# O Digifarma já transmite por ela (ENVIO_API=S) com o login que guarda na
+# tabela SNGPC. Aqui o agente só CONSULTA, com o mesmo login, lido na hora e
+# usado em memória: senha, token, e-mail e hash nunca vão para a tela, o log
+# ou o Firebase. Os endereços vêm do que outros sistemas publicaram (fórum do
+# ACBr, 2025/2026) — a documentação da ANVISA fica atrás do gov.br — e é por
+# isso que esta etapa é um relatório: confirmar antes de automatizar.
+API_SNGPC_PADRAO = 'https://sngpc-api.anvisa.gov.br'
+# Só estes hosts recebem o login. Lista exata, e não "*.anvisa.gov.br": um
+# subdomínio abandonado ou tomado receberia a senha da farmácia.
+API_SNGPC_HOSTS = {'sngpc-api.anvisa.gov.br'}
+# Campos da resposta que podem ir para a tela, pelo pedaço do nome. Texto
+# livre (mensagem de validação) pode citar paciente ou prescritor: dele só
+# se diz que existe.
+API_CAMPOS_PUBLICOS = ('data', 'situacao', 'status', 'protocolo', 'codigo',
+                       'aceit', 'valid', 'recebid', 'periodo', 'tipo')
+API_INTERVALO_MINUTOS = 10
+ARQUIVO_TESTE_API = os.path.join(PASTA, 'api_sngpc_ultimo_teste.txt')
+API_SNGPC_TOKEN = '/v1/Authentication/GetToken'
+API_SNGPC_CONSULTA = '/v1/FileXml/ConsultaDadosArquivoXml/{email}/{cnpj}/{hash}'
+
+
+def base_da_api(link):
+    """O endereço da API: o LINK_API do Digifarma se for https num domínio da
+    ANVISA, senão o padrão. A senha só sai para *.anvisa.gov.br — um LINK_API
+    trocado não pode levá-la para outro lugar."""
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(texto(link).strip())
+        host = (u.hostname or '').lower()
+    except ValueError:
+        return API_SNGPC_PADRAO
+    if u.scheme == 'https' and host in API_SNGPC_HOSTS:
+        return 'https://' + host
+    return API_SNGPC_PADRAO
+
+
+def chamar_api(metodo, url, corpo=None, token=None, timeout=30):
+    """Uma chamada HTTP à API. Devolve (status, conteúdo); status None quando
+    nem chegou a responder (rede, tempo esgotado, certificado)."""
+    import urllib.error
+    import urllib.request
+    dados = json.dumps(corpo).encode('utf-8') if corpo is not None else None
+    cabecalho = {'Accept': 'application/json', 'User-Agent': 'agente-sngpc'}
+    if dados is not None:
+        cabecalho['Content-Type'] = 'application/json'
+    if token:
+        cabecalho['Authorization'] = 'Bearer ' + token
+    pedido = urllib.request.Request(url, data=dados, headers=cabecalho, method=metodo)
+
+    class SemRedirecionar(urllib.request.HTTPRedirectHandler):
+        # redirect levaria o Authorization (e o e-mail e o hash do caminho)
+        # para onde a resposta mandasse: 3xx volta como erro, e pronto
+        def redirect_request(self, *args, **kwargs):
+            return None
+    abrir = urllib.request.build_opener(SemRedirecionar())
+    try:
+        with abrir.open(pedido, timeout=timeout) as resposta:
+            return resposta.status, resposta.read(1000000).decode('utf-8', 'replace')
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, e.read(100000).decode('utf-8', 'replace')
+        except Exception:
+            return e.code, ''
+    except Exception as e:
+        return None, '%s: %s' % (type(e).__name__, e)
+
+
+def ler_json(conteudo):
+    try:
+        return json.loads(conteudo)
+    except (TypeError, ValueError):
+        return None
+
+
+def token_da_resposta(conteudo):
+    """O token vem como string JSON ("eyJ...") ou num objeto; aceita os dois."""
+    dados = ler_json(conteudo)
+    if isinstance(dados, str):
+        return dados.strip() or None
+    if isinstance(dados, dict):
+        for chave in ('token', 'accessToken', 'access_token', 'jwt', 'Token'):
+            if texto(dados.get(chave)).strip():
+                return texto(dados.get(chave)).strip()
+    return None
+
+
+def limpar_da_api(valor, segredos=()):
+    """Texto da API pronto para a tela: sem os segredos usados na chamada, sem
+    e-mail, CPF, CNPJ ou outra sequência longa de dígitos (a mensagem de
+    validação pode citar paciente ou prescritor), e curto."""
+    from urllib.parse import quote
+    t = texto(valor)
+    for segredo in segredos:
+        if segredo and len(segredo) >= 4:
+            t = t.replace(segredo, '•••').replace(quote(segredo, safe=''), '•••')
+    t = re.sub(r'[\w.+-]+@[\w-]+(\.[\w-]+)+', '[e-mail]', t)
+    t = re.sub(r'\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}', '[CNPJ]', t)
+    t = re.sub(r'\d{3}\.?\d{3}\.?\d{3}-?\d{2}', '[CPF]', t)
+    t = re.sub(r'\d{11,}', '[número]', t)
+    t = re.sub(r'[A-Za-z0-9+/=_-]{20,}', '[código]', t)   # hash, token, base64
+    t = ' '.join(t.split())
+    return t[:300] + ('…' if len(t) > 300 else '')
+
+
+def credenciais_sngpc(conexao):
+    """E-mail, senha, LINK_API, CNPJ e os HASH da tabela SNGPC do Digifarma.
+    Devolve (valores, nomes das colunas de hash). Não imprime nada."""
+    campos = colunas_da_tabela(conexao, 'SNGPC')
+    def exata(*nomes):
+        # nome exato, na ordem de preferência: por pedaço do nome, um
+        # ULTIMO_LOGIN ou EMAIL_SMTP iria para a ANVISA como credencial
+        for nome in nomes:
+            if nome in campos:
+                return nome
+        return None
+    colunas = {
+        'email': exata('EMAIL', 'EMAIL_SNGPC', 'USUARIO_SNGPC', 'LOGIN_SNGPC'),
+        'senha': exata('SENHA', 'SENHA_SNGPC'),
+        'link': exata('LINK_API'),
+        'cnpj': exata('CNPJ', 'CNPJ_EMPRESA'),
+    }
+    hashes = [c for c in campos if 'HASH' in c]
+    pedir = [c for c in list(colunas.values()) + hashes if c]
+    if not pedir:
+        return {}, []
+    linhas = consultar(conexao, 'SELECT FIRST 1 %s FROM SNGPC' % ', '.join(pedir))
+    linha = linhas[0] if linhas else {}
+    valores = {k: texto(linha.get(c)).strip() if c else '' for k, c in colunas.items()}
+    valores['hashes'] = [(c, texto(linha.get(c)).strip()) for c in hashes]
+    valores['colunas'] = colunas
+    return valores, hashes
+
+
+def campo_da_api(chave, valor, segredos):
+    """Uma linha do que a API respondeu. Só valor simples de campo da lista
+    API_CAMPOS_PUBLICOS vai como está (limpo); o resto vira descrição."""
+    nome = chave if re.fullmatch(r'[A-Za-z0-9_]{1,40}', texto(chave)) else '[campo]'
+    baixo = nome.lower()
+    if any(p in baixo for p in ('hash', 'email', 'senha', 'cnpj', 'cpf', 'token')):
+        return '%-28s %s' % (nome, 'preenchido' if texto(valor).strip() else 'vazio')
+    if isinstance(valor, (dict, list)):
+        return '%-28s %s com %d item(ns), não publicado' % (
+            nome, 'objeto' if isinstance(valor, dict) else 'lista', len(valor))
+    texto_livre = any(p in baixo for p in ('mensagem', 'msg', 'texto', 'descri', 'observ',
+                                             'erro', 'motivo', 'detalhe', 'nome'))
+    if isinstance(valor, (bool, int, float)) or valor is None or (
+            not texto_livre and any(p in baixo for p in API_CAMPOS_PUBLICOS)):
+        return '%-28s %s' % (nome, limpar_da_api(valor, segredos))
+    return '%-28s texto com %d caractere(s), não publicado (pode citar paciente)' % (
+        nome, len(texto(valor)))
+
+
+def teste_api_recente(agora=None):
+    """Minutos desde o último teste, se foi há menos que o intervalo. Cada
+    teste é um login de verdade na ANVISA: com senha errada, clique repetido
+    pode travar a conta da farmácia."""
+    agora = agora or datetime.datetime.now()
+    try:
+        with open(ARQUIVO_TESTE_API, encoding='utf-8') as f:
+            antes = datetime.datetime.fromisoformat(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    passados = (agora - antes).total_seconds() / 60
+    return passados if 0 <= passados < API_INTERVALO_MINUTOS else None
+
+
+def carimbar_teste_api():
+    try:
+        with open(ARQUIVO_TESTE_API, 'w', encoding='utf-8') as f:
+            f.write(datetime.datetime.now().isoformat(timespec='seconds'))
+    except OSError:
+        pass
+
+
+def testar_api_sngpc(conexao, chamar=None):
+    """O relatório da etapa 1: o login do Digifarma abre a API? A consulta do
+    último envio responde o quê? Só imprime status, nomes de campo e valores
+    limpos — nunca senha, token, e-mail, CNPJ ou hash."""
+    chamar = chamar or chamar_api
+    print('API OFICIAL DO SNGPC (só consulta, com o login do Digifarma)')
+    print('=' * 78)
+    try:
+        cred, colunas_hash = credenciais_sngpc(conexao)
+    except Exception as e:
+        print('Não consegui ler a tabela SNGPC (%s).' % type(e).__name__)
+        return False
+    email, senha = cred.get('email', ''), cred.get('senha', '')
+    usadas = cred.get('colunas') or {}
+    print('colunas do login: e-mail = %s, senha = %s' % (
+        usadas.get('email') or 'nenhuma', usadas.get('senha') or 'nenhuma'))
+    if not (email and senha):
+        print('O Digifarma não tem e-mail e senha da API guardados: nada a testar.')
+        return False
+    recente = teste_api_recente()
+    if recente is not None:
+        print('Testado há %d minuto(s). Espere %d minutos entre um teste e outro: cada'
+              % (recente, API_INTERVALO_MINUTOS))
+        print('teste é um login de verdade, e senha errada repetida pode travar a conta.')
+        return False
+    carimbar_teste_api()
+    base = base_da_api(cred.get('link'))
+    print('endereço: %s' % base)
+    if cred.get('link') and base_da_api(cred.get('link')) == API_SNGPC_PADRAO \
+            and API_SNGPC_PADRAO not in texto(cred.get('link')).lower():
+        print('  o LINK_API do Digifarma aponta para outro endereço; o login só vai para')
+        print('  o endereço acima.')
+    segredos = [email, senha] + [h for _, h in cred.get('hashes', [])]
+
+    status, conteudo = chamar('POST', base + API_SNGPC_TOKEN,
+                              {'username': email, 'password': senha})
+    token = token_da_resposta(conteudo) if status and 200 <= status < 300 else None
+    if token:
+        segredos.append(token)
+    print('token (POST %s): %s' % (API_SNGPC_TOKEN,
+        'recebido' if token else 'NÃO veio — HTTP %s' % (status or 'sem resposta')))
+    if not token:
+        erro = ler_json(conteudo)
+        if isinstance(erro, dict):
+            print('  resposta: %s' % limpar_da_api(erro.get('title') or erro.get('message')
+                                                   or erro.get('detail') or '', segredos))
+        elif status is None:
+            print('  sem resposta: %s' % limpar_da_api(conteudo, segredos))
+        if status in (401, 403):
+            print('  A API recusou. Pode ser a senha guardada cifrada pelo Digifarma, ou')
+            print('  bloqueio da ANVISA a este endereço (outros sistemas relataram 403).')
+        return False
+
+    cnpj = so_digitos(cred.get('cnpj'))
+    hashes = [(c, h) for c, h in cred.get('hashes', []) if h]
+    print('CNPJ: %s · hash na tabela SNGPC: %s' % (
+        'preenchido' if cnpj else 'VAZIO',
+        ', '.join('%s %s' % (c, 'preenchido' if h else 'vazio')
+                  for c, h in cred.get('hashes', [])) or 'nenhuma coluna HASH'))
+    if not (cnpj and hashes):
+        print('Sem CNPJ ou sem hash não dá para consultar um envio.')
+        return True
+
+    from urllib.parse import quote
+    for coluna, hash_ in hashes[:3]:
+        url = base + API_SNGPC_CONSULTA.format(email=quote(email, safe=''),
+                                               cnpj=cnpj, hash=quote(hash_, safe=''))
+        status, conteudo = chamar('GET', url, token=token)
+        print('')
+        print('consulta do envio de %s (GET %s): HTTP %s' % (
+            coluna, API_SNGPC_CONSULTA, status or 'sem resposta'))
+        dados = ler_json(conteudo)
+        registros = dados if isinstance(dados, list) else [dados]
+        for reg in registros[:3]:
+            if not isinstance(reg, dict):
+                print('  resposta não é JSON de objeto (%d caractere(s)), não publicada'
+                      % len(texto(conteudo)))
+                break
+            for chave in sorted(reg, key=texto):
+                print('  ' + campo_da_api(chave, reg[chave], segredos))
+    print('')
+    print('Compare com o Relatório Status de Transmissão do site. Batendo, a etapa 2')
+    print('(aceite automático na aba Aceites) pode ser ligada.')
+    return True
 
 
 def modo_regras(config):

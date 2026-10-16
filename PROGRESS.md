@@ -20,6 +20,13 @@ servidor de longe, ainda não executado no Windows.
   aba Servidor mostra o último relatório recebido; e o agente grava o
   veredito em cada lote a cada sincronização (`veredito`, `vereditoCorte`),
   que aparece no detalhe do Saldo sem pedir nada.
+- 16/10: aceite automático pela API oficial do SNGPC, aprovado pela farmácia
+  (spec em docs/specs/2026-10-16-aceite-pela-api-sngpc.md). Etapa 1 feita: o
+  botão "Login SNGPC" testa o token e consulta o último envio com o login que
+  o Digifarma guarda (nada de segredo na saída). Endereços vêm de fórum, não da
+  doc oficial; a nuvem leva 403 da Cloudflare, então só o servidor confirma.
+  Etapa 2 (marcar sozinho e usar a data de validação no Saldo) espera essa
+  resposta.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade
