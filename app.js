@@ -1235,6 +1235,14 @@ function pintarEscrita() {
 /* Campo sem valor NAO some: some vira painel em branco, que nao
    distingue "o agente nao publicou isto" de "o app esta quebrado".
    Cada linha ausente diz o que falta e o que destrava. */
+/* O agente confere o GitHub de 10 em 10 minutos e troca sozinho; aqui
+   aparece quando foi a ultima troca e, se falhou, por que. */
+function textoDaAtualizacao(u) {
+  if (!u || !u.em) return 'nenhuma registrada ainda (o agente confere o GitHub de 10 em 10 min)';
+  return dataHora(u.em) + ' (' + (u.como || 'automática') + ') — '
+    + (u.ok ? 'ok' : 'FALHOU: ') + (u.ok ? '' : (u.mensagem || 'sem mensagem'));
+}
+
 function pintarAgente() {
   const a = estado.inventario?.agente || {};
   const dl = $('dados-agente');
@@ -1246,6 +1254,7 @@ function pintarAgente() {
     : [
       ['Arquivo do agente', a.bytes ? a.bytes + ' bytes · ' + (a.hash || '') : 'o agente não publicou — versão antiga no servidor'],
       ['Agente gravado em', a.em ? dataHora(a.em) : '—'],
+      ['Última atualização', textoDaAtualizacao(a.ultimaAtualizacao)],
       ['Última passagem', estado.inventario?.vistoEm ? dataHora(estado.inventario.vistoEm) : 'o agente não publicou vistoEm — versão antiga no servidor'],
       ['Último resultado', estado.inventario?.atualizadoEm ? dataHora(estado.inventario.atualizadoEm) : '—'],
       ['Conta de serviço', a.chave?.conta || '—'],
@@ -1818,5 +1827,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao };
 }

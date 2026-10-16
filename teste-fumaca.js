@@ -467,6 +467,17 @@ if (exportado.detalheDoSaldo) {
   });
 }
 
+if (exportado.textoDaAtualizacao) {
+  conferir('servidor: mostra a última atualização do agente e o motivo da falha', () => {
+    const vazio = exportado.textoDaAtualizacao(undefined);
+    if (!vazio.includes('nenhuma registrada')) throw new Error('vazio: ' + vazio);
+    const ok = exportado.textoDaAtualizacao({ em: '2026-10-16T20:40:00', ok: true, como: 'automática' });
+    if (!ok.includes('(automática) — ok')) throw new Error('ok: ' + ok);
+    const ruim = exportado.textoDaAtualizacao({ em: '2026-10-16T20:40:00', ok: false, como: 'botão', mensagem: 'o agente novo não carrega' });
+    if (!ruim.includes('FALHOU: o agente novo não carrega') || !ruim.includes('(botão)')) throw new Error('falha: ' + ruim);
+  });
+}
+
 if (exportado.envioDaApi && exportado.linhaDaApi) {
   conferir('aceite: resposta da API casa pelo arquivo e pelo período', () => {
     try {
