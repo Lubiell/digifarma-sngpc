@@ -1286,6 +1286,89 @@ def principal():
              not ag.lote_procurado({'ms': ms, 'lote': 'A1'}, '1111111111111|A1')
              and ag.lote_procurado({'ms': ms, 'lote': 'A1'}, 'a1'))
 
+    # ------------------------------------------------------------
+    # API oficial do SNGPC: só consulta, nada de segredo na saída
+    # ------------------------------------------------------------
+    SENHA, EMAIL, HASH, CNPJ = 'S3nh@Secreta', 'rt@farmacia.com.br', 'A1B2C3D4E5F6', '12345678000199'
+    TOKEN = 'eyJtoken.muito.secreto'
+    ag.ARQUIVO_TESTE_API = os.path.join(pasta, 'api_sngpc_ultimo_teste.txt')
+
+    def tabela_sngpc(link='https://sngpc-api.anvisa.gov.br/', senha=SENHA):
+        def consultar_sngpc(conexao, sql, parametros=()):
+            if 'RDB$RELATION_FIELDS' in sql:
+                return [{'CAMPO': c} for c in ('EMAIL', 'SENHA', 'LINK_API', 'CNPJ',
+                                               'HASH_MOVIMENTACAO', 'HASH_INVENTARIO')]
+            if 'FROM SNGPC' in sql:
+                return [{'EMAIL': EMAIL, 'SENHA': senha, 'LINK_API': link, 'CNPJ': CNPJ,
+                         'HASH_MOVIMENTACAO': HASH, 'HASH_INVENTARIO': ''}]
+            raise AssertionError(sql)
+        return consultar_sngpc
+
+    def rodar_api(respostas, carimbo_antigo=True, **kw):
+        pedidos = []
+        if carimbo_antigo and os.path.exists(ag.ARQUIVO_TESTE_API):
+            os.remove(ag.ARQUIVO_TESTE_API)
+
+        def chamar(metodo, url, corpo=None, token=None, timeout=30):
+            pedidos.append((metodo, url, corpo, token))
+            return respostas.pop(0) if respostas else (None, 'URLError: sem rede')
+        guardado = ag.consultar
+        ag.consultar = tabela_sngpc(**kw)
+        balde = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(balde):
+                ag.testar_api_sngpc(None, chamar=chamar)
+        finally:
+            ag.consultar = guardado
+        return balde.getvalue(), pedidos
+
+    def sem_segredo(saida):
+        return not any(x in saida for x in (SENHA, EMAIL, HASH, CNPJ, TOKEN))
+
+    resposta_ok = json.dumps({'hash': HASH, 'dataTransmissao': '2026-10-15T07:21:00',
+                              'dataValidacao': '2026-10-15T09:42:00', 'situacao': 'Aceito',
+                              'mensagemValidacao': 'Paciente Maria da Silva CPF 123.456.789-09, ' + EMAIL,
+                              'retorno': {'chave': 'Q2hhdmVTZWNyZXRhRGFBTlZJU0E='}})
+    saida, pedidos = rodar_api([(200, json.dumps(TOKEN)), (200, resposta_ok)])
+    conferir('API: com token, consulta o envio e mostra situação e datas',
+             'token (POST /v1/Authentication/GetToken): recebido' in saida
+             and 'Aceito' in saida and '2026-10-15T09:42:00' in saida, saida)
+    conferir('API: senha, token, e-mail, CNPJ, hash e CPF não aparecem na saída',
+             sem_segredo(saida) and '123.456.789-09' not in saida, saida)
+    conferir('API: texto livre e objeto aninhado não são publicados (nome de paciente)',
+             'Maria da Silva' not in saida and 'Q2hhdmVTZWNyZXRh' not in saida
+             and 'não publicado' in saida, saida)
+    conferir('API: a consulta vai com o token e ao endereço da ANVISA',
+             len(pedidos) == 2 and pedidos[1][3] == TOKEN
+             and all(u.startswith('https://sngpc-api.anvisa.gov.br/') for _, u, _, _ in pedidos), pedidos)
+
+    saida, pedidos = rodar_api([(200, json.dumps(TOKEN))], carimbo_antigo=False)
+    conferir('API: segundo teste em menos de 10 minutos não faz login de novo',
+             not pedidos and 'Espere' in saida, saida)
+
+    saida, pedidos = rodar_api([(403, json.dumps({'title': 'Forbidden ' + SENHA}))])
+    conferir('API: recusa do login é dita, sem consultar e sem vazar a senha',
+             'NÃO veio — HTTP 403' in saida and len(pedidos) == 1 and sem_segredo(saida), saida)
+
+    saida, pedidos = rodar_api([])
+    conferir('API: sem rede não quebra o relatório',
+             'sem resposta' in saida and sem_segredo(saida), saida)
+
+    saida, pedidos = rodar_api([(200, json.dumps({'token': TOKEN})), (404, '')],
+                               link='https://sngpc.anvisa.gov.br.exemplo.com/roubo')
+    conferir('API: LINK_API fora da ANVISA não recebe o login',
+             all(u.startswith('https://sngpc-api.anvisa.gov.br/') for _, u, _, _ in pedidos)
+             and 'outro endereço' in saida, pedidos)
+    conferir('API: só o host exato da API recebe o login',
+             ag.base_da_api('https://outro.anvisa.gov.br') == ag.API_SNGPC_PADRAO
+             and ag.base_da_api('https://x@evil.com') == ag.API_SNGPC_PADRAO
+             and ag.base_da_api('https://SNGPC-API.anvisa.gov.br:8443/v1') == ag.API_SNGPC_PADRAO)
+    conferir('API: não segue redirecionamento (o token não vai para outro host)',
+             'SemRedirecionar' in open(ag.__file__, encoding='utf-8').read())
+
+    saida, pedidos = rodar_api([], senha='')
+    conferir('API: sem senha guardada não chama nada', not pedidos and 'nada a testar' in saida, saida)
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0
