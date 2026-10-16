@@ -3511,11 +3511,128 @@ def tentar_anvisa_sozinho(config, dados):
     return recado
 
 
-# Uma vez por dia basta: o agente roda de hora em hora, e procurar
-# atualizacao a cada volta seria vinte e quatro downloads por dia para
-# trocar o arquivo no maximo uma vez.
+# A troca completa (baixar tudo, conferir, publicar as regras) fica para uma
+# vez por dia OU quando a verificação leve abaixo vê arquivo novo no GitHub.
 HORAS_ENTRE_ATUALIZACOES = 20
 ARQUIVO_ULTIMA_ATUALIZACAO = 'ultima_atualizacao.txt'
+
+# Verificação leve: em 16/10 a correção estava no GitHub e o servidor seguia
+# com a versão velha por até 20 h. Pergunta com If-None-Match: sem mudança o
+# GitHub responde 304, sem corpo, e nada é baixado.
+MINUTOS_ENTRE_VERIFICACOES = 10
+ARQUIVO_VERIFICACAO = 'verificacao_atualizacao.json'
+ARQUIVO_RESULTADO_ATUALIZACAO = 'resultado_atualizacao.json'
+
+
+def _caminho_local(nome):
+    return os.path.join(PASTA, nome)
+
+
+def ler_json_local(nome):
+    try:
+        with open(_caminho_local(nome), encoding='utf-8') as f:
+            dados = json.load(f)
+        return dados if isinstance(dados, dict) else {}
+    except Exception:
+        return {}
+
+
+def gravar_json_local(nome, dados):
+    caminho = _caminho_local(nome)
+    try:
+        with open(caminho + '.novo', 'w', encoding='utf-8') as f:
+            json.dump(dados, f, ensure_ascii=False)
+        os.replace(caminho + '.novo', caminho)
+    except Exception as e:
+        registrar('Não consegui gravar %s: %s' % (nome, e))
+
+
+def abrir_condicional(url, etag):
+    """(status, etag, texto) do GET com If-None-Match; texto None no 304."""
+    import urllib.request
+    import urllib.error
+    pedido = urllib.request.Request(url, headers={'If-None-Match': etag} if etag else {})
+    try:
+        with urllib.request.urlopen(pedido, timeout=60) as resposta:
+            return resposta.status, resposta.headers.get('ETag') or '', \
+                resposta.read().decode('utf-8')
+    except urllib.error.HTTPError as e:
+        if e.code == 304:
+            return 304, etag, None
+        raise
+
+
+def versao_nova_no_github(config, abrir=None, agora=None):
+    """O agente_auto.py do GitHub é diferente do que está rodando? No máximo
+    uma pergunta a cada MINUTOS_ENTRE_VERIFICACOES; erro de rede vale "não"."""
+    abrir = abrir or abrir_condicional
+    agora = agora or datetime.datetime.now()
+    estado = ler_json_local(ARQUIVO_VERIFICACAO)
+    try:
+        if agora < datetime.datetime.fromisoformat(estado.get('tentar_depois_de', '')):
+            return False
+    except (TypeError, ValueError):
+        pass
+    try:
+        ultima = datetime.datetime.fromisoformat(estado.get('em', ''))
+        if agora - ultima < datetime.timedelta(minutes=MINUTOS_ENTRE_VERIFICACOES):
+            return False
+    except (TypeError, ValueError):
+        pass
+    estado['em'] = agora.isoformat(timespec='seconds')
+    url = config.get('url_atualizacao') or URL_AGENTE
+    try:
+        status, etag, remoto = abrir(url, estado.get('etag', ''))
+    except Exception as e:
+        registrar('Verificação de versão nova falhou: %s' % e)
+        gravar_json_local(ARQUIVO_VERIFICACAO, estado)
+        return False
+    # o etag só é guardado depois de ver o conteúdo: troca que falha não
+    # repete a cada 10 min (o 304 segura), e a diária tenta de novo
+    estado['etag'] = etag or estado.get('etag', '')
+    gravar_json_local(ARQUIVO_VERIFICACAO, estado)
+    if status == 304 or remoto is None:
+        return False
+    try:
+        with open(os.path.abspath(__file__), encoding='utf-8') as f:
+            local = f.read()
+    except Exception:
+        return True
+    return remoto.replace('\r\n', '\n') != local.replace('\r\n', '\n')
+
+
+MINUTOS_RECUO_ATUALIZACAO = 60
+
+
+def adiar_verificacao(agora=None):
+    """Troca que falhou (rede no meio do download, carimbo que não grava):
+    esquece o etag, senão o 304 segura a versão nova até a diária de 20 h, e
+    espera uma hora para não baixar tudo de 10 em 10 minutos."""
+    agora = agora or datetime.datetime.now()
+    estado = ler_json_local(ARQUIVO_VERIFICACAO)
+    estado.pop('etag', None)
+    estado['tentar_depois_de'] = (agora + datetime.timedelta(
+        minutes=MINUTOS_RECUO_ATUALIZACAO)).isoformat(timespec='seconds')
+    gravar_json_local(ARQUIVO_VERIFICACAO, estado)
+
+
+def guardar_resultado_atualizacao(ok, mensagem, como):
+    """O que a última troca disse, para a aba Servidor mostrar sem ninguém
+    precisar abrir o log no servidor."""
+    gravar_json_local(ARQUIVO_RESULTADO_ATUALIZACAO, {
+        'em': datetime.datetime.now().isoformat(timespec='seconds'),
+        'ok': bool(ok), 'como': como, 'mensagem': texto(mensagem)[:300]})
+
+
+def publicar_versao(db):
+    """A versão em disco vai para a aba Servidor na hora. update, não set:
+    set apagava a identidade da chave, que só a sincronização publica."""
+    if db is None:
+        return
+    try:
+        db.reference('farmacia/inventario/agente').update(versao_do_agente())
+    except Exception as e:
+        registrar('Não consegui publicar a versão do agente: %s' % e)
 
 
 def hora_da_atualizacao():
@@ -3531,8 +3648,9 @@ def hora_da_atualizacao():
     return caminho, passou >= datetime.timedelta(hours=HORAS_ENTRE_ATUALIZACOES)
 
 
-def atualizar_sozinho(config):
-    """Procura versao nova uma vez por dia, sem ninguem pedir.
+def atualizar_sozinho(config, db=None):
+    """Procura versao nova sem ninguem pedir: a troca completa uma vez por
+    dia, e a cada 10 minutos uma pergunta leve ao GitHub (versao_nova_no_github).
 
     Ate aqui o agente so se atualizava quando alguem apertava um botao ou
     ia ate o servidor. Foi assim que a maquina da loja ficou com um agente
@@ -3543,17 +3661,31 @@ def atualizar_sozinho(config):
     troca falha, senao uma falha persistente vira uma tentativa por hora."""
     caminho, na_hora = hora_da_atualizacao()
     if not na_hora:
-        return
+        try:
+            na_hora = versao_nova_no_github(config)
+        except Exception as e:
+            registrar('Verificação de versão nova falhou: %s' % e)
+            return
+        if not na_hora:
+            return
     try:
         with open(caminho, 'w', encoding='utf-8') as f:
             f.write(datetime.datetime.now().isoformat(timespec='seconds'))
     except Exception as e:
         registrar('Nao consegui gravar o carimbo da atualizacao: %s' % e)
+        adiar_verificacao()
         return
     try:
-        registrar(atualizar_agente(config))
+        recado = atualizar_agente(config)
+        registrar(recado)
+        # a diária que não achou nada não apaga da tela a última troca de fato
+        if not recado.startswith('O agente já estava'):
+            guardar_resultado_atualizacao(True, recado, 'automática')
     except Exception as e:
         registrar('Atualizacao automatica falhou: %s' % e)
+        guardar_resultado_atualizacao(False, e, 'automática')
+        adiar_verificacao()
+    publicar_versao(db)
 
 
 def modo_auto(config, data_inventario=None, usar_envio=False):
@@ -4025,12 +4157,16 @@ def versao_do_agente():
         with open(os.path.abspath(__file__), 'rb') as f:
             dados = f.read()
         import hashlib
-        return {'bytes': len(dados),
-                'hash': hashlib.sha1(dados).hexdigest()[:12],
-                'em': datetime.datetime.fromtimestamp(
-                    os.path.getmtime(os.path.abspath(__file__))).isoformat(timespec='seconds')}
+        versao = {'bytes': len(dados),
+                  'hash': hashlib.sha1(dados).hexdigest()[:12],
+                  'em': datetime.datetime.fromtimestamp(
+                      os.path.getmtime(os.path.abspath(__file__))).isoformat(timespec='seconds')}
     except Exception:
         return {}
+    resultado = ler_json_local(ARQUIVO_RESULTADO_ATUALIZACAO)
+    if resultado:
+        versao['ultimaAtualizacao'] = resultado
+    return versao
 
 
 # O agente é mais de um arquivo, e quem diz quais é o próprio repositório:
@@ -6892,14 +7028,17 @@ def atender_pedido(config, db, pedido):
         return 'Sincronização concluída.'
 
     if acao == 'atualizar_agente':
-        recado = atualizar_agente(config)
         # a aba Servidor lê a versão do inventário, que só é republicado na
         # sincronização de hora em hora: sem isto, o botão atualizava e a tela
         # seguia mostrando o arquivo antigo por até uma hora (16/10)
         try:
-            db.reference('farmacia/inventario/agente').set(versao_do_agente())
+            recado = atualizar_agente(config)
         except Exception as e:
-            registrar('Não consegui publicar a versão nova do agente: %s' % e)
+            guardar_resultado_atualizacao(False, e, 'botão')
+            publicar_versao(db)
+            raise
+        guardar_resultado_atualizacao(True, recado, 'botão')
+        publicar_versao(db)
         return recado
 
     if acao == 'anvisa':
@@ -6956,9 +7095,9 @@ def modo_fila(config):
     """Atende os botões do app E atualiza as vendas. Roda de 5 em 5 minutos."""
     db = conectar_firebase(config)
 
-    # uma vez por dia, antes de qualquer outra coisa: se houver versao nova,
-    # o resto desta volta ja roda com ela na proxima.
-    atualizar_sozinho(config)
+    # antes de qualquer outra coisa: se houver versao nova no GitHub, troca
+    # agora, e a proxima volta (5 min) ja roda com ela.
+    atualizar_sozinho(config, db)
 
     # antes da fila: as vendas sobem toda vez, mesmo sem ninguém pedir nada.
     # É isto que faz o acompanhamento ser de 5 em 5 minutos sem obrigar a

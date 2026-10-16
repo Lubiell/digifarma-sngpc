@@ -5,6 +5,9 @@ __pycache__/
 agente/*.log
 agente/ultimo_publicado.json
 agente/ultima_atualizacao.txt
+agente/verificacao_atualizacao.json
+agente/resultado_atualizacao.json
+agente/*.json.novo
 agente/api_sngpc_ultimo_teste.txt
 agente/api_sngpc_cache.json
 agente/ajustes_*.json

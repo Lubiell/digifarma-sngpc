@@ -259,16 +259,100 @@ def principal():
         if os.path.exists(carimbo):
             os.remove(carimbo)
         guardado_fn = ag.atualizar_agente
+        guardado_pasta, guardado_abrir = ag.PASTA, ag.abrir_condicional
+        pasta_verif = tempfile.mkdtemp()
+        ag.PASTA = pasta_verif
         try:
             def explodir(_config):
                 raise RuntimeError('sem rede')
             ag.atualizar_agente = explodir
             ag.atualizar_sozinho({})
+            conferir('atualizacao que falha ainda carimba', os.path.exists(carimbo))
+            conferir('e carimbada, nao tenta de novo na volta seguinte',
+                     os.path.exists(carimbo) and not ag.hora_da_atualizacao()[1])
+            falha = ag.ler_json_local(ag.ARQUIVO_RESULTADO_ATUALIZACAO)
+            conferir('a falha da atualizacao fica guardada para a aba Servidor',
+                     falha.get('ok') is False and 'sem rede' in falha.get('mensagem', '')
+                     and ag.versao_do_agente().get('ultimaAtualizacao') == falha, falha)
+
+            conferir('a falha da atualizacao automatica adia a verificacao, sem etag',
+                     'tentar_depois_de' in ag.ler_json_local(ag.ARQUIVO_VERIFICACAO))
+            os.remove(os.path.join(pasta_verif, ag.ARQUIVO_VERIFICACAO))
+
+            # verificacao leve: 304 nao baixa nada; arquivo novo dispara a troca
+            with open(ag.__file__, encoding='utf-8') as f:
+                proprio = f.read()
+            pedidos_v = []
+            def abrir_com(status, corpo):
+                def abrir(url, etag):
+                    pedidos_v.append(etag)
+                    return status, '"e2"', corpo
+                return abrir
+            agora_v = datetime.datetime(2026, 10, 16, 20, 0)
+            conferir('verificacao: 304 nao e versao nova',
+                     not ag.versao_nova_no_github({}, abrir_com(304, None), agora_v))
+            conferir('verificacao: nao pergunta de novo antes de 10 minutos',
+                     not ag.versao_nova_no_github({}, abrir_com(200, 'novo'),
+                                                  agora_v + datetime.timedelta(minutes=5))
+                     and len(pedidos_v) == 1, pedidos_v)
+            depois = agora_v + datetime.timedelta(minutes=11)
+            conferir('verificacao: manda o etag guardado e o mesmo arquivo nao e versao nova',
+                     not ag.versao_nova_no_github({}, abrir_com(200, proprio.replace('\n', '\r\n')), depois)
+                     and pedidos_v[-1] == '"e2"', pedidos_v)
+            conferir('verificacao: arquivo diferente no GitHub e versao nova',
+                     ag.versao_nova_no_github({}, abrir_com(200, proprio + '# novo\n'),
+                                              depois + datetime.timedelta(minutes=11)))
+            def sem_rede(url, etag):
+                raise OSError('sem rede')
+            conferir('verificacao: erro de rede nao dispara troca',
+                     not ag.versao_nova_no_github({}, sem_rede, depois + datetime.timedelta(minutes=30)))
+
+            # carimbo de agora + versao nova no GitHub: troca ja, e publica
+            open(carimbo, 'w', encoding='utf-8').write(
+                datetime.datetime.now().isoformat(timespec='seconds'))
+            if os.path.exists(os.path.join(pasta_verif, ag.ARQUIVO_VERIFICACAO)):
+                os.remove(os.path.join(pasta_verif, ag.ARQUIVO_VERIFICACAO))
+            ag.abrir_condicional = abrir_com(200, proprio + '# novo\n')
+            trocas, gravados_v = [], {}
+            ag.atualizar_agente = lambda _config: trocas.append(1) or 'Agente atualizado: a -> b.'
+            class RefV:
+                def __init__(self, caminho):
+                    self.caminho = caminho
+                def update(self, valor):
+                    gravados_v[self.caminho] = valor
+            class DbV:
+                def reference(self, caminho):
+                    return RefV(caminho)
+            ag.atualizar_sozinho({}, DbV())
+            publicado = gravados_v.get('farmacia/inventario/agente', {})
+            conferir('versao nova no GitHub e trocada sem esperar o dia, e a aba Servidor ve',
+                     trocas == [1] and publicado.get('bytes')
+                     and publicado.get('ultimaAtualizacao', {}).get('ok') is True
+                     and publicado['ultimaAtualizacao'].get('como') == 'automática', gravados_v)
+            trocas.clear()
+            ag.atualizar_sozinho({}, DbV())
+            conferir('logo depois da troca nao troca de novo', trocas == [], trocas)
+
+            # troca que falha por rede: esquece o etag e tenta de novo em 1 h, nao em 20 h
+            base_r = datetime.datetime.now().replace(microsecond=0)
+            ag.adiar_verificacao(base_r)
+            estado_v = ag.ler_json_local(ag.ARQUIVO_VERIFICACAO)
+            conferir('troca que falha esquece o etag e marca nova tentativa',
+                     'etag' not in estado_v and estado_v.get('tentar_depois_de') == (base_r + datetime.timedelta(hours=1)).isoformat(),
+                     estado_v)
+            pedidos_v.clear()
+            conferir('antes do recuo nao pergunta ao GitHub',
+                     not ag.versao_nova_no_github({}, abrir_com(200, proprio + '# novo\n'),
+                                                  base_r + datetime.timedelta(minutes=30))
+                     and not pedidos_v, pedidos_v)
+            conferir('depois do recuo pergunta sem etag e acha a versao nova',
+                     ag.versao_nova_no_github({}, abrir_com(200, proprio + '# novo\n'),
+                                              base_r + datetime.timedelta(minutes=61))
+                     and pedidos_v == [''], pedidos_v)
         finally:
             ag.atualizar_agente = guardado_fn
-        conferir('atualizacao que falha ainda carimba', os.path.exists(carimbo))
-        conferir('e carimbada, nao tenta de novo na volta seguinte',
-                 os.path.exists(carimbo) and not ag.hora_da_atualizacao()[1])
+            ag.PASTA, ag.abrir_condicional = guardado_pasta, guardado_abrir
+            shutil.rmtree(pasta_verif, ignore_errors=True)
     finally:
         if guardado is None:
             if os.path.exists(carimbo):
@@ -798,7 +882,7 @@ def principal():
         class RefVersao:
             def __init__(self, caminho):
                 self.caminho = caminho
-            def set(self, valor):
+            def update(self, valor):
                 publicados[self.caminho] = valor
         class DbVersao:
             def reference(self, caminho):
@@ -862,7 +946,7 @@ def principal():
     try:
         ag._messaging = lambda: MessagingFalso()
         ag.PASTA = pasta_avisos
-        ag.atualizar_sozinho = lambda _config: None
+        ag.atualizar_sozinho = lambda _config, _db=None: None
         ag.publicar_vendas_recentes = lambda _config, _db: None
         ag.registrar = lambda _msg: None
         celular = {'a1': {'token': 'tok-1', 'em': 'x'}}

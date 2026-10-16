@@ -39,6 +39,12 @@ servidor de longe, ainda não executado no Windows.
   API tem só 3 endereços (GetToken, Consulta, Enviar): não há listagem de
   envios. O Login SNGPC agora procura colunas HASH em todas as tabelas do
   Digifarma (só contagens) para achar um histórico dos hashes.
+- 16/10: o lote 508023 deixou de divergir com a foto de 16/10 (era a foto).
+  Atualização automática: o agente confere o GitHub a cada 10 min (GET com
+  If-None-Match, 304 sem corpo) e troca sozinho quando o arquivo muda; a
+  aba Servidor mostra "Última atualização" com data, origem e motivo da
+  falha. Vale depois que o servidor receber esta versão uma vez (botão ou a
+  troca diária de 20 h).
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade
