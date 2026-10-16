@@ -467,5 +467,27 @@ if (exportado.detalheDoSaldo) {
   });
 }
 
+if (exportado.envioDaApi && exportado.linhaDaApi) {
+  conferir('aceite: resposta da API casa pelo arquivo e pelo período', () => {
+    try {
+      exportado.estado.inventario = {
+        periodosDeEnvio: { '2026-10-15': { de: '2026-10-13', ate: '2026-10-14' } },
+        apiSngpc: { envios: [
+          { arquivo: '2026-10-08', de: '2026-10-07', ate: '2026-10-07', situacao: 'validado', validacao: '2026-10-08T23:00:02' },
+          { arquivo: '', de: '2026-10-13', ate: '2026-10-14', situacao: 'validado', validacao: '2026-10-15T09:42:00' }
+        ] }
+      };
+      igual(exportado.envioDaApi('2026-10-08').de, '2026-10-07', 'pelo arquivo');
+      igual(exportado.envioDaApi('2026-10-15').de, '2026-10-13', 'pelo período');
+      igual(exportado.envioDaApi('2026-10-12'), null, 'sem resposta');
+      const t = exportado.linhaDaApi(exportado.envioDaApi('2026-10-15')).textContent;
+      if (!t.includes('Validado sem erro pela ANVISA') || !t.includes('13/10/2026 a 14/10/2026'))
+        throw new Error('linha da API: ' + t);
+    } finally {
+      exportado.estado.inventario = {};
+    }
+  });
+}
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou.\n');
 process.exit(falhas ? 1 : 0);
