@@ -9,10 +9,6 @@ Conferência do estoque de controlados entre o **Digifarma** e o que foi
 
 O estoque manual do balcão fica no repositório separado **ESTOQUE**.
 
-As receitas que faltam lançar ficam no módulo separado **receitas-modulo**:
-ele lê `vendasSemReceita` e `vendasRecentes` deste agente e guarda as fichas
-do balcão em `farmacia/receitas` (regras neste mesmo `regras-firebase.json`).
-
 ## Regra de ouro
 
 **O Digifarma é a verdade.** O app só LÊ o inventário; o agente só faz
