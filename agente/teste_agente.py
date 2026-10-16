@@ -1293,11 +1293,14 @@ def principal():
     TOKEN = 'eyJtoken.muito.secreto'
     ag.ARQUIVO_TESTE_API = os.path.join(pasta, 'api_sngpc_ultimo_teste.txt')
 
-    def tabela_sngpc(link='https://sngpc-api.anvisa.gov.br/', senha=SENHA):
+    def tabela_sngpc(link='https://sngpc-api.anvisa.gov.br/', senha=SENHA, cnpj_na_config=False):
         def consultar_sngpc(conexao, sql, parametros=()):
             if 'RDB$RELATION_FIELDS' in sql:
-                return [{'CAMPO': c} for c in ('EMAIL', 'SENHA', 'LINK_API', 'CNPJ',
-                                               'HASH_MOVIMENTACAO', 'HASH_INVENTARIO')]
+                return [{'CAMPO': c} for c in ('EMAIL', 'SENHA', 'LINK_API')
+                        + (() if cnpj_na_config else ('CNPJ',))
+                        + ('HASH_MOVIMENTACAO', 'HASH_INVENTARIO')]
+            if sql == ag.CONSULTAS['ponteiros']:
+                return [{'CNPJ': CNPJ}]
             if 'FROM SNGPC' in sql:
                 return [{'EMAIL': EMAIL, 'SENHA': senha, 'LINK_API': link, 'CNPJ': CNPJ,
                          'HASH_MOVIMENTACAO': HASH, 'HASH_INVENTARIO': ''}]
@@ -1365,6 +1368,11 @@ def principal():
              and ag.base_da_api('https://SNGPC-API.anvisa.gov.br:8443/v1') == ag.API_SNGPC_PADRAO)
     conferir('API: não segue redirecionamento (o token não vai para outro host)',
              'SemRedirecionar' in open(ag.__file__, encoding='utf-8').read())
+
+    saida, pedidos = rodar_api([(200, json.dumps(TOKEN)), (200, resposta_ok)], cnpj_na_config=True)
+    conferir('API: sem CNPJ na tabela SNGPC, usa o da CONFIG e consulta o envio',
+             'CONFIG.CNPJ' in saida and len(pedidos) == 2 and CNPJ in pedidos[1][1]
+             and sem_segredo(saida), saida)
 
     saida, pedidos = rodar_api([], senha='')
     conferir('API: sem senha guardada não chama nada', not pedidos and 'nada a testar' in saida, saida)
