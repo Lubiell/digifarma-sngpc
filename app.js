@@ -663,8 +663,17 @@ function pintarConfiancaDoSaldo() {
       + dataBR(inv.data) + '. A conta e: essa foto mais o que ainda nao subiu.';
   }
 
-  if (!c || c.confiavel) { barra.hidden = true; return; }
-  const frases = (c.motivos || []).map((m) => MOTIVO_CONFIANCA[m] || m);
+  const frases = (c && !c.confiavel ? c.motivos || [] : []).map((m) => MOTIVO_CONFIANCA[m] || m);
+  // O agente conta os lotes que batem com a ANVISA SEM o movimento pendente,
+  // mas so dizia isso no log do servidor. E o sinal de que a mesma venda
+  // pode estar sendo descontada duas vezes.
+  const jaNaAnvisa = Number(inv.jaNaAnvisa || 0);
+  if (jaNaAnvisa) {
+    frases.push(jaNaAnvisa + ' lote(s) com movimento pendente batem com a ANVISA sem ele. '
+      + 'Se esse movimento já foi transmitido (envio por outra máquina, ponteiro atrasado), '
+      + 'a divergência deles é falsa: a conta desconta a mesma venda duas vezes.');
+  }
+  if (!frases.length) { barra.hidden = true; return; }
   barra.innerHTML = '<strong>Estes numeros podem nao ser divergencia de estoque.</strong><br>'
     + frases.map(esc).join('<br>');
   barra.hidden = false;
@@ -696,12 +705,31 @@ function pintarAvisoLaboratorio(itens) {
   p.hidden = false;
 }
 
+/* Digifarma e foto do SNGPC com o MESMO numero, e mesmo assim divergencia:
+   a diferenca e contra a foto MAIS o movimento que o agente acha que ainda
+   nao esta nela. Sem mostrar esse movimento a tela dizia "saldos diferentes"
+   com dois saldos iguais lado a lado. */
+function bateSoSemMovimento(i) {
+  return Number(i.movimentoDesdeEnvio || 0) !== 0
+    && Number(i.saldoDigifarma || 0) === Number(i.saldoSngpc || 0);
+}
+
+const NOTA_BATE_SO_SEM_MOVIMENTO = 'Hoje o Digifarma e a foto do SNGPC mostram o mesmo número. '
+  + 'A diferença vem do movimento acima, que o agente conta como ainda fora da foto. '
+  + 'Se ele ainda não subiu, depois do envio o SNGPC fica com o "esperado" e passa a divergir: '
+  + 'há erro no lote, compensado por acaso. Se ele já foi transmitido (envio por outra máquina '
+  + 'ou ponteiro atrasado), o lote está certo e este aviso é falso. Confira no Relatório '
+  + 'Status de Transmissão do site da ANVISA antes de mexer no estoque.';
+
 function detalheDoSaldo(i, dif) {
+  const movimento = Number(i.movimentoDesdeEnvio || 0);
   const pares = [
     ['Código', i.codigo],
     ['Laboratório', i.laboratorio],
     ['Saldo Digifarma', i.saldoDigifarma],
-    ['Saldo do inventário SNGPC', i.saldoSngpc],
+    ['Saldo do inventário SNGPC (foto)', i.saldoSngpc],
+    ['Movimento desde a foto', movimento ? (movimento > 0 ? '+' : '') + movimento : ''],
+    ['SNGPC esperado hoje (foto + movimento)', movimento ? i.esperadoSngpc : ''],
     ['Diferença', (dif > 0 ? '+' : '') + dif],
     ['Registro M.S.', i.ms],
     ['Código de barras', i.ean],
@@ -722,6 +750,8 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = i.totaisBatem
       ? 'Os totais do lote batem nos dois lados: a farmacia tem a quantidade certa, repartida entre os cadastros de um jeito diferente. E lancamento no cadastro errado, nao falta de mercadoria.'
       : MOTIVO_SALDO.lote_em_dois_ms[1];
+  } else if (bateSoSemMovimento(i)) {
+    nota.textContent = NOTA_BATE_SO_SEM_MOVIMENTO;
   } else {
     nota.textContent = MOTIVO_SALDO[i.motivo]?.[1] || '';
   }
@@ -815,7 +845,8 @@ function pintarSaldo() {
         i.lote && 'Lote ' + i.lote,
         i.validade && 'Val. ' + i.validade
       ],
-      tarja: [MOTIVO_SALDO[i.motivo]?.[0] || (dif < 0 ? 'Falta no Digifarma' : 'Sobra no Digifarma'),
+      tarja: [(bateSoSemMovimento(i) && 'Iguais hoje, com movimento pendente')
+              || MOTIVO_SALDO[i.motivo]?.[0] || (dif < 0 ? 'Falta no Digifarma' : 'Sobra no Digifarma'),
               (dif > 0 ? '+' : '') + dif],
       tarjaClasse: dif < 0 ? 'falta' : 'sobra',
       detalhe: detalheDoSaldo(i, dif)
@@ -1664,5 +1695,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo };
 }
