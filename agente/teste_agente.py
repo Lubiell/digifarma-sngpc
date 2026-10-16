@@ -123,6 +123,9 @@ def principal():
     # senão o exemplo embutido
     # ------------------------------------------------------------
     pasta = tempfile.mkdtemp()
+    # cache e carimbo da API ficam na pasta do teste, nunca na do agente
+    ag.ARQUIVO_CACHE_API = os.path.join(pasta, 'api_sngpc_cache.json')
+    ag.ARQUIVO_TESTE_API = os.path.join(pasta, 'api_sngpc_ultimo_teste.txt')
     caminho = os.path.join(pasta, 'SNGPC.XML')
     real = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'exemplo_SNGPC.XML')
     if os.path.exists(real):
@@ -1390,6 +1393,95 @@ def principal():
     conferir('API: mensagem solta vira palavras-chave, nunca o texto',
              'palavras: ' in saida and 'nao encontrad' in saida and 'arquivo' in saida
              and 'Maria' not in saida, saida)
+
+    # --- etapa 2: consulta automática, no formato que o servidor viu em 16/10 ---
+    def resposta_real(de, ate, transm, valid, msg=''):
+        return json.dumps(json.dumps({'DataInicioReferencia': de, 'DataFimReferencia': ate,
+                                      'DataTransmissao': transm, 'DataValidacao': valid,
+                                      'Hash': 'X', 'MensagemValidacao': msg}))
+    envio = ag.envio_da_resposta(resposta_real('07/10/2026 00:00:00', '07/10/2026 00:00:00',
+                                               '08/10/2026 17:00:07', '08/10/2026 23:00:02'))
+    conferir('API: resposta real vira período, datas e "validado"',
+             envio == {'de': '2026-10-07', 'ate': '2026-10-07', 'transmissao': '2026-10-08T17:00:07',
+                       'validacao': '2026-10-08T23:00:02', 'situacao': 'validado',
+                       'temMensagem': False}, envio)
+    conferir('API: com mensagem é "com_erro", sem validação é "processando"',
+             ag.envio_da_resposta(resposta_real('', '', '', '15/10/2026 09:00:00', 'CID10 x'))['situacao'] == 'com_erro'
+             and ag.envio_da_resposta(resposta_real('', '', '15/10/2026 07:00:00', ''))['situacao'] == 'processando')
+
+    pasta_api = tempfile.mkdtemp()
+    os.makedirs(os.path.join(pasta_api, 'enviados'))
+    for nome, corpo in (('sngpc_2026-10-08.xml', b'<xml>07</xml>'), ('sngpc_2026-10-15.xml', b'<xml>13-14</xml>')):
+        with open(os.path.join(pasta_api, 'enviados', nome), 'wb') as f:
+            f.write(corpo)
+    arquivados = ag.xml_arquivados(pasta_api)
+    import hashlib
+    hash_digifarma = hashlib.md5(b'<xml>07</xml>').hexdigest().upper()
+    hash_15 = hashlib.md5(b'<xml>13-14</xml>').hexdigest().upper()
+    formula, achado = ag.descobrir_formula_do_hash(hash_digifarma.lower(), arquivados)
+    conferir('API: descobre a fórmula do hash pelo XML arquivado',
+             formula == 'md5' and achado.endswith('sngpc_2026-10-08.xml'), (formula, achado))
+
+    def consultar_tabela(conexao, sql, parametros=()):
+        if 'RDB$RELATION_FIELDS' in sql:
+            return [{'CAMPO': c} for c in ('EMAIL', 'SENHA', 'HASH_ULT_ENVIO', 'HASH_ULTIMO_INVENTARIO')]
+        if sql == ag.CONSULTAS['ponteiros']:
+            return [{'CNPJ': CNPJ}]
+        return [{'EMAIL': EMAIL, 'SENHA': SENHA, 'HASH_ULT_ENVIO': hash_digifarma,
+                 'HASH_ULTIMO_INVENTARIO': 'INV123'}]
+    respostas_api = {hash_digifarma: resposta_real('07/10/2026 00:00:00', '07/10/2026 00:00:00',
+                                                   '08/10/2026 17:00:07', '08/10/2026 23:00:02'),
+                     hash_15: resposta_real('13/10/2026 00:00:00', '14/10/2026 00:00:00',
+                                            '15/10/2026 07:21:00', '15/10/2026 09:42:00')}
+    chamadas = []
+
+    def chamar_auto(metodo, url, corpo=None, token=None, timeout=30):
+        chamadas.append(url)
+        if metodo == 'POST':
+            return 200, json.dumps(TOKEN)
+        for h, r in respostas_api.items():
+            if url.endswith('/' + h):
+                return 200, r
+        return 404, ''
+    guardado = ag.consultar
+    ag.consultar = consultar_tabela
+    try:
+        if os.path.exists(ag.ARQUIVO_CACHE_API):
+            os.remove(ag.ARQUIVO_CACHE_API)
+        cfg_api = dict(ag.CONFIG_PADRAO, pasta_xml=pasta_api)
+        agora_api = datetime.datetime(2026, 10, 16, 14, 0)
+        ag.atualizar_api_sngpc(None, cfg_api, chamar=chamar_auto, agora=agora_api)
+        publicado = ag.envios_da_api_em_cache()
+        conferir('API: consulta sozinha o último envio e os arquivados pela fórmula',
+                 [e['arquivo'] for e in publicado['envios']] == ['2026-10-08', '2026-10-15']
+                 and all(e['situacao'] == 'validado' for e in publicado['envios'])
+                 and publicado['formulaDoHash'] == 'MD5 do XML', publicado)
+        conferir('API: o que sobe para o app não leva hash nem segredo',
+                 not any(x in json.dumps(publicado) for x in (hash_digifarma, hash_15, SENHA, EMAIL, CNPJ, TOKEN)),
+                 publicado)
+        chamadas.clear()
+        ag.atualizar_api_sngpc(None, cfg_api, chamar=chamar_auto,
+                               agora=agora_api + datetime.timedelta(minutes=30))
+        conferir('API: menos de uma hora depois não chama de novo', not chamadas, chamadas)
+        ag.atualizar_api_sngpc(None, cfg_api, chamar=chamar_auto,
+                               agora=agora_api + datetime.timedelta(hours=2))
+        conferir('API: envio já validado não é consultado de novo', not chamadas, chamadas)
+        chamadas.clear()
+        ag.atualizar_api_sngpc(None, dict(cfg_api, consultar_api_sngpc=False), chamar=chamar_auto,
+                               agora=agora_api + datetime.timedelta(hours=5))
+        conferir('API: consultar_api_sngpc false desliga a consulta', not chamadas, chamadas)
+    finally:
+        ag.consultar = guardado
+
+    envios_api = ag.envios_da_api_em_cache()['envios']
+    foto_hora = datetime.datetime(2026, 10, 15, 7, 18, 40)
+    conferir('Saldo: envio validado depois da foto conta o movimento desde o início dele',
+             ag.foto_sem_envio_validado('2026-10-15', foto_hora, envios_api) == '2026-10-12',
+             ag.foto_sem_envio_validado('2026-10-15', foto_hora, envios_api))
+    conferir('Saldo: foto tirada depois da validação não muda a conta',
+             ag.foto_sem_envio_validado('2026-10-15', datetime.datetime(2026, 10, 15, 10, 0), envios_api) is None
+             and ag.foto_sem_envio_validado('2026-10-16', None, envios_api) is None)
+    shutil.rmtree(pasta_api, ignore_errors=True)
 
     saida, pedidos = rodar_api([], senha='')
     conferir('API: sem senha guardada não chama nada', not pedidos and 'nada a testar' in saida, saida)

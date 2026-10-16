@@ -6,6 +6,7 @@ agente/*.log
 agente/ultimo_publicado.json
 agente/ultima_atualizacao.txt
 agente/api_sngpc_ultimo_teste.txt
+agente/api_sngpc_cache.json
 agente/ajustes_*.json
 agente/tarefas_saldo_*.txt
 agente/negativos_*.txt

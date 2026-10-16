@@ -27,6 +27,14 @@ servidor de longe, ainda não executado no Windows.
   doc oficial; a nuvem leva 403 da Cloudflare, então só o servidor confirma.
   Etapa 2 (marcar sozinho e usar a data de validação no Saldo) espera essa
   resposta.
+- 16/10: etapa 1 confirmou a API no servidor (token ok; resposta é JSON
+  dentro de texto, com datas de transmissão/validação; HASH_ULT_ENVIO parado
+  no envio de 07/10). Etapa 2 feita: de hora em hora o agente consulta os
+  envios (o último do Digifarma e os arquivados, se a fórmula do hash for
+  achada), guarda em api_sngpc_cache.json e publica em apiSngpc; a aba Aceites
+  mostra "Validado sem erro pela ANVISA"; envio validado depois da foto entra
+  na correção do Saldo (fotoAntesDaValidacao). Falta: ver no servidor se a
+  fórmula do hash bate e se o lote 508023 deixa de divergir.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade

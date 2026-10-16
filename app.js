@@ -682,6 +682,10 @@ function pintarConfiancaDoSaldo() {
   // O agente conta os lotes que batem com a ANVISA SEM o movimento pendente,
   // mas so dizia isso no log do servidor. E o sinal de que a mesma venda
   // pode estar sendo descontada duas vezes.
+  if (inv.fotoAntesDaValidacao) {
+    frases.push('A ANVISA validou um envio depois desta foto: a conta soma o movimento desde '
+      + dataBR(inv.fotoAntesDaValidacao) + ', que a foto ainda não tem.');
+  }
   const jaNaAnvisa = Number(inv.jaNaAnvisa || 0);
   if (jaNaAnvisa) {
     frases.push(jaNaAnvisa + ' lote(s) com movimento pendente batem com a ANVISA sem ele. '
@@ -1587,8 +1591,49 @@ function pintarRetornos() {
   });
 }
 
+/* O que a API oficial do SNGPC respondeu de cada envio, consultado pelo
+   agente de hora em hora (farmacia/inventario/apiSngpc). Casa pelo arquivo
+   arquivado e, na falta dele, pelo periodo. A marcacao a mao continua sendo
+   a da farmacia: a API so diz o que a ANVISA tem. */
+const SITUACAO_API = {
+  validado: ['Validado sem erro pela ANVISA', 'estado-aceito'],
+  com_erro: ['Validado COM erro pela ANVISA — veja a mensagem no site', 'estado-recusado'],
+  processando: ['Recebido, a ANVISA ainda não validou', 'estado-pendente']
+};
+
+function envioDaApi(data) {
+  const envios = estado.inventario?.apiSngpc?.envios || [];
+  const periodo = estado.inventario?.periodosDeEnvio?.[data];
+  return envios.find((e) => e.arquivo === data)
+    || (periodo && envios.find((e) => e.de && e.de === String(periodo.de || '').slice(0, 10)
+      && e.ate === String(periodo.ate || '').slice(0, 10)))
+    || null;
+}
+
+function linhaDaApi(e) {
+  const p = criar('p', 'sublinha');
+  p.style.margin = '2px 0 0';
+  const [texto] = SITUACAO_API[e.situacao] || ['Situação desconhecida na API'];
+  p.textContent = texto
+    + (e.validacao ? ' em ' + dataHora(e.validacao) : '')
+    + (e.de ? ' · período ' + dataBR(e.de) + (e.ate && e.ate !== e.de ? ' a ' + dataBR(e.ate) : '') : '');
+  return p;
+}
+
+function pintarResumoApi() {
+  const api = estado.inventario?.apiSngpc;
+  const p = $('aceites-api');
+  if (!p) return;
+  if (!api || !api.consultadoEm) { p.hidden = true; return; }
+  p.textContent = 'API da ANVISA consultada pelo agente em ' + dataHora(api.consultadoEm)
+    + (api.erro ? ' — ' + api.erro + '.' : '.')
+    + (api.formulaDoHash ? '' : ' Só o último envio guardado pelo Digifarma pode ser consultado.');
+  p.hidden = false;
+}
+
 function pintarAceites() {
   pintarRetornos();
+  pintarResumoApi();
   const alvo = $('lista-aceites');
   alvo.innerHTML = '';
   const datas = datasDeEnvio();
@@ -1612,6 +1657,8 @@ function pintarAceites() {
       erro.textContent = 'Erro da ANVISA: ' + a.erro;
       esquerda.appendChild(erro);
     }
+    const daApi = envioDaApi(data);
+    if (daApi) esquerda.appendChild(linhaDaApi(daApi));
     el.appendChild(esquerda);
 
     const direita = criar('div');
@@ -1766,5 +1813,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi };
 }

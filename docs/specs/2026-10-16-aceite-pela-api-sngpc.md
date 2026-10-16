@@ -22,9 +22,12 @@ Em duas etapas, a segunda só depois da primeira funcionar no servidor:
    validação com CPF/nome tirados. É o que confirma os endereços e o formato,
    que a documentação pública não mostra.
 2. **Automático**, com o formato confirmado: a cada sincronização o agente
-   consulta os envios ainda sem resposta e grava o resultado em
-   `farmacia/aceites` como `origem: 'api'` (a marcação à mão continua valendo
-   e nunca é sobrescrita). A data/hora de validação passa a entrar na conta do
+   consulta os envios ainda sem resposta e publica o resultado em
+   `farmacia/inventario/apiSngpc` (sem hash), que a aba Aceites mostra ao lado
+   da marcação à mão — esta continua sendo da farmácia e nada a sobrescreve.
+   *Mudança em 16/10:* antes dizia gravar em `farmacia/aceites` com
+   `origem: 'api'`; publicar junto com o inventário evita mudar as regras do
+   Firebase e misturar o que a ANVISA diz com o que a farmácia marcou. A data/hora de validação passa a entrar na conta do
    Saldo: envio validado DEPOIS da foto quer dizer que a foto não tem aquele
    período, e a correção conta o movimento desde o início dele.
 
@@ -55,6 +58,16 @@ precisar), `PROGRESS.md`.
 - Testes com respostas simuladas da API (sucesso, 401, 403/Cloudflare, tempo
   esgotado, JSON fora do esperado) e um teste que falha se senha, token ou
   hash aparecerem em qualquer saída.
+
+## O que a etapa 1 mostrou (16/10, servidor da farmácia)
+- Token: ok com o EMAIL/SENHA do Digifarma. CNPJ vem da CONFIG.
+- A consulta devolve um objeto JSON dentro de texto JSON, com
+  DataInicioReferencia, DataFimReferencia, DataTransmissao, DataValidacao,
+  Hash e MensagemValidacao — sem campo de situação. Validação preenchida e
+  mensagem vazia = validado sem erro.
+- HASH_ULT_ENVIO parou no envio de 07/10 (transmitido 08/10): para os envios
+  seguintes o hash é calculado do XML arquivado, se uma das contas (MD5,
+  SHA-1, SHA-256) bater com o hash guardado.
 
 ## Risco e volta atrás
 - A API recusar o login do agente (403/Cloudflare já relatado por outros

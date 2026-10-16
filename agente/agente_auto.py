@@ -44,6 +44,9 @@ CONFIG_PADRAO = {
     "senha": "masterkey",
     "charset": "WIN1252",
     "pasta_xml": r"C:\Digifarma\Aplicativos\VerificaXML",
+    # etapa 2 da docs/specs/2026-10-16-aceite-pela-api-sngpc.md: false desliga
+    # a consulta automática à API do SNGPC (o relatório Login SNGPC continua)
+    "consultar_api_sngpc": True,
     "chave_firebase": os.path.join(PASTA, "chave-firebase.json"),
     "url_banco": "https://estoque-remedios-7b785-default-rtdb.firebaseio.com",
     "uid_agente": "agente-sngpc",
@@ -2510,6 +2513,17 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
         inventario_em, foto_hora, xml_depois_da_foto(config, foto_hora))
     if sem_envio_desde:
         resultado['inventario']['fotoAntesDoEnvio'] = sem_envio_desde
+    # o que a API do SNGPC respondeu (cache do servidor, sem rede aqui)
+    try:
+        resultado['apiSngpc'] = envios_da_api_em_cache()
+        sem_validacao = foto_sem_envio_validado(
+            inventario_em, foto_hora, resultado['apiSngpc']['envios'])
+        if sem_validacao:
+            resultado['inventario']['fotoAntesDaValidacao'] = sem_validacao
+            if not sem_envio_desde or sem_validacao < sem_envio_desde:
+                sem_envio_desde = sem_validacao
+    except Exception as e:
+        registrar('Falha ao ler o resultado da API do SNGPC: %s' % e)
     movimento_pendente, resultado['baseDaCorrecao'] = correcao_do_saldo(
         conexao, inventario_em, movimento_pendente, ultimo_envio, sem_envio_desde)
 
@@ -3546,6 +3560,10 @@ def modo_auto(config, data_inventario=None, usar_envio=False):
     db = conectar_firebase(config)
     conexao = conectar_firebird(config)
     try:
+        try:
+            atualizar_api_sngpc(conexao, config)
+        except Exception as e:
+            registrar('Falha ao consultar a API do SNGPC (%s).' % type(e).__name__)
         dados = montar_inventario(conexao, config, data_inventario, usar_envio)
         # Antes de publicar: se o inventário está velho, tentar destravá-lo
         # sozinho. O recado entra nos dados para aparecer no app — quem está
@@ -5567,6 +5585,7 @@ def modo_login_sngpc(config):
             print('chamado no Digifarma perguntando por que o Anvisa.exe não usa')
             print('as credenciais que a própria tabela dele guarda.')
         print('')
+        PASTA_XML_ATUAL[0] = config.get('pasta_xml') or PASTA_XML_ATUAL[0]
         try:
             testar_api_sngpc(conexao)
         except Exception as e:
@@ -5889,9 +5908,259 @@ def testar_api_sngpc(conexao, chamar=None):
             for chave in sorted(reg, key=texto):
                 print('  ' + campo_da_api(chave, reg[chave], segredos))
     print('')
-    print('Compare com o Relatório Status de Transmissão do site. Batendo, a etapa 2')
-    print('(aceite automático na aba Aceites) pode ser ligada.')
+    hash_envio = dict(cred.get('hashes', [])).get(coluna_hash_do_envio(colunas_hash))
+    formula, arquivo = descobrir_formula_do_hash(hash_envio, xml_arquivados(PASTA_XML_ATUAL[0]))
+    if formula:
+        print('fórmula do hash: %s (bateu com %s). Com ela o agente consulta' % (
+            NOME_FORMULA.get(formula, formula), os.path.basename(arquivo)))
+        print('sozinho todos os envios arquivados, não só o último que o Digifarma guardou.')
+    else:
+        print('fórmula do hash: nenhuma das contas (MD5, SHA-1, SHA-256 do XML) bateu')
+        print('com o hash do último envio. Só esse envio pode ser consultado.')
     return True
+
+
+# ------------------------------------------------------------
+# etapa 2: consulta automática, de hora em hora, com cache no servidor
+# ------------------------------------------------------------
+ARQUIVO_CACHE_API = os.path.join(PASTA, 'api_sngpc_cache.json')
+API_CONSULTA_MINUTOS = 60
+API_CONSULTAS_POR_VEZ = 25
+SITUACOES_FINAIS = ('validado', 'com_erro')
+NOME_FORMULA = {'md5': 'MD5 do XML', 'sha1': 'SHA-1 do XML', 'sha256': 'SHA-256 do XML',
+                'md5_limpo': 'MD5 do XML sem BOM e espaços nas pontas',
+                'sha1_limpo': 'SHA-1 do XML sem BOM e espaços nas pontas',
+                'sha256_limpo': 'SHA-256 do XML sem BOM e espaços nas pontas'}
+# a pasta do XML vem do config; o relatório Login SNGPC não recebe config,
+# então quem o chama deixa a pasta aqui (lista para poder trocar sem global)
+PASTA_XML_ATUAL = [CONFIG_PADRAO['pasta_xml']]
+
+
+def coluna_hash_do_envio(colunas_hash):
+    """A coluna do hash da MOVIMENTAÇÃO (HASH_ULT_ENVIO), não a do inventário."""
+    for c in colunas_hash or []:
+        if 'ENVIO' in c and 'INVENT' not in c:
+            return c
+    for c in colunas_hash or []:
+        if 'INVENT' not in c:
+            return c
+    return None
+
+
+def hashes_do_arquivo(caminho):
+    """As contas que o Digifarma pode ter usado para o hash do XML."""
+    import hashlib
+    with open(caminho, 'rb') as f:
+        bruto = f.read()
+    limpo = bruto[3:] if bruto.startswith(b'\xef\xbb\xbf') else bruto
+    limpo = limpo.strip()
+    saida = {}
+    for nome in ('md5', 'sha1', 'sha256'):
+        saida[nome] = hashlib.new(nome, bruto).hexdigest().upper()
+        saida[nome + '_limpo'] = hashlib.new(nome, limpo).hexdigest().upper()
+    return saida
+
+
+def xml_arquivados(pasta_xml):
+    """[(chave do aceite AAAA-MM-DD, caminho)] dos XML em enviados\\, os 20 mais novos."""
+    pasta = os.path.join(pasta_xml or '', 'enviados')
+    if not os.path.isdir(pasta):
+        return []
+    nomes = sorted(n for n in os.listdir(pasta)
+                   if n.lower().startswith('sngpc_') and n.lower().endswith('.xml'))[-20:]
+    return [(n[6:16], os.path.join(pasta, n)) for n in nomes]
+
+
+def descobrir_formula_do_hash(hash_conhecido, arquivados):
+    """Qual conta sobre qual XML arquivado dá o hash que o Digifarma guardou.
+    Devolve (fórmula, caminho) ou (None, None). Nada é impresso aqui."""
+    alvo = texto(hash_conhecido).strip().upper()
+    if not alvo:
+        return None, None
+    for _, caminho in reversed(arquivados or []):
+        try:
+            contas = hashes_do_arquivo(caminho)
+        except OSError:
+            continue
+        for formula, valor in contas.items():
+            if valor == alvo:
+                return formula, caminho
+    return None, None
+
+
+def data_da_api(valor):
+    """'08/10/2026 23:00:02' (ou ISO) em 'AAAA-MM-DDTHH:MM:SS'; '' se não der."""
+    t = texto(valor).strip()
+    for formato in ('%d/%m/%Y %H:%M:%S', '%d/%m/%Y', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+        try:
+            return datetime.datetime.strptime(t[:19], formato).isoformat()
+        except ValueError:
+            continue
+    return ''
+
+
+def envio_da_resposta(conteudo):
+    """O que interessa da consulta, sem texto livre: período, transmissão,
+    validação e se veio mensagem. A ANVISA não manda campo de situação: com
+    validação e sem mensagem é 'validado'; com mensagem, 'com_erro'; sem
+    validação, 'processando'. None quando a resposta não tem o formato."""
+    registros, _ = forma_da_resposta(conteudo)
+    if not registros:
+        return None
+    reg = {texto(k).lower(): v for k, v in registros[0].items()}
+    def campo(*pedacos):
+        for k, v in reg.items():
+            if all(p in k for p in pedacos):
+                return v
+        return ''
+    validacao = data_da_api(campo('data', 'validac'))
+    mensagem = texto(campo('mensagem')).strip()
+    if mensagem:
+        situacao = 'com_erro'
+    elif validacao:
+        situacao = 'validado'
+    else:
+        situacao = 'processando'
+    return {
+        'de': data_da_api(campo('inicio', 'refer'))[:10],
+        'ate': data_da_api(campo('fim', 'refer'))[:10],
+        'transmissao': data_da_api(campo('data', 'transmiss')),
+        'validacao': validacao,
+        'situacao': situacao,
+        'temMensagem': bool(mensagem),
+    }
+
+
+def ler_cache_api():
+    try:
+        with open(ARQUIVO_CACHE_API, encoding='utf-8') as f:
+            dados = json.load(f)
+        return dados if isinstance(dados, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def gravar_cache_api(cache):
+    try:
+        with open(ARQUIVO_CACHE_API, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, indent=1)
+    except OSError as e:
+        registrar('Não consegui gravar o cache da API do SNGPC: %s' % e)
+
+
+def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
+    """Consulta a API pelos envios ainda sem resposta final, no máximo uma vez
+    por hora, e guarda tudo em api_sngpc_cache.json (no servidor: o hash não
+    sobe). Falhar aqui nunca derruba a sincronização."""
+    if not config.get('consultar_api_sngpc', True):
+        return
+    chamar = chamar or chamar_api
+    agora = agora or datetime.datetime.now()
+    cache = ler_cache_api()
+    try:
+        ultima = datetime.datetime.fromisoformat(cache.get('_em', ''))
+        if 0 <= (agora - ultima).total_seconds() < API_CONSULTA_MINUTOS * 60:
+            return
+    except ValueError:
+        pass
+    cache['_em'] = agora.isoformat(timespec='seconds')
+    cache['_erro'] = ''
+    try:
+        cred, colunas_hash = credenciais_sngpc(conexao)
+    except Exception as e:
+        cache['_erro'] = 'não li a tabela SNGPC (%s)' % type(e).__name__
+        gravar_cache_api(cache)
+        return
+    email, senha, cnpj = cred.get('email'), cred.get('senha'), so_digitos(cred.get('cnpj'))
+    hash_envio = dict(cred.get('hashes', [])).get(coluna_hash_do_envio(colunas_hash)) or ''
+    if not (email and senha and cnpj):
+        cache['_erro'] = 'sem e-mail, senha ou CNPJ no Digifarma'
+        gravar_cache_api(cache)
+        return
+
+    arquivados = xml_arquivados(config.get('pasta_xml'))
+    formula = cache.get('_formula')
+    if not formula and hash_envio:
+        formula, _ = descobrir_formula_do_hash(hash_envio, arquivados)
+        cache['_formula'] = formula or ''
+    alvos = {}
+    if hash_envio:
+        alvos[hash_envio.upper()] = ''
+    if formula:
+        for chave, caminho in arquivados:
+            try:
+                alvos[hashes_do_arquivo(caminho)[formula]] = chave
+            except (OSError, KeyError):
+                continue
+    envios = cache.setdefault('envios', {})
+    pendentes = [h for h in alvos if (envios.get(h) or {}).get('situacao') not in SITUACOES_FINAIS]
+    if not pendentes:
+        gravar_cache_api(cache)
+        return
+
+    status, conteudo = chamar('POST', API_SNGPC_PADRAO + API_SNGPC_TOKEN,
+                              {'username': email, 'password': senha})
+    token = token_da_resposta(conteudo) if status and 200 <= status < 300 else None
+    if not token:
+        cache['_erro'] = 'a API não deu token (HTTP %s)' % (status or 'sem resposta')
+        gravar_cache_api(cache)
+        return
+    from urllib.parse import quote
+    for hash_ in pendentes[:API_CONSULTAS_POR_VEZ]:
+        url = API_SNGPC_PADRAO + API_SNGPC_CONSULTA.format(
+            email=quote(email, safe=''), cnpj=cnpj, hash=quote(hash_, safe=''))
+        status, conteudo = chamar('GET', url, token=token)
+        envio = envio_da_resposta(conteudo) if status == 200 else None
+        if envio:
+            envio['arquivo'] = alvos[hash_] or (envios.get(hash_) or {}).get('arquivo', '')
+            envio['consultadoEm'] = cache['_em']
+            envios[hash_] = envio
+        elif status in (401, 403):
+            cache['_erro'] = 'a API recusou a consulta (HTTP %s)' % status
+            break
+    gravar_cache_api(cache)
+
+
+def envios_da_api_em_cache(cache=None):
+    """O que a API respondeu, pronto para publicar: SEM o hash, ordenado pelo
+    período. É o que vai em farmacia/inventario/apiSngpc."""
+    cache = ler_cache_api() if cache is None else cache
+    envios = sorted((dict(v) for v in (cache.get('envios') or {}).values() if isinstance(v, dict)),
+                    key=lambda e: (e.get('de') or '', e.get('transmissao') or ''))
+    return {
+        'consultadoEm': cache.get('_em', ''),
+        'formulaDoHash': NOME_FORMULA.get(cache.get('_formula') or '', ''),
+        'erro': cache.get('_erro', ''),
+        'envios': envios[-30:],
+    }
+
+
+def foto_sem_envio_validado(inventario_em, foto_hora, envios):
+    """Se a ANVISA validou um envio DEPOIS da foto do inventário, a foto não
+    tem aquele período: devolve o dia anterior ao início dele (o mesmo
+    formato do foto_sem_o_ultimo_envio). None quando não dá para afirmar.
+
+    É o caso do lote 508023 em 16/10: foto de 15/10 e o envio de 13 e 14/10
+    aprovado depois. A data da foto não diz isso; a data de validação diz."""
+    foto = texto(inventario_em)[:10]
+    if not foto:
+        return None
+    candidatos = []
+    for e in envios or []:
+        if e.get('situacao') != 'validado' or not e.get('validacao') or not e.get('de'):
+            continue
+        try:
+            validado = datetime.datetime.fromisoformat(e['validacao'])
+            inicio = datetime.date.fromisoformat(e['de'])
+        except ValueError:
+            continue
+        if foto_hora and foto_hora.date().isoformat() == foto:
+            depois = validado > foto_hora
+        else:
+            depois = validado.date().isoformat() > foto
+        if depois:
+            candidatos.append((inicio - datetime.timedelta(days=1)).isoformat())
+    return min(candidatos) if candidatos else None
 
 
 def modo_regras(config):
