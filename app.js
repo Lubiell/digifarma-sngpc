@@ -756,6 +756,12 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = MOTIVO_SALDO[i.motivo]?.[1] || '';
   }
   if (nota.textContent) d.appendChild(nota);
+  if (i.lote) {
+    const b = criar('button', 'botao botao-secundario');
+    b.textContent = 'Investigar este lote no servidor';
+    b.onclick = () => investigarLote(i);
+    d.appendChild(b);
+  }
   // So produto do cadastro (com codigo) e marcado como controlado: o lote
   // que so existe na ANVISA nao tem o que desmarcar no Digifarma.
   if (i.codigo && i.classe) {
@@ -765,6 +771,21 @@ function detalheDoSaldo(i, dif) {
     d.appendChild(b);
   }
   return d;
+}
+
+/* Pede ao agente o relatorio "saldo" do lote: como o saldo foi apurado no
+   banco, o movimento que entrou na conta, o veredito (aviso falso, erro
+   compensado por acaso, falta ou sobra) e se o lote aparece nos XML
+   transmitidos. Sem digitar nada: M.S. e lote vao do proprio item. */
+function investigarLote(i) {
+  estado.relatorioPedido = 'saldo';
+  return db.ref('farmacia/comando').set({
+    acao: 'saldo', texto: (i.ms || '') + '|' + i.lote,
+    pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+  }).then(() => {
+    avisar('Investigação do lote ' + i.lote + ' pedida. A resposta aparece na aba Servidor.');
+    irPara('servidor');
+  }).catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
 }
 
 /* Desmarcar psicotropico/antimicrobiano de UM produto, pelo agente. E a

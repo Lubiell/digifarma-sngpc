@@ -76,12 +76,13 @@ const armazem = () => {
   };
 };
 
-function refFalsa() {
+const gravados = [];
+function refFalsa(caminho) {
   const r = {
     on: () => () => {},
     off() {},
     get: async () => ({ val: () => null }),
-    set: async () => {},
+    set: async (v) => { gravados.push([caminho, v]); },
     update: async () => {},
     remove: async () => {},
     push: async () => ({ key: 'chave-teste' })
@@ -98,7 +99,7 @@ const firebaseFalso = {
     signInWithEmailAndPassword: async () => {},
     signOut: async () => {}
   }),
-  database: () => ({ ref: () => refFalsa() })
+  database: () => ({ ref: (c) => refFalsa(c) })
 };
 
 const contexto = {
@@ -381,6 +382,13 @@ if (exportado.detalheDoSaldo && exportado.pintarConfiancaDoSaldo) {
       if (!t.includes('SNGPC esperado hoje (foto + movimento)') || !t.includes('8')) throw new Error('esperado não aparece');
       if (t.some((x) => x.includes('com saldos diferentes'))) throw new Error('diz "saldos diferentes" com saldos iguais');
       if (!t.some((x) => x.includes('mesmo número'))) throw new Error('sem a explicação do caso');
+      const investigar = criados.find((e) => e.textContent === 'Investigar este lote no servidor');
+      if (!investigar) throw new Error('sem o botão de investigar o lote');
+      gravados.length = 0;
+      investigar.onclick();
+      const pedido = gravados.find(([c]) => c === 'farmacia/comando');
+      if (!pedido || pedido[1].acao !== 'saldo' || pedido[1].texto !== '1234567890123|AB12')
+        throw new Error('pedido de investigação errado: ' + JSON.stringify(pedido));
 
       criados.length = 0;
       exportado.detalheDoSaldo({ codigo: '1', saldoDigifarma: 7, saldoSngpc: 5, diferenca: 2,

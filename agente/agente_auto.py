@@ -13,7 +13,7 @@ Modos:
     python agente_auto.py --envio           usa o inventário vigente no último envio
     python agente_auto.py 31/07/2026        usa o inventário daquela data
     python agente_auto.py --schema          confere se as tabelas/campos existem
-    python agente_auto.py --saldo TEXTO     mostra como o saldo de um lote foi apurado
+    python agente_auto.py --saldo TEXTO     como o saldo de um lote foi apurado e por que diverge
     python agente_auto.py --linhas LOTE     despeja todas as colunas de LOTES de um lote
     python agente_auto.py --resumo          separa divergência real de lote escrito diferente
     python agente_auto.py --inventario      mostra o que entra e o que sai do inventário SNGPC
@@ -6097,7 +6097,7 @@ RELATORIOS = {
     'resumo': lambda config, alvo: texto_do_modo(modo_resumo, config),
     'inventario': lambda config, alvo: texto_do_modo(modo_inventario, config),
     'produto': lambda config, alvo: texto_do_modo(modo_produto, config, alvo),
-    'saldo': lambda config, alvo: texto_do_modo(modo_conferir_saldo, config, alvo),
+    'saldo': lambda config, alvo: texto_do_modo(modo_investigar_lote, config, alvo),
     'colunas': lambda config, alvo: texto_do_modo(modo_colunas, config, alvo or 'LOTES'),
     'totais': lambda config, alvo: texto_do_modo(modo_totais, config, alvo),
     'receitas': lambda config, alvo: texto_do_modo(modo_receitas, config, alvo),
@@ -6515,6 +6515,183 @@ def modo_conferir_saldo(config, filtro):
         return True
     finally:
         fechar(conexao)
+
+
+TIPO_NA_FILA = {'vendas': 'venda', 'entradas': 'entrada', 'perdas': 'perda',
+                 'transferencias': 'transferência'}
+
+
+def alvo_do_lote(filtro):
+    """Separa M.S. e lote do que chegou do app ou da linha de comando.
+
+    O app manda "MS|LOTE": o lote vai inteiro depois da barra, porque lote
+    pode ter só dígitos, barra ou espaço, e nenhuma heurística acerta isso.
+    Digitado à mão: "MS LOTE" quando o primeiro pedaço tem cara de M.S. (9 ou
+    mais dígitos, sem letra); um pedaço só vale como lote OU M.S.
+
+    Devolve (ms, lote, so_um) — so_um quando não dá para saber qual dos dois
+    é, e aí o pedaço casa com qualquer um."""
+    filtro = texto(filtro).strip()
+    if '|' in filtro:
+        ms, lote = filtro.split('|', 1)
+        return so_digitos(ms), lote.strip().upper(), False
+    partes = filtro.split(None, 1)
+    if len(partes) == 2 and len(so_digitos(partes[0])) >= 9 \
+            and not re.search(r'[A-Za-z]', partes[0]):
+        return so_digitos(partes[0]), partes[1].strip().upper(), False
+    return '', filtro.upper(), True
+
+
+def lote_frouxo(lote):
+    """Só letra e número, sem zero à esquerda: '00036467' e '36467' são o
+    mesmo lote escrito de dois jeitos (a mesma régua do chave_frouxa)."""
+    return ''.join(c for c in texto(lote).upper() if c.isalnum()).lstrip('0')
+
+
+def lote_procurado(item, filtro):
+    """O item do Saldo casa com o lote (e o M.S., se veio) que a farmácia
+    pediu. Sem LIKE: aqui é UM lote."""
+    ms, lote, so_um = alvo_do_lote(filtro)
+    if not lote:
+        return False
+    if so_um:
+        return (lote_frouxo(item.get('lote')) == lote_frouxo(lote)
+                or (len(so_digitos(lote)) >= 9 and so_digitos(item.get('ms')) == so_digitos(lote)))
+    return (lote_frouxo(item.get('lote')) == lote_frouxo(lote)
+            and (not ms or so_digitos(item.get('ms')) == ms))
+
+
+def explicar_lote(dados, filtro):
+    """Para um lote do Saldo: a conta que o app fez, o movimento que entrou
+    nela e o que isso quer dizer. Trabalha só com o que o montar_inventario
+    devolve — por isso dá para testar sem banco.
+
+    Nasceu de "os estoques estão iguais no Digifarma e no SNGPC e o app diz
+    que está errado". A diferença é contra a foto MAIS o movimento que ainda
+    não estaria nela; com os dois saldos iguais, a pergunta é se esse
+    movimento já subiu (aviso falso, venda descontada duas vezes) ou não
+    (erro compensado por acaso). A fila e o ponteiro respondem isso."""
+    achados = [i for i in dados.get('itens') or [] if lote_procurado(i, filtro)]
+    inv = dados.get('inventario') or {}
+    base = dados.get('baseDaCorrecao', 'fila')
+    print('POR QUE O APP ACUSA ESTE LOTE')
+    print('=' * 78)
+    print('Foto da ANVISA: %s · conta: foto + %s' % (
+        br(inv.get('data')),
+        'o que está na fila depois do ponteiro (venda %s)'
+        % ((dados.get('envio') or {}).get('ULT_SAIDA_VENDA_NOTA_ID') or '?')
+        if base == 'fila' else 'tudo que se moveu desde a foto, transmitido ou não'))
+    if not achados:
+        print('')
+        if not dados.get('itens'):
+            print('O Saldo veio vazio: a apuração falhou (veja a mensagem acima).')
+        else:
+            print('"%s" não está na lista do Saldo: o lote bate, ou está zerado nos'
+                  % filtro.replace('|', ' '))
+            print('dois lados. Confira se o lote foi digitado como no Digifarma.')
+        return False
+
+    situacao, _, faltam, corte = analisar_ponteiro(dados)
+    ja = {(c[0], c[1]) for c in (inv.get('lotesJaNaAnvisa') or [])}
+    for i in achados:
+        chave = (so_digitos(i.get('ms')), texto(i.get('lote')).upper())
+        digi = numero(i.get('saldoDigifarma'))
+        foto = numero(i.get('saldoSngpc'))
+        movido = numero(i.get('movimentoDesdeEnvio'))
+        esperado = numero(i.get('esperadoSngpc', foto))
+        dif = numero(i.get('diferenca'))
+        print('')
+        print('-' * 78)
+        print('%s  |  M.S. %s  |  lote %s' % (
+            texto(i.get('descricao')) or '(sem descrição)', chave[0] or '—', chave[1] or '—'))
+        print('-' * 78)
+        print('  Digifarma hoje ............ %g' % digi)
+        print('  SNGPC (foto) .............. %g' % foto)
+        print('  movimento desde a foto .... %s' % (('%+g' % movido) if movido else '—'))
+        print('  SNGPC esperado hoje ....... %g' % esperado)
+        print('  diferença ................. %s' % (('%+g' % dif) if dif else 'nenhuma'))
+
+        fila = []
+        for tipo, linhas in (dados.get('pendentes') or {}).items():
+            sinal = 1 if tipo == 'entradas' else -1
+            for p in linhas or []:
+                if (so_digitos(p.get('ms')), texto(p.get('lote')).upper()) == chave:
+                    fila.append((texto(p.get('data'))[:10], tipo, p.get('id'),
+                                 sinal * numero(p.get('quantidade'))))
+        if fila:
+            print('  na fila (ainda não transmitido, pelo ponteiro):')
+            for data, tipo, ident, qtd in sorted(fila, key=lambda x: (x[0], str(x[2]))):
+                print('    %s  %-13s nº %-8s %+g' % (br(data), TIPO_NA_FILA.get(tipo, tipo),
+                                                   ident or '—', qtd))
+        elif movido:
+            print('  nada deste lote na fila: o movimento vem da conta desde a foto.')
+
+        print('')
+        if not dif:
+            print('  VEREDITO: bate. O app não acusa este lote.')
+        elif digi == foto and movido:
+            # Só dá para falar em ponteiro quando a conta usou a FILA e o
+            # movimento do lote é inteiro de vendas da fila, com número. Na
+            # base 'foto' o ponteiro não entra na conta, e entrada ou perda
+            # na mistura não se resolve olhando a sequência de vendas.
+            ids = sorted(int(numero(x[2])) for x in fila if x[2])
+            so_vendas = (base == 'fila' and fila and len(ids) == len(fila)
+                         and all(x[1] == 'vendas' for x in fila)
+                         and round(sum(x[3] for x in fila), 3) == round(movido, 3))
+            if so_vendas and situacao == 'atrasado' and corte is not None \
+                    and max(ids) <= corte:
+                print('  VEREDITO: aviso FALSO, provável. As vendas deste lote estão no')
+                print('  começo da fila e já constam na ANVISA: o site recebeu até a venda')
+                print('  %d, e o ponteiro deste Digifarma não andou (envio feito por outra' % corte)
+                print('  máquina). A conta desconta a mesma venda duas vezes. Confira no')
+                print('  Relatório Status de Transmissão e acerte o ponteiro para %d.' % corte)
+            elif so_vendas and situacao == 'coincidencia' and chave in ja \
+                    and faltam and min(ids) > min(faltam):
+                print('  VEREDITO: erro de verdade, compensado por acaso. As vendas deste')
+                print('  lote estão no MEIO da fila, com vendas mais antigas sem bater;')
+                print('  envio é sequencial, então elas ainda não subiram. Depois do envio')
+                print('  o SNGPC fica com %g e o Digifarma com %g. Confira a prateleira.'
+                      % (esperado, digi))
+            else:
+                print('  VEREDITO: os dois saldos são iguais hoje, mas a conta soma %+g de' % movido)
+                print('  movimento que estaria fora da foto. Se esse movimento já está na')
+                print('  ANVISA, o aviso é falso; se não está, depois do envio o SNGPC fica')
+                print('  com %g. A busca nos XML abaixo diz se ele já subiu.' % esperado)
+        elif i.get('motivo') == 'negativo':
+            print('  VEREDITO: saldo negativo no Digifarma — saída lançada sem a entrada.')
+        elif i.get('motivo') in ('anvisa_zerada_lote', 'anvisa_zerada_produto'):
+            print('  VEREDITO: a ANVISA não tem este lote. Costuma ser entrada que não')
+            print('  subiu; veja nos XML abaixo se a entrada aparece.')
+        elif i.get('motivo') == 'so_na_anvisa':
+            print('  VEREDITO: a ANVISA tem este lote e o Digifarma não o conhece.')
+        else:
+            print('  VEREDITO: o Digifarma tem %+g em relação ao esperado. Conte a' % dif)
+            print('  prateleira: é ela que diz qual lado está errado.')
+    return True
+
+
+def modo_investigar_lote(config, filtro):
+    """O relatório "saldo" do app: como o saldo do lote foi apurado no banco,
+    por que o app acusa (ou não) a divergência e se o movimento aparece nos
+    XML transmitidos. Um pedido só, para a farmácia não precisar montar o
+    diagnóstico juntando três relatórios."""
+    filtro = texto(filtro).strip()
+    if not filtro:
+        # sem alvo continua sendo o que o --saldo sempre foi: os lotes maiores
+        return modo_conferir_saldo(config, filtro)
+    ms, lote, _ = alvo_do_lote(filtro)
+    alvo_banco = lote or ms
+    modo_conferir_saldo(config, alvo_banco)
+    print('')
+    conexao = conectar_firebird(config)
+    try:
+        dados = montar_inventario(conexao, config)
+    finally:
+        fechar(conexao)
+    explicou = explicar_lote(dados, filtro)
+    print('')
+    modo_buscar_xml(config, alvo_banco)
+    return explicou
 
 
 def chave_frouxa(chave):
@@ -7941,7 +8118,7 @@ def principal():
         if args.linhas:
             raise SystemExit(0 if modo_linhas(config, args.linhas) else 1)
         if args.saldo is not None:
-            raise SystemExit(0 if modo_conferir_saldo(config, args.saldo) else 1)
+            raise SystemExit(0 if modo_investigar_lote(config, args.saldo) else 1)
         if args.schema:
             raise SystemExit(0 if modo_schema(config) else 1)
         if args.teste:
