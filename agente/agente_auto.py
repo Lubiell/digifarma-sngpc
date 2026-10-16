@@ -5742,6 +5742,54 @@ def campo_da_api(chave, valor, segredos):
         nome, len(texto(valor)))
 
 
+# Palavras que dizem do que um texto fala sem publicar o texto: a resposta que
+# não é objeto pode ser uma mensagem solta, e mensagem pode citar paciente.
+PALAVRAS_DA_RESPOSTA = ('aceit', 'valid', 'recebid', 'process', 'erro', 'invalid',
+                        'não encontrad', 'nao encontrad', 'not found', 'inexistente',
+                        'pendente', 'rejeit', 'recusad', 'hash', 'arquivo', 'token',
+                        'autoriz', 'expirad')
+
+
+def forma_da_resposta(conteudo):
+    """O que a API devolveu, em registros (dicionários) e uma descrição.
+
+    Em 16/10 a consulta voltou HTTP 200 com 303 caracteres que não eram
+    objeto JSON — e o relatório só dizia isso. API .NET costuma devolver o
+    objeto serializado DENTRO de uma string JSON ("{\\"hash\\":...}"), ou
+    XML. Aqui se tenta cada forma; o que não for objeto vira descrição com
+    as palavras-chave que aparecem, nunca o texto."""
+    dados = ler_json(conteudo)
+    camadas = 0
+    while isinstance(dados, str) and camadas < 2:
+        interno = ler_json(dados)
+        if interno is None:
+            break
+        dados, camadas = interno, camadas + 1
+    dentro = ' (dentro de texto JSON)' if camadas else ''
+    if isinstance(dados, dict):
+        return [dados], 'objeto JSON' + dentro
+    if isinstance(dados, list):
+        objetos = [d for d in dados if isinstance(d, dict)]
+        return objetos, 'lista JSON com %d item(ns), %d objeto(s)%s' % (len(dados), len(objetos), dentro)
+    bruto = dados if isinstance(dados, str) else texto(conteudo)
+    if bruto.lstrip().startswith('<'):
+        import xml.etree.ElementTree as ET
+        try:
+            raiz = ET.fromstring(bruto.strip())
+        except ET.ParseError:
+            return None, 'começa com "<" mas não é XML válido (%d caractere(s)); HTML?' % len(bruto)
+        campos = {}
+        for el in raiz.iter():
+            if len(el) == 0:
+                campos[el.tag.split('}')[-1]] = (el.text or '').strip()
+        return [campos], 'XML (raiz %s)%s' % (raiz.tag.split('}')[-1][:40], dentro)
+    baixo = bruto.lower()
+    achadas = [p for p in PALAVRAS_DA_RESPOSTA if p in baixo]
+    tipo = 'texto JSON' if isinstance(dados, str) else ('número/booleano JSON' if dados is not None else 'texto')
+    return None, '%s com %d caractere(s), não publicado; palavras: %s' % (
+        tipo, len(bruto), ', '.join(achadas) or 'nenhuma da lista')
+
+
 def teste_api_recente(agora=None):
     """Minutos desde o último teste, se foi há menos que o intervalo. Cada
     teste é um login de verdade na ANVISA: com senha errada, clique repetido
@@ -5835,13 +5883,9 @@ def testar_api_sngpc(conexao, chamar=None):
         print('')
         print('consulta do envio de %s (GET %s): HTTP %s' % (
             coluna, API_SNGPC_CONSULTA, status or 'sem resposta'))
-        dados = ler_json(conteudo)
-        registros = dados if isinstance(dados, list) else [dados]
-        for reg in registros[:3]:
-            if not isinstance(reg, dict):
-                print('  resposta não é JSON de objeto (%d caractere(s)), não publicada'
-                      % len(texto(conteudo)))
-                break
+        registros, forma = forma_da_resposta(conteudo)
+        print('  formato: %s' % forma)
+        for reg in (registros or [])[:3]:
             for chave in sorted(reg, key=texto):
                 print('  ' + campo_da_api(chave, reg[chave], segredos))
     print('')
