@@ -1,5 +1,5 @@
 # PROGRESS — digifarma-sngpc
-Atualizado: 2026-10-09 | Máquina: nuvem (Claude Code)
+Atualizado: 2026-10-16 | Máquina: nuvem (Claude Code)
 
 ## Estado atual
 App no ar em GitHub Pages. Agente parado no servidor desde 10/09 (ver
@@ -7,6 +7,13 @@ App no ar em GitHub Pages. Agente parado no servidor desde 10/09 (ver
 servidor de longe, ainda não executado no Windows.
 
 ## Feito
+- 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
+  app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
+  carimbo "em") e quando o arquivo de retorno traz resposta de verdade
+  (hash + mensagem + data que não é 30/12/1899; identidade = hash + data do
+  conteúdo, em farmacia/avisado/retorno). Regra nova `avisado` nas regras
+  do Firebase (só o agente lê/escreve), publicada pelo próprio agente ao
+  se atualizar. Na 1ª volta o que já existe entra como avisado, calado.
 - `agente/ACESSO_REMOTO.bat`: testa admin, placa, OpenVPN, edição do Windows,
   OpenSSH, portas 22/3389, AnyDesk/TeamViewer e as 3 tarefas; liga SSH
   (PowerShell como shell), firewall da 22 só para rede local + VPN, RDP se

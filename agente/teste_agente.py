@@ -779,6 +779,195 @@ def principal():
         ag._messaging, ag.PASTA = guardados
         shutil.rmtree(pasta_avisos, ignore_errors=True)
 
+    # --- aviso de aceite marcado no app e de retorno de verdade da ANVISA ---
+    class DbMemoria:
+        """Firebase em memória: caminho 'a/b/c' sobre um dict aninhado."""
+
+        def __init__(self, arvore, travar=()):
+            self.arvore, self.travar = arvore, travar
+
+        def reference(self, caminho):
+            db = self
+            partes = caminho.split('/')
+
+            class Ref:
+                def get(self):
+                    no = db.arvore
+                    for p in partes:
+                        if not isinstance(no, dict) or p not in no:
+                            return None
+                        no = no[p]
+                    return no
+
+                def set(self, valor):
+                    if any(caminho.startswith(t) for t in db.travar):
+                        raise RuntimeError('Permission denied')
+                    no = db.arvore
+                    for p in partes[:-1]:
+                        no = no.setdefault(p, {})
+                    no[partes[-1]] = valor
+
+                def delete(self):
+                    no = db.arvore
+                    for p in partes[:-1]:
+                        no = no.get(p, {})
+                    no.pop(partes[-1], None)
+            return Ref()
+
+    def girar_fila(db):
+        ag.conectar_firebase = lambda _config: db
+        ag.modo_fila({})
+
+    pasta_avisos = tempfile.mkdtemp()
+    guardados = (ag._messaging, ag.PASTA, ag.conectar_firebase, ag.atualizar_sozinho,
+                 ag.publicar_vendas_recentes, ag.registrar)
+    try:
+        ag._messaging = lambda: MessagingFalso()
+        ag.PASTA = pasta_avisos
+        ag.atualizar_sozinho = lambda _config: None
+        ag.publicar_vendas_recentes = lambda _config, _db: None
+        ag.registrar = lambda _msg: None
+        celular = {'a1': {'token': 'tok-1', 'em': 'x'}}
+        antigo = {'status': 'aceito', 'por': 'Ana', 'em': '2026-10-01T10:00:00'}
+        arvore = {'farmacia': {'notificacoes': celular, 'aceites': {'2026-09-30': antigo}}}
+        db = DbMemoria(arvore)
+
+        enviados.clear()
+        girar_fila(db)
+        conferir('aceite que já existia antes da atualização não vira aviso',
+                 not enviados and arvore['farmacia']['avisado']['aceites'].get('2026-09-30')
+                 == antigo['em'], (enviados, arvore['farmacia'].get('avisado')))
+
+        arvore['farmacia']['aceites']['2026-10-14'] = {
+            'status': 'aceito', 'por': 'Bia', 'em': '2026-10-15T09:00:00'}
+        enviados.clear()
+        girar_fila(db)
+        girar_fila(db)
+        conferir('a fila rodando duas vezes com o mesmo aceite avisa uma vez só',
+                 enviados == [('tok-1', 'Envio aceito',
+                               'Envio de 14/10/2026 marcado como ACEITO por Bia')], enviados)
+
+        arvore['farmacia']['aceites']['2026-10-14'] = {
+            'status': 'recusado', 'por': 'Bia', 'em': '2026-10-15T09:30:00',
+            'erro': 'Quantidade vendida maior que o estoque. CPF 123.456.789-09'}
+        enviados.clear()
+        girar_fila(db)
+        girar_fila(db)
+        conferir('remarcar como recusado avisa de novo, uma vez, com o erro colado',
+                 len(enviados) == 1 and enviados[0][1] == 'Envio recusado'
+                 and enviados[0][2].startswith('Envio de 14/10/2026 marcado como RECUSADO por Bia — '
+                                               'Quantidade vendida maior')
+                 and '123.456' not in enviados[0][2], enviados)
+
+        sem_celular = DbMemoria({'farmacia': {'aceites': {'2026-10-13': antigo},
+                                              'avisado': {'aceites': {'_desde': 'x'}}}})
+        enviados.clear()
+        girar_fila(sem_celular)
+        conferir('sem celular cadastrado, o aceite não conta como avisado',
+                 not enviados and '2026-10-13' not in sem_celular.arvore['farmacia']['avisado']['aceites'],
+                 sem_celular.arvore['farmacia']['avisado'])
+        sem_celular.arvore['farmacia']['notificacoes'] = dict(celular)
+        girar_fila(sem_celular)
+        conferir('quem liga os avisos depois recebe o aceite que esperava', len(enviados) == 1, enviados)
+
+        travado = DbMemoria({'farmacia': {'notificacoes': dict(celular),
+                                          'aceites': {'2026-10-12': antigo},
+                                          'avisado': {'aceites': {'_desde': 'x'}}}},
+                            travar=('farmacia/avisado',))
+        enviados.clear()
+        girar_fila(travado)
+        girar_fila(travado)
+        conferir('sem conseguir gravar o "já avisei", não avisa (senão seria a cada minuto)',
+                 not enviados, enviados)
+
+        def sem_fcm():
+            raise ImportError('firebase_admin.messaging')
+        quebrado = DbMemoria({'farmacia': {'notificacoes': dict(celular),
+                                           'aceites': {'2026-10-11': antigo},
+                                           'avisado': {'aceites': {'_desde': 'x'}}}})
+        ag._messaging = sem_fcm
+        try:
+            ag.avisar_aceites(quebrado)
+        except ImportError:
+            pass
+        ag._messaging = lambda: MessagingFalso()
+        conferir('envio que estoura desfaz a marca: o aceite não se perde calado',
+                 '2026-10-11' not in quebrado.arvore['farmacia']['avisado']['aceites'],
+                 quebrado.arvore['farmacia']['avisado'])
+
+        vazio = {'arquivo': 'retorno_anvisa_2026_10_15_43.txt', 'linhasDeErro': [],
+                 'texto': 'HASH: \nDATA TRANSMISSÃO: 30/12/1899\nDATA VALIDAÇÃO: 30/12/1899\n'
+                          'INICIO PERIODO: 30/12/1899\nFIM DO PERIODO: 30/12/1899\nMSG DE RETORNO: \n'}
+        so_data_zero = dict(vazio, texto=vazio['texto'].replace('HASH: ', 'HASH: 92606BDD')
+                            .replace('MSG DE RETORNO: ', 'MSG DE RETORNO: Arquivo recebido'))
+        real = dict(vazio, texto='HASH: 92606BDD\nDATA TRANSMISSÃO: 15/10/2026 08:01\n'
+                                 'INICIO PERIODO: 13/10/2026\nFIM DO PERIODO: 14/10/2026\n'
+                                 'MSG DE RETORNO: Arquivo com ERRO:\nlote L1 sem saldo\n')
+        conferir('arquivo vazio do Digifarma não é retorno de verdade',
+                 ag.retorno_de_verdade(vazio) is None)
+        conferir('hash e mensagem com data 30/12/1899 não é retorno de verdade',
+                 ag.retorno_de_verdade(so_data_zero) is None)
+        conferir('a identidade do retorno vem do conteúdo (hash + data), não do nome',
+                 ag.retorno_de_verdade(real)[0] == '92606BDD_151020260801'
+                 and ag.retorno_de_verdade(dict(real, arquivo='outro.txt'))[0]
+                 == ag.retorno_de_verdade(real)[0])
+
+        arvore = {'farmacia': {'notificacoes': dict(celular)}}
+        db = DbMemoria(arvore)
+        ag.avisar_retornos(db, [vazio])
+        enviados.clear()
+        ag.avisar_retornos(db, [real, vazio])
+        ag.avisar_retornos(db, [dict(real, arquivo='retorno_anvisa_2026_10_16_44.txt'), vazio])
+        conferir('o mesmo retorno de verdade, visto em duas voltas e com outro nome, avisa uma vez',
+                 enviados == [('tok-1', 'Resposta da ANVISA com erro',
+                               'Período 13/10/2026 a 14/10/2026: Arquivo com ERRO: lote L1 sem saldo')],
+                 enviados)
+        enviados.clear()
+        ag.avisar_retornos(DbMemoria({'farmacia': {'notificacoes': dict(celular)}}), [real])
+        conferir('retorno que já estava na pasta antes da atualização não vira aviso', not enviados, enviados)
+
+        # pasta do XML fora do ar na 1ª volta: não pode virar semente vazia
+        pasta_xml = os.path.join(pasta_avisos, 'VerificaXML')
+        arvore = {'farmacia': {'notificacoes': dict(celular)}}
+        db = DbMemoria(arvore)
+        nomes = ('conectar_firebird', 'fechar', 'vendas_recentes', 'vendas_sem_receita_pendentes',
+                 'snapshot_diagnostico', 'entradas_recentes', 'retorno_sngpc', 'mudou',
+                 'atualizar_envios_publicos', 'publicar_publico')
+        guardadas = {n: getattr(ag, n) for n in nomes}
+        try:
+            ag.conectar_firebird = lambda _c: None
+            ag.fechar = lambda _c: None
+            ag.vendas_recentes = lambda _c: []
+            ag.vendas_sem_receita_pendentes = lambda _c, _cfg: []
+            ag.snapshot_diagnostico = lambda _c: {}
+            ag.entradas_recentes = lambda _c, _p, config=None: []
+            ag.retorno_sngpc = lambda _c: None
+            ag.mudou = lambda _caminho, _valor: False
+            ag.atualizar_envios_publicos = lambda _db: False
+            ag.publicar_publico = lambda *_a, **_k: None
+            enviados.clear()
+            publicar_de_verdade = guardados[4]
+            publicar_de_verdade({'pasta_xml': pasta_xml}, db)
+            conferir('pasta do XML fora do ar não vira semente vazia de retornos',
+                     'retorno' not in arvore['farmacia'].get('avisado', {}),
+                     arvore['farmacia'].get('avisado'))
+            os.makedirs(os.path.join(pasta_xml, 'retorno_sngpc'))
+            with open(os.path.join(pasta_xml, 'retorno_sngpc', 'retorno_anvisa_2026_10_15_43.txt'),
+                      'w', encoding='utf-8') as f:
+                f.write(real['texto'])
+            publicar_de_verdade({'pasta_xml': pasta_xml}, db)
+            publicar_de_verdade({'pasta_xml': pasta_xml}, db)
+            conferir('pasta que volta: o retorno que já estava lá entra como avisado, calado',
+                     not enviados and list(arvore['farmacia']['avisado']['retorno'])
+                     == ['92606BDD_151020260801', '_desde'], (enviados, arvore['farmacia'].get('avisado')))
+        finally:
+            for n, f in guardadas.items():
+                setattr(ag, n, f)
+    finally:
+        (ag._messaging, ag.PASTA, ag.conectar_firebase, ag.atualizar_sozinho,
+         ag.publicar_vendas_recentes, ag.registrar) = guardados
+        shutil.rmtree(pasta_avisos, ignore_errors=True)
+
     # --- atualizador de vários arquivos, com volta atrás ---
     import json
     import urllib.error
