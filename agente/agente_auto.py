@@ -5710,6 +5710,15 @@ def credenciais_sngpc(conexao):
     linha = linhas[0] if linhas else {}
     valores = {k: texto(linha.get(c)).strip() if c else '' for k, c in colunas.items()}
     valores['hashes'] = [(c, texto(linha.get(c)).strip()) for c in hashes]
+    if not valores['cnpj']:
+        # na instalação da farmácia o CNPJ não está na SNGPC: fica na CONFIG,
+        # de onde a consulta dos ponteiros já o lê (foi o "CNPJ: VAZIO" de 16/10)
+        try:
+            ponteiros = consultar(conexao, CONSULTAS['ponteiros'])
+            valores['cnpj'] = texto((ponteiros[0] if ponteiros else {}).get('CNPJ')).strip()
+            colunas['cnpj'] = 'CONFIG.CNPJ' if valores['cnpj'] else colunas['cnpj']
+        except Exception:
+            pass
     valores['colunas'] = colunas
     return valores, hashes
 
@@ -5810,8 +5819,8 @@ def testar_api_sngpc(conexao, chamar=None):
 
     cnpj = so_digitos(cred.get('cnpj'))
     hashes = [(c, h) for c, h in cred.get('hashes', []) if h]
-    print('CNPJ: %s · hash na tabela SNGPC: %s' % (
-        'preenchido' if cnpj else 'VAZIO',
+    print('CNPJ (%s): %s · hash na tabela SNGPC: %s' % (
+        usadas.get('cnpj') or 'nenhuma coluna', 'preenchido' if cnpj else 'VAZIO',
         ', '.join('%s %s' % (c, 'preenchido' if h else 'vazio')
                   for c, h in cred.get('hashes', [])) or 'nenhuma coluna HASH'))
     if not (cnpj and hashes):
