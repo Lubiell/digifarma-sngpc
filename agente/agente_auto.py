@@ -5297,7 +5297,7 @@ def lote_parecido(a, b):
     return bool(a and b and a != b and (a.startswith(b) or b.startswith(a)))
 
 
-def modo_buscar_xml(config, alvo=''):
+def modo_buscar_xml(config, alvo='', so_lote=False):
     """Procura M.S. e lote nos XML de transmissão que existem no servidor.
 
     Responde "essa entrada subiu? com que M.S.? com que lote?" - a pergunta
@@ -5318,7 +5318,9 @@ def modo_buscar_xml(config, alvo=''):
     alvo = texto(alvo).strip()
     if alvo:
         digitos = so_digitos(alvo)
-        if len(digitos) >= 9 and not re.search(r'[A-Za-z]', alvo):
+        # so_lote: quem chama já sabe que é lote (a investigação do Saldo),
+        # e lote só de dígitos não pode virar M.S. pela cara
+        if not so_lote and len(digitos) >= 9 and not re.search(r'[A-Za-z]', alvo):
             procurados.append({'ms': digitos, 'lote': '', 'descricao': ''})
         else:
             procurados.append({'ms': '', 'lote': alvo.upper(), 'descricao': ''})
@@ -6690,7 +6692,7 @@ def modo_investigar_lote(config, filtro):
         fechar(conexao)
     explicou = explicar_lote(dados, filtro)
     print('')
-    modo_buscar_xml(config, alvo_banco)
+    modo_buscar_xml(config, alvo_banco, so_lote=bool(lote))
     return explicou
 
 

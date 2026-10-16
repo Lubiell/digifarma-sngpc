@@ -373,6 +373,12 @@ def principal():
     conferir('sem alvo, aponta o mesmo lote com outro M.S.',
              'mesmo lote, OUTRO M.S.' in auto, auto)
     conferir('sem alvo, lote sem divergencia fica de fora', 'BATE' not in auto, auto)
+    saida_lote = io.StringIO()
+    with contextlib.redirect_stdout(saida_lote):
+        ag.modo_buscar_xml(cfg_busca, '1052500680092', so_lote=True)
+    conferir('lote so de digitos, vindo da investigacao, e procurado como lote',
+             'lote 1052500680092' in saida_lote.getvalue()
+             and 'CLV4N003' not in saida_lote.getvalue(), saida_lote.getvalue())
     conferir('a busca nos XML nao imprime CPF nem CNPJ do cabecalho',
              '00000000191' not in achado + auto, achado)
     shutil.rmtree(pasta_busca, ignore_errors=True)
