@@ -14,6 +14,12 @@ servidor de longe, ainda não executado no Windows.
   relatório `saldo` com `MS|LOTE` dá a conta, a fila do lote, um veredito
   (aviso falso / compensado por acaso / em aberto) e a busca nos XML.
   Testado no Chromium com dados de exemplo; falta ver com dado real.
+- 16/10: a resposta da investigação não apareceu no celular: um "Sincronizar
+  vendas" sobrescreveu/escondeu o pedido `saldo` (farmacia/comando guarda um
+  pedido só). Agora: o app pergunta antes de substituir pedido pendente; a
+  aba Servidor mostra o último relatório recebido; e o agente grava o
+  veredito em cada lote a cada sincronização (`veredito`, `vereditoCorte`),
+  que aparece no detalhe do Saldo sem pedir nada.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade
