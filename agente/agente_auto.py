@@ -5918,8 +5918,71 @@ def testar_api_sngpc(conexao, chamar=None):
         print('fórmula do hash: nenhuma das contas (MD5, SHA-1, SHA-256 do XML) bateu')
         print('com o hash do último envio. Só esse envio pode ser consultado.')
     print('')
+    try:
+        procurar_hashes_no_banco(conexao, hash_envio)
+    except Exception as e:
+        print('procura de hash nas outras tabelas falhou (%s).' % type(e).__name__)
+    print('')
     listar_rotas_da_api(base, chamar)
     return True
+
+
+HASH_COLUNAS_MAX = 40
+
+
+def procurar_hashes_no_banco(conexao, hash_conhecido=''):
+    """Onde mais o Digifarma guarda hash, além da SNGPC.HASH_ULT_ENVIO.
+
+    A API só consulta um envio pelo hash, não tem endereço que liste os envios
+    (o Swagger de 16/10 mostrou só GetToken, Consulta e Enviar), e o hash não
+    sai do XML arquivado. Se alguma tabela guardar o hash de CADA envio, o
+    agente consulta todos. Imprime tabela.coluna e contagens — nunca um valor.
+    Devolve [(tabela, coluna, linhas, preenchidas, distintos, tem_o_conhecido)]."""
+    campos = consultar(conexao, """
+        SELECT TRIM(RF.RDB$RELATION_NAME) AS TABELA,
+               TRIM(RF.RDB$FIELD_NAME) AS CAMPO
+          FROM RDB$RELATION_FIELDS RF
+          JOIN RDB$RELATIONS R ON (R.RDB$RELATION_NAME = RF.RDB$RELATION_NAME)
+         WHERE COALESCE(R.RDB$SYSTEM_FLAG, 0) = 0
+           AND R.RDB$VIEW_BLR IS NULL
+           AND RF.RDB$FIELD_NAME CONTAINING 'HASH'
+         ORDER BY 1, 2
+    """)
+    pares = [(texto(l.get('TABELA')).strip().upper(), texto(l.get('CAMPO')).strip().upper())
+             for l in campos]
+    # nome que veio do catálogo vai entre aspas; nada fora do padrão entra no SQL
+    pares = [(t, c) for t, c in pares if re.fullmatch(r'[A-Z0-9_$]{1,63}', t)
+             and re.fullmatch(r'[A-Z0-9_$]{1,63}', c)]
+    print('colunas com HASH nas tabelas do Digifarma: %d' % len(pares))
+    alvo = texto(hash_conhecido).strip()
+    achados = []
+    for tabela, coluna in pares[:HASH_COLUNAS_MAX]:
+        try:
+            conta = consultar(conexao, 'SELECT COUNT(*) AS LINHAS, COUNT("%s") AS PREENCHIDAS, '
+                              'COUNT(DISTINCT "%s") AS DISTINTOS FROM "%s"' % (coluna, coluna, tabela))
+            conta = conta[0] if conta else {}
+            tem = None
+            if alvo:
+                igual = consultar(conexao, 'SELECT COUNT(*) AS N FROM "%s" WHERE TRIM("%s") = ?'
+                                  % (tabela, coluna), (alvo,))
+                tem = bool(igual and igual[0].get('N'))
+        except Exception as e:
+            print('  %s.%s: não deu para contar (%s)' % (tabela, coluna, type(e).__name__))
+            continue
+        linhas, cheias, distintos = (int(conta.get(k) or 0)
+                                     for k in ('LINHAS', 'PREENCHIDAS', 'DISTINTOS'))
+        achados.append((tabela, coluna, linhas, cheias, distintos, tem))
+        print('  %s.%s: %d linha(s), %d preenchida(s), %d diferente(s)%s' % (
+            tabela, coluna, linhas, cheias, distintos,
+            '' if tem is None else ' · tem o hash do último envio: %s' % ('sim' if tem else 'não')))
+    if len(pares) > HASH_COLUNAS_MAX:
+        print('  ... e mais %d coluna(s) não contadas' % (len(pares) - HASH_COLUNAS_MAX))
+    historico = [a for a in achados if a[4] > 1]
+    if historico:
+        print('Há coluna com mais de um hash guardado: pode ser o histórico dos envios.')
+    else:
+        print('Nenhuma coluna guarda mais de um hash: o Digifarma só tem o do último envio.')
+    return achados
 
 
 API_SNGPC_DOC = ('/swagger/v1/swagger.json', '/swagger/swagger.json', '/swagger/v1/api/v1/swagger.json')

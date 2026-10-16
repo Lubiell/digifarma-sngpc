@@ -35,6 +35,10 @@ servidor de longe, ainda não executado no Windows.
   mostra "Validado sem erro pela ANVISA"; envio validado depois da foto entra
   na correção do Saldo (fotoAntesDaValidacao). Falta: ver no servidor se a
   fórmula do hash bate e se o lote 508023 deixa de divergir.
+- 16/10: o servidor mostrou que a fórmula do hash não bate com o XML e que a
+  API tem só 3 endereços (GetToken, Consulta, Enviar): não há listagem de
+  envios. O Login SNGPC agora procura colunas HASH em todas as tabelas do
+  Digifarma (só contagens) para achar um histórico dos hashes.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade
