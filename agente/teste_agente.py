@@ -1546,6 +1546,43 @@ def principal():
     conferir('API: documentação bloqueada é dita, sem quebrar',
              'não respondeu (último HTTP 403)' in balde_sw.getvalue(), balde_sw.getvalue())
 
+    # procura de hash nas outras tabelas: só contagens, nunca o valor
+    pedidos_hash = []
+    def banco_com_hashes(conexao, sql, parametros=()):
+        pedidos_hash.append((sql, parametros))
+        if 'RDB$RELATION_FIELDS' in sql:
+            return [{'TABELA': 'SNGPC', 'CAMPO': 'HASH_ULT_ENVIO'},
+                    {'TABELA': 'LOG_ENVIO_SNGPC', 'CAMPO': 'HASH'},
+                    {'TABELA': 'NOTAS', 'CAMPO': 'HASH_XML'},
+                    {'TABELA': 'X; DROP', 'CAMPO': 'HASH'}]
+        if 'COUNT(DISTINCT' in sql and '"NOTAS"' in sql:
+            raise RuntimeError('blob')
+        if 'COUNT(DISTINCT' in sql:
+            return [{'LINHAS': 9, 'PREENCHIDAS': 9, 'DISTINTOS': 9 if 'LOG_' in sql else 1}]
+        if 'WHERE TRIM' in sql:
+            return [{'N': 1}]
+        raise AssertionError(sql)
+    guardado = ag.consultar
+    ag.consultar = banco_com_hashes
+    balde_h = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(balde_h):
+            achados = ag.procurar_hashes_no_banco(None, HASH)
+    finally:
+        ag.consultar = guardado
+    saida_h = balde_h.getvalue()
+    conferir('hash no banco: acha a tabela com histórico e diz se tem o hash conhecido',
+             ('LOG_ENVIO_SNGPC', 'HASH', 9, 9, 9, True) in achados
+             and 'colunas com HASH nas tabelas do Digifarma: 3' in saida_h
+             and 'pode ser o histórico dos envios' in saida_h
+             and 'NOTAS.HASH_XML: não deu para contar' in saida_h, saida_h)
+    conferir('hash no banco: nome fora do padrão não entra no SQL e o valor não sai',
+             not any('DROP' in q for q, _ in pedidos_hash) and HASH not in saida_h
+             and all(HASH not in q for q, _ in pedidos_hash), saida_h)
+    saida, _ = rodar_api([(200, json.dumps(TOKEN)), (200, resposta_ok), (200, resposta_ok)])
+    conferir('API: o relatório Login SNGPC procura hash nas outras tabelas, sem segredo',
+             'colunas com HASH nas tabelas do Digifarma' in saida and sem_segredo(saida), saida)
+
     saida, pedidos = rodar_api([], senha='')
     conferir('API: sem senha guardada não chama nada', not pedidos and 'nada a testar' in saida, saida)
 
