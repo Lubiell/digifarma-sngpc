@@ -5917,7 +5917,45 @@ def testar_api_sngpc(conexao, chamar=None):
     else:
         print('fórmula do hash: nenhuma das contas (MD5, SHA-1, SHA-256 do XML) bateu')
         print('com o hash do último envio. Só esse envio pode ser consultado.')
+    print('')
+    listar_rotas_da_api(base, chamar)
     return True
+
+
+API_SNGPC_DOC = ('/swagger/v1/swagger.json', '/swagger/swagger.json', '/swagger/v1/api/v1/swagger.json')
+
+
+def rotas_do_swagger(conteudo):
+    """[(MÉTODO, caminho)] de um swagger.json. Nada além de método e caminho."""
+    dados = ler_json(conteudo)
+    if not isinstance(dados, dict) or not isinstance(dados.get('paths'), dict):
+        return []
+    rotas = []
+    for caminho, metodos in dados['paths'].items():
+        if not isinstance(metodos, dict):
+            continue
+        for metodo in metodos:
+            if metodo.lower() in ('get', 'post', 'put', 'delete', 'patch'):
+                rotas.append((metodo.upper(), texto(caminho)[:120]))
+    return sorted(rotas, key=lambda r: (r[1], r[0]))
+
+
+def listar_rotas_da_api(base, chamar=None):
+    """A documentação pública da API (Swagger), sem login: quais endereços
+    existem. Serve para achar um que liste os envios sem precisar do hash —
+    o Digifarma só guarda o hash do último, e ele parou em 07/10. Da nuvem a
+    ANVISA bloqueia (403); do servidor da farmácia a API responde."""
+    chamar = chamar or chamar_api
+    for doc in API_SNGPC_DOC:
+        status, conteudo = chamar('GET', base + doc)
+        rotas = rotas_do_swagger(conteudo) if status == 200 else []
+        if rotas:
+            print('endereços da API (documentação pública em %s): %d' % (doc, len(rotas)))
+            for metodo, caminho in rotas[:60]:
+                print('  %-6s %s' % (metodo, caminho))
+            return rotas
+    print('documentação da API (Swagger) não respondeu (último HTTP %s).' % (status or 'sem resposta'))
+    return []
 
 
 # ------------------------------------------------------------
