@@ -127,6 +127,10 @@
         ".read": "auth != null && (root.child('farmacia/autorizados').child(auth.uid).val() === true || root.child('farmacia/agentes').child(auth.uid).val() === true)",
         ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
       },
+      "avisado": {
+        ".read": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true",
+        ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
+      },
       "notificacoes": {
         ".read": "auth != null && (root.child('farmacia/autorizados').child(auth.uid).val() === true || root.child('farmacia/agentes').child(auth.uid).val() === true)",
         "$id": {

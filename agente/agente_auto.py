@@ -3142,6 +3142,176 @@ def avisar_resumo_do_dia(db, dados, agora=None):
     return entregues
 
 
+# O que já virou aviso de aceite e de retorno fica no Firebase, em
+# farmacia/avisado, e não no avisos_enviados.json: a fila roda de minuto em
+# minuto, e sem a marca o mesmo aceite viraria ~1440 avisos por dia.
+#
+# A marca é gravada ANTES de mandar. Se gravar falha, não manda: perder um
+# aviso custa uma olhada no app; repetir a cada minuto faz desligar os avisos.
+#
+# Ramo sem marca nenhuma é a primeira volta depois da atualização: o que já
+# existe entra como avisado, calado. Sem isso, cada aceite antigo viraria um
+# aviso no dia em que esta versão chegasse ao servidor. O '_desde' mantém o
+# ramo de pé mesmo vazio — ramo vazio no Firebase é ramo que não existe.
+NO_AVISADO = 'farmacia/avisado'
+MAX_CORPO_AVISO = 180
+
+
+def _marcar_avisado(ref, valor, anterior):
+    """Grava a marca; devolve a função que a desfaz (aviso não entregue)."""
+    ref.set(valor)
+
+    def desfazer():
+        try:
+            if anterior is None:
+                ref.delete()
+            else:
+                ref.set(anterior)
+        except Exception as e:
+            registrar('Não consegui desfazer a marca de avisado: %s' % e)
+    return desfazer
+
+
+def _semear(db, ramo, chaves):
+    semente = dict(chaves)
+    semente['_desde'] = datetime.datetime.now().isoformat(timespec='seconds')
+    db.reference('%s/%s' % (NO_AVISADO, ramo)).set(semente)
+    registrar('Avisos de %s: %d já existente(s) marcado(s) como avisado(s), sem aviso.'
+              % (ramo, len(chaves)))
+
+
+def avisar_aceites(db):
+    """Avisa a marcação de aceite/recusa feita no app (farmacia/aceites).
+
+    O carimbo "em" muda a cada marcação: carimbo diferente do avisado é
+    marcação nova, inclusive a que troca aceito por recusado."""
+    aceites = db.reference('farmacia/aceites').get() or {}
+    avisado = db.reference('farmacia/avisado/aceites').get()
+    if avisado is None:
+        _semear(db, 'aceites', {d: texto(a.get('em')) for d, a in aceites.items()
+                                if isinstance(a, dict) and texto(a.get('em'))})
+        return 0
+    novos = [(d, a) for d, a in sorted(aceites.items())
+             if isinstance(a, dict) and texto(a.get('em'))
+             and texto(a.get('status')) in ('aceito', 'recusado')
+             and texto(a.get('em')) != texto(avisado.get(d))]
+    if not novos:
+        return 0
+    tokens = tokens_de_aviso(db)
+    if not tokens:      # ninguém ligou os avisos: espera, como a venda sem receita
+        return 0
+    entregues = 0
+    for data, a in novos:
+        status = texto(a.get('status'))
+        partes = data.split('-')
+        corpo = 'Envio de %s marcado como %s por %s' % (
+            '/'.join(reversed(partes)) if len(partes) == 3 else data,
+            status.upper(), texto(a.get('por')) or '(sem nome)')
+        erro = ' '.join(mascarar_retorno(texto(a.get('erro'))).split())
+        if status == 'recusado' and erro:
+            corpo += ' — ' + erro
+        if len(corpo) > MAX_CORPO_AVISO:
+            corpo = corpo[:MAX_CORPO_AVISO - 1] + '…'
+        desfazer = _marcar_avisado(db.reference('farmacia/avisado/aceites/%s' % data),
+                                   texto(a.get('em')), avisado.get(data))
+        try:
+            n = enviar_aviso(db, 'Envio ' + status, corpo, tokens)
+        except Exception:
+            desfazer()
+            raise
+        if n:
+            entregues += n
+            registrar('Aviso: envio de %s marcado como %s.' % (data, status))
+        else:
+            desfazer()
+    return entregues
+
+
+def campos_do_retorno(texto_arquivo):
+    """{RÓTULO: valor} do arquivo de retorno, rótulo sem acento.
+
+    Formato visto: uma linha por campo ("HASH: ...", "MSG DE RETORNO: ...").
+    Linha que não é rótulo em maiúsculas continua o campo de cima — a
+    mensagem da ANVISA pode ocupar mais de uma linha."""
+    campos, atual = {}, None
+    for linha in str(texto_arquivo or '').splitlines():
+        m = re.match(r'^\s*([A-ZÀ-Ú][A-ZÀ-Ú ]*?)\s*:\s*(.*)$', linha)
+        if m:
+            atual = normalizar_texto(m.group(1))
+            campos[atual] = m.group(2).strip()
+        elif atual and linha.strip() and not re.match(r'^-+$', linha.strip()):
+            campos[atual] = (campos[atual] + ' ' + linha.strip()).strip()
+    return campos
+
+
+def retorno_de_verdade(item):
+    """(identidade, campos) do arquivo que traz resposta da ANVISA; None se
+    é o arquivo vazio de sempre.
+
+    De verdade = hash E mensagem preenchidos E data que não é 30/12/1899
+    (a data zero do Digifarma). A identidade é hash + data do CONTEÚDO, não
+    o nome do arquivo: "retorno_anvisa_2026_10_15_43.txt" apareceu como
+    "Resposta de 14/10" — o nome não diz de quando é a resposta, e o mesmo
+    conteúdo pode voltar com outro nome."""
+    campos = campos_do_retorno((item or {}).get('texto'))
+    hash_ = campos.get('HASH', '')
+    mensagem = campos.get('MSG DE RETORNO', '')
+    data = campos.get('DATA TRANSMISSAO') or campos.get('DATA VALIDACAO') or ''
+    if not (hash_ and mensagem and data) or data.startswith('30/12/1899'):
+        return None
+    identidade = '%s_%s' % (re.sub(r'[^0-9A-Za-z]', '', hash_)[:64], so_digitos(data))
+    return identidade, campos
+
+
+def avisar_retornos(db, retornos):
+    """Avisa o arquivo de retorno que traz resposta de verdade da ANVISA.
+
+    É raro — quase sempre o Digifarma grava o arquivo vazio —, mas é o único
+    alarme de recusa que não depende de alguém abrir o site da ANVISA."""
+    reais = {}
+    for item in retornos or []:
+        achado = retorno_de_verdade(item)
+        if achado:
+            reais.setdefault(achado[0], (achado[1], item))
+    avisado = db.reference('farmacia/avisado/retorno').get()
+    if avisado is None:
+        _semear(db, 'retorno', {i: True for i in reais})
+        return 0
+    novos = [i for i in sorted(reais) if i not in avisado]
+    if not novos:
+        return 0
+    tokens = tokens_de_aviso(db)
+    if not tokens:
+        return 0
+    entregues = 0
+    for identidade in novos:
+        campos, item = reais[identidade]
+        com_erro = bool(item.get('linhasDeErro')) or any(
+            p in normalizar_texto(campos['MSG DE RETORNO']) for p in PALAVRAS_DE_ERRO)
+        de, ate = campos.get('INICIO PERIODO', ''), campos.get('FIM DO PERIODO', '')
+        if de and ate and not de.startswith('30/12/1899'):
+            quando = 'Período %s a %s' % (de[:10], ate[:10])
+        else:
+            quando = 'Transmissão de %s' % (campos.get('DATA TRANSMISSAO') or campos.get('DATA VALIDACAO'))[:10]
+        corpo = '%s: %s' % (quando, campos['MSG DE RETORNO'])
+        if len(corpo) > MAX_CORPO_AVISO:
+            corpo = corpo[:MAX_CORPO_AVISO - 1] + '…'
+        desfazer = _marcar_avisado(db.reference('farmacia/avisado/retorno/%s' % identidade),
+                                   datetime.datetime.now().isoformat(timespec='seconds'), None)
+        try:
+            n = enviar_aviso(db, 'Resposta da ANVISA' + (' com erro' if com_erro else ''),
+                             corpo, tokens)
+        except Exception:
+            desfazer()
+            raise
+        if n:
+            entregues += n
+            registrar('Aviso: resposta da ANVISA (%s).' % quando)
+        else:
+            desfazer()
+    return entregues
+
+
 def publicar(db, dados):
     db.reference('farmacia/inventario').set(dados)
     try:
@@ -3659,6 +3829,13 @@ def publicar_vendas_recentes(config, db):
             avisar_vendas_sem_receita(db, sem_receita)
         except Exception as e:
             registrar('Não consegui avisar as vendas sem receita: %s' % e)
+    # pasta fora do ar (compartilhamento desmontado) dá lista vazia, e lista
+    # vazia na 1ª volta viraria semente vazia — e rajada quando a pasta voltar
+    if retorno_arquivos is not None and os.path.isdir((config or {}).get('pasta_xml') or ''):
+        try:
+            avisar_retornos(db, retorno_arquivos)
+        except Exception as e:
+            registrar('Não consegui avisar a resposta da ANVISA: %s' % e)
 
     if escritos:
         db.reference('farmacia/inventario/vendasRecentesEm').set(
@@ -6026,6 +6203,12 @@ def modo_fila(config):
         if erro_de_permissao(e):
             registrar(recado_de_permissao(config))
         registrar('Não consegui publicar as vendas recentes: %s' % e)
+
+    # o aceite é marcado no app, à mão: não depende do Digifarma estar de pé
+    try:
+        avisar_aceites(db)
+    except Exception as e:
+        registrar('Não consegui avisar os aceites: %s' % e)
 
     ref = db.reference('farmacia/comando')
     pedido = ref.get()

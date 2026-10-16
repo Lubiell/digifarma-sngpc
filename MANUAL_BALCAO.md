@@ -8,7 +8,8 @@ envio.
 
 0. **Uma vez só:** Servidor → **Ligar avisos neste celular** e depois
    **Mandar um aviso de teste**. O celular passa a avisar a venda sem
-   receita na hora, e de manhã manda o resumo do dia.
+   receita na hora, o envio marcado como aceito ou recusado na aba Aceites
+   (por quem marcou) e de manhã manda o resumo do dia.
 1. **Vendas → Com problema.** Toda venda listada ali vai ser recusada ou
    escriturada errada no próximo envio. Corrija no Digifarma **antes** do
    envio. Esta é a prioridade do dia.
