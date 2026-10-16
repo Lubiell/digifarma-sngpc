@@ -1194,6 +1194,68 @@ def principal():
         (ag.consultar, ag.executar, ag.conectar_firebird, ag.fechar,
          ag.modo_auto, ag.registrar_ajuste) = guardados
 
+    # ------------------------------------------------------------
+    # investigar um lote: Digifarma igual ao SNGPC e o app acusando
+    # ------------------------------------------------------------
+    ms = '1234567890123'
+
+    def dados_lote(vendas):
+        return {
+            'baseDaCorrecao': 'fila',
+            'envio': {'ULT_SAIDA_VENDA_NOTA_ID': 90},
+            'inventario': {'data': '2026-10-15', 'lotesJaNaAnvisa': [[ms, 'A1']]},
+            'pendentes': {'vendas': vendas},
+            'itens': [{'descricao': 'CLONAZEPAM 2MG', 'ms': ms, 'lote': 'A1',
+                       'saldoDigifarma': 10.0, 'saldoSngpc': 10.0,
+                       'movimentoDesdeEnvio': -2.0, 'esperadoSngpc': 8.0,
+                       'diferenca': 2.0, 'motivo': 'quantidade'}],
+        }
+
+    def explicar(dados, filtro):
+        balde = io.StringIO()
+        with contextlib.redirect_stdout(balde):
+            ag.explicar_lote(dados, filtro)
+        return balde.getvalue()
+
+    venda_a = {'id': 100, 'data': '2026-10-15', 'ms': ms, 'lote': 'a1', 'quantidade': 2}
+    venda_b = {'id': 101, 'data': '2026-10-15', 'ms': '999999999999', 'lote': 'B', 'quantidade': 1}
+    saida = explicar(dados_lote([venda_a, venda_b]), 'A1')
+    conferir('lote igual dos dois lados com a venda no começo da fila: aviso falso',
+             'aviso FALSO' in saida and 'nº 100' in saida and 'para 100' in saida, saida)
+
+    saida = explicar(dados_lote([dict(venda_b, id=99), venda_a]), ms + ' A1')
+    conferir('lote igual com a venda no meio da fila: erro compensado por acaso',
+             'compensado por acaso' in saida and 'aviso FALSO' not in saida, saida)
+
+    saida = explicar(dados_lote([venda_a]), 'ZZ9')
+    conferir('lote fora da lista do Saldo é dito, não inventado',
+             'não está na lista do Saldo' in saida, saida)
+    foto = dict(dados_lote([venda_a, venda_b]), baseDaCorrecao='foto')
+    saida = explicar(foto, ms + '|A1')
+    conferir('conta pela foto não manda acertar o ponteiro',
+             'aviso FALSO' not in saida and 'busca nos XML' in saida, saida)
+    entrada = {'id': 7, 'data': '2026-10-15', 'ms': ms, 'lote': 'A1', 'quantidade': 1}
+    mista = dados_lote([venda_a, venda_b])
+    mista['pendentes']['entradas'] = [entrada]
+    saida = explicar(mista, 'A1')
+    conferir('entrada do lote na fila: não afirma aviso falso pela sequência de vendas',
+             'aviso FALSO' not in saida, saida)
+    numerico = dados_lote([])
+    numerico['itens'][0]['lote'] = '000123456789'
+    conferir('lote só de dígitos vindo do app (MS|LOTE) é lote, não M.S.',
+             ag.lote_procurado(numerico['itens'][0], ms + '|123456789')
+             and ag.lote_procurado(numerico['itens'][0], '000123456789'), numerico['itens'][0])
+    conferir('lote com zeros à esquerda casa sem eles',
+             ag.lote_procurado({'ms': ms, 'lote': '00036467'}, '36467'))
+    saida = explicar(dict(dados_lote([]), itens=[]), 'A1')
+    conferir('Saldo vazio não vira "o lote bate"',
+             'apuração falhou' in saida and 'o lote bate' not in saida, saida)
+    conferir('o resumo de pendentes mantém os próprios rótulos',
+             ag.NOME_PENDENTE.get('saidas') == 'VENDAS')
+    conferir('M.S. errado com o lote certo não casa',
+             not ag.lote_procurado({'ms': ms, 'lote': 'A1'}, '1111111111111|A1')
+             and ag.lote_procurado({'ms': ms, 'lote': 'A1'}, 'a1'))
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0
