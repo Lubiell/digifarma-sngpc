@@ -497,6 +497,34 @@ if (exportado.hashesDoTexto && exportado.envioDaApiPelaData) {
   });
 }
 
+if (exportado.chaveDoPedido && exportado.envioDaApi) {
+  conferir('pedidos diferentes não passam por repetidos; o pior envio do dia é o que vale', () => {
+    const c = exportado.chaveDoPedido;
+    if (c({ acao: 'config', chave: 'permitir_ajuste_estoque', valor: true, pedidoEm: 1 })
+        === c({ acao: 'config', chave: 'permitir_ajuste_estoque', valor: false, pedidoEm: 2 }))
+      throw new Error('ligar e desligar viraram o mesmo pedido');
+    if (c({ acao: 'desmarcar_controlado', produtoId: 1 }) === c({ acao: 'desmarcar_controlado', produtoId: 2 }))
+      throw new Error('dois produtos viraram o mesmo pedido');
+    if (c({ acao: 'xml', texto: 'A', pedidoEm: 1, estado: 'pendente' }) !== c({ acao: 'xml', texto: 'A', pedidoEm: 9 }))
+      throw new Error('dois toques no mesmo botão deveriam ser o mesmo pedido');
+    try {
+      exportado.estado.inventario = { apiSngpc: { envios: [
+        { arquivo: '2026-10-20', transmissao: '2026-10-20T08:00:00', situacao: 'validado' },
+        { arquivo: '2026-10-20', transmissao: '2026-10-20T07:00:00', situacao: 'com_erro' }] } };
+      igual(exportado.envioDaApi('2026-10-20').situacao, 'com_erro', 'recusado no mesmo dia não vira aceito');
+    } finally {
+      exportado.estado.inventario = {};
+    }
+  });
+}
+
+if (exportado.comoLista) {
+  conferir('lista do Firebase com buraco vira lista', () => {
+    igual(JSON.stringify(exportado.comoLista({ 0: 'a', 2: 'b' })), '["a","b"]', 'objeto');
+    igual(JSON.stringify(exportado.comoLista(null)), '[]', 'nulo');
+  });
+}
+
 if (exportado.textoXmlRede) {
   conferir('servidor: mostra a situação do XML de cada computador, sem senha', () => {
     if (!exportado.textoXmlRede(undefined).includes('só o servidor')) throw new Error('vazio');

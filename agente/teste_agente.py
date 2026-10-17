@@ -1708,7 +1708,7 @@ def principal():
         ag.imprimir_conta_do_lote(movs)
     conferir('conta do lote: marca o período em que ficou negativo',
              '13/10/2026 a 13/10/2026' in balde_c.getvalue()
-             and 'ficou NEGATIVO aqui' in balde_c.getvalue()
+             and 'NEGATIVO aqui pelos XML lidos' in balde_c.getvalue()
              and balde_c.getvalue().count('NEGATIVO') == 1, balde_c.getvalue())
 
     # hashes colados do Relatório Status de Transmissão do site
