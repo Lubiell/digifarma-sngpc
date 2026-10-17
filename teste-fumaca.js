@@ -482,6 +482,15 @@ if (exportado.hashesDoTexto && exportado.envioDaApiPelaData) {
         periodosDeEnvio: { '2026-10-16': { de: '2026-10-15', ate: '2026-10-15' } },
         apiSngpc: { envios: [{ arquivo: '', de: '2026-10-15', ate: '2026-10-15', transmissao: '2026-10-17T08:00:00', situacao: 'validado' }] } };
       igual(JSON.stringify(exportado.datasDeEnvio()), '["2026-10-16"]', 'envio já casado pelo período não vira segunda linha');
+      if (typeof document !== 'undefined' && exportado.pintarRetornos && document.getElementById('lista-retornos')) {
+        exportado.estado.inventario = {
+          retornoArquivos: [{ arquivo: 'retorno_anvisa_2026_10_15_43.txt', em: '2026-10-14T15:54:00',
+            texto: 'HASH:\nMSG DE RETORNO:\nDATA: 30/12/1899', linhasDeErro: [] }],
+          apiSngpc: { envios: [{ arquivo: '', transmissao: '2026-10-14T16:26:00', situacao: 'com_erro' }] } };
+        exportado.pintarRetornos();
+        const t = document.getElementById('lista-retornos').textContent;
+        if (!t.includes('a API diz: RECUSADO')) throw new Error('retorno vazio não mostra a API: ' + t);
+      }
     } finally {
       exportado.estado.inventario = {};
     }
