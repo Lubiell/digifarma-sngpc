@@ -1801,6 +1801,15 @@ function pintarAceites() {
     sub.textContent = a.por ? `${estadoAtual === 'aceito' ? 'Aceite' : 'Recusa'} marcada por ${a.por} em ${dataHora(a.em)}`
       : (pelaApi ? 'Pela API da ANVISA, sem ninguém marcar' : 'Ainda não conferido no site da ANVISA');
     esquerda.appendChild(sub);
+    // marcacao a mao que discorda da ANVISA: a mao continua mandando, mas
+    // nao pode passar calada (17/10: envio de 14/10 marcado aceito, API recusado)
+    const daApiEstado = daApi && ESTADO_DA_API[daApi.situacao];
+    if (a.status && daApiEstado && daApiEstado !== a.status) {
+      const conflito = criar('p', 'motivo');
+      conflito.textContent = 'Atenção: marcado à mão como ' + a.status.toUpperCase()
+        + ', mas a ANVISA respondeu ' + daApiEstado.toUpperCase() + '. Confira no site e corrija a marcação.';
+      esquerda.appendChild(conflito);
+    }
     if (estadoAtual === 'recusado' && a.erro) {
       const erro = criar('p', 'motivo');
       erro.textContent = 'Erro da ANVISA: ' + a.erro;
