@@ -1474,7 +1474,34 @@ function pintarRelatorio() {
   $('relatorio-em').textContent = 'gerado em ' + dataHora(r.em)
     + (r.cortado ? ' · texto cortado por ser muito longo' : '');
   $('relatorio').textContent = r.texto;
+  const copiar = $('copiar-relatorio');
+  if (copiar) copiar.onclick = () => copiarTexto(r.texto);
   bloco.hidden = false;
+}
+
+/* No celular a caixa do relatorio corta o texto e rolar dentro dela para
+   selecionar e dificil: o botao copia tudo de uma vez para colar no chat. */
+function copiarTexto(t) {
+  const ok = () => avisar('Relatório copiado. É só colar onde quiser.');
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(t).then(ok).catch(() => copiarAntigo(t, ok));
+  } else {
+    copiarAntigo(t, ok);
+  }
+}
+
+function copiarAntigo(t, ok) {
+  const area = document.createElement('textarea');
+  area.value = t;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  let deu = false;
+  try { deu = document.execCommand('copy'); } catch (e) { deu = false; }
+  area.remove();
+  if (deu) ok(); else avisar('Não consegui copiar. Toque e segure no texto do relatório para selecionar.');
 }
 
 /* ============================================================

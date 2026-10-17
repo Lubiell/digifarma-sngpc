@@ -5681,7 +5681,7 @@ def modo_buscar_xml(config, alvo='', so_lote=False):
         print('-' * 78)
         print(rotulo)
         print('-' * 78)
-        exatos, outros = [], []
+        exatos, outros, conta = [], [], []
         for arquivo, de, ate, movimentos in lidos:
             for tipo, balde in movimentos.items():
                 for (ms, lote), reg in balde.items():
@@ -5691,6 +5691,7 @@ def modo_buscar_xml(config, alvo='', so_lote=False):
                         br(de), br(ate), tipo, numero(reg.get('quantidade')), ms, lote, arquivo)
                     if mesmo_ms and mesmo_lote:
                         exatos.append(linha)
+                        conta.append((de, ate, tipo, ms, numero(reg.get('quantidade'))))
                     elif p['ms'] and p['lote'] and mesmo_lote:
                         outros.append(linha + '  <- mesmo lote, OUTRO M.S.')
                     elif p['ms'] and p['lote'] and mesmo_ms and lote_parecido(lote, p['lote']):
@@ -5701,7 +5702,57 @@ def modo_buscar_xml(config, alvo='', so_lote=False):
             print('  não aparece em nenhum dos %d XML lidos' % len(lidos))
         for l in outros:
             print(l)
+        if p['lote'] and conta:
+            imprimir_conta_do_lote(conta)
     return True
+
+
+def conta_do_lote(movimentos):
+    """Saldo do lote período a período, como a ANVISA soma: entrada entra,
+    venda/perda/transferência sai. O mesmo período em dois XML (o arquivado e
+    o SNGPC.XML do último envio, ou um reenvio) conta uma vez só. Devolve
+    ([(de, ate, entra, sai, saldo)], quantos repetidos saíram)."""
+    vistos, unicos = set(), []
+    for de, ate, tipo, ms, qtd in movimentos:
+        chave = (de, ate, tipo, ms, qtd)
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        unicos.append((de, ate, tipo, qtd))
+    por_periodo = {}
+    for de, ate, tipo, qtd in unicos:
+        entra, sai = por_periodo.get((de, ate), (0, 0))
+        if tipo == 'entrada':
+            entra += qtd
+        else:
+            sai += qtd
+        por_periodo[(de, ate)] = (entra, sai)
+    linhas, saldo = [], 0
+    for (de, ate) in sorted(por_periodo):
+        entra, sai = por_periodo[(de, ate)]
+        saldo += entra - sai
+        linhas.append((de, ate, entra, sai, saldo))
+    return linhas, len(movimentos) - len(unicos)
+
+
+def imprimir_conta_do_lote(movimentos):
+    linhas, repetidos = conta_do_lote(movimentos)
+    print()
+    print('  CONTA DO LOTE PELOS XML (como a ANVISA soma: entrada entra, o resto sai)')
+    print('  começa em 0 no primeiro XML lido: estoque de antes dele, do inventário,')
+    print('  não entra. Período repetido em dois XML conta uma vez.%s' % (
+        ' (%d repetido(s) tirado(s))' % repetidos if repetidos else ''))
+    print('  %-25s %8s %8s %8s' % ('período', 'entrada', 'saída', 'saldo'))
+    avisado = False
+    for de, ate, entra, sai, saldo in linhas:
+        marca = ''
+        if saldo < 0 and not avisado:
+            marca = '  <- ficou NEGATIVO aqui: a ANVISA recusa a venda'
+            avisado = True
+        print('  %-25s %8g %8g %8g%s' % ('%s a %s' % (br(de), br(ate)), entra, sai, saldo, marca))
+    if linhas:
+        final = linhas[-1][4]
+        print('  saldo pelos XML no fim: %g' % final)
 
 
 def modo_retorno_anvisa(config):
