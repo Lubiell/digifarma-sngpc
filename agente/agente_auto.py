@@ -6311,7 +6311,10 @@ def listar_rotas_da_api(base, chamar=None):
 # etapa 2: consulta automática, de hora em hora, com cache no servidor
 # ------------------------------------------------------------
 ARQUIVO_CACHE_API = os.path.join(PASTA, 'api_sngpc_cache.json')
-API_CONSULTA_MINUTOS = 60
+# a sincronização roda de hora em hora: com o corte em 60 min, a volta
+# seguinte chegava 59 min e alguns segundos depois e pulava, e a consulta
+# virava de 2 em 2 horas (visto em 17/10: consultada 13:05, nada às 14:05)
+API_CONSULTA_MINUTOS = 50
 API_CONSULTAS_POR_VEZ = 25
 API_RECUO_HASH_HORAS = 24      # hash sem resposta válida espera um dia
 API_RECUO_LOGIN_HORAS = 6      # login recusado: senha errada repetida trava a conta

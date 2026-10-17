@@ -1633,7 +1633,11 @@ function pintarRetornos() {
   retornos.slice(0, 5).forEach((r, n) => {
     const temErro = (r.linhasDeErro || []).length > 0;
     const vazio = !temErro && retornoSemResposta(r.texto);
+    // o arquivo do Digifarma veio vazio, mas a API pode ter a resposta do
+    // envio daquele dia: e ela que vale na tarja
+    const daApi = vazio ? envioDaApiPelaData(String(r.em || '').slice(0, 10)) : null;
     const corpo = criar('div');
+    if (daApi) corpo.appendChild(linhaDaApi(daApi));
     if (vazio) {
       const nota = criar('p', 'motivo');
       nota.textContent = 'O Digifarma gravou este arquivo sem a resposta da ANVISA: hash e mensagem '
@@ -1655,8 +1659,11 @@ function pintarRetornos() {
       titulo: 'Resposta de ' + dataHora(r.em),
       meta: [r.arquivo],
       tarja: [temErro ? 'Tem erro — abra para ver'
-        : (vazio ? 'Vazio — sem resposta da ANVISA' : 'Sem erro aparente'), ''],
-      tarjaClasse: temErro ? 'falta' : (vazio ? 'sobra' : 'ok'),
+        : (daApi ? TARJA_DA_API[daApi.situacao] || 'Arquivo vazio — veja a resposta da API'
+          : (vazio ? 'Vazio — sem resposta da ANVISA' : 'Sem erro aparente')), ''],
+      tarjaClasse: temErro ? 'falta'
+        : (daApi ? ({ validado: 'ok', com_erro: 'falta' }[daApi.situacao] || 'sobra')
+          : (vazio ? 'sobra' : 'ok')),
       detalhe: corpo
     }));
   });
@@ -1696,6 +1703,11 @@ function envioDaApiPelaData(data) {
 }
 
 const ESTADO_DA_API = { validado: 'aceito', com_erro: 'recusado' };
+const TARJA_DA_API = {
+  validado: 'Arquivo vazio, mas a API diz: ACEITO',
+  com_erro: 'Arquivo vazio, mas a API diz: RECUSADO',
+  processando: 'Arquivo vazio; a ANVISA ainda não validou'
+};
 
 function linhaDaApi(e) {
   const p = criar('p', 'sublinha');
@@ -1949,5 +1961,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos };
 }

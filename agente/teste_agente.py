@@ -1742,6 +1742,22 @@ def principal():
              '1 validado(s) sem erro' in resumo and '1 RECUSADO(S) com erro' in resumo
              and '1 ainda sem validação' in resumo and H_OK not in resumo, resumo)
     conferir('site: texto sem hash não vira consulta', ag.receber_hashes_do_site('CNPJ 44744950000104') == [])
+    # a sincronização de hora em hora não pode pular a consulta por segundos
+    cache_h = ag.ler_cache_api()
+    cache_h['_em'] = '2026-10-17T13:05:01'
+    ag.gravar_cache_api(cache_h)
+    chamadas_h = []
+    def chamar_conta(metodo, url, corpo=None, token=None, timeout=30):
+        chamadas_h.append(metodo)
+        return chamar_site(metodo, url, corpo, token, timeout)
+    ag.consultar = tabela_site
+    try:
+        ag.atualizar_api_sngpc(None, dict(ag.CONFIG_PADRAO, pasta_xml=pasta),
+                               chamar=chamar_conta, agora=datetime.datetime(2026, 10, 17, 14, 5, 0))
+    finally:
+        ag.consultar = guardado
+    conferir('API: a volta da hora seguinte consulta, mesmo chegando segundos antes dos 60 min',
+             'GET' in chamadas_h, chamadas_h)
 
     swagger = json.dumps({'paths': {
         '/v1/Authentication/GetToken': {'post': {}},
