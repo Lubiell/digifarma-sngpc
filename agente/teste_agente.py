@@ -1769,6 +1769,74 @@ def principal():
              and '1 movimento(s) em dias sem XML' in saida_f and 'saldo pelo Digifarma: 13' in saida_f
              and 'nao-pode-sair' not in saida_f and 'x@y' not in saida_f, saida_f)
 
+    # log do agente: o dia do envio, se ele rodou e se arquivou o XML
+    pasta_log = tempfile.mkdtemp()
+    log_t = os.path.join(pasta_log, 'agente.log')
+    with open(log_t, 'w', encoding='utf-8') as f:
+        f.write('[13/10/2026 23:55:00] Fila vazia.\n'
+                '[14/10/2026 00:00:00] Fila vazia.\n'
+                '[14/10/2026 00:05:00] Agente 441506 pronto. fulano@teste.invalid senha=segredo 00000000191\n'
+                '[14/10/2026 01:05:00] Agente 441506 pronto. fulano@teste.invalid senha=segredo 00000000191\n'
+                '[14/10/2026 01:10:00] CNPJ 44.744.950/0001-04 hash 92606BDDC24BDD28D3E264BAAA0B2455 M.S. 1052500450038\n'
+                'Traceback (most recent call last):\n'
+                '[16/10/2026 01:00:00] Fila vazia.\n')
+    balde_log = io.StringIO()
+    with contextlib.redirect_stdout(balde_log):
+        ag.modo_log_agente({}, '14/10 15/10/2026 2026-10-16', caminho=log_t,
+                           agora=datetime.datetime(2026, 10, 17, 10, 0))
+    saida_log = balde_log.getvalue()
+    conferir('log do agente: dia sem linha diz que o agente não rodou, e as horas paradas',
+             '15/10/2026  NENHUMA linha' in saida_log and 'SEM NADA: 02h às 23h' in saida_log
+             and '13/10/2026' not in saida_log, saida_log)
+    conferir('log do agente: tira as "Fila vazia." e junta a mesma mensagem do dia',
+             saida_log.count('Agente 441506 pronto') == 1 and '(+1 vez(es) no dia)' in saida_log
+             and 'Traceback' in saida_log and '[14/10/2026 00:00:00]' not in saida_log, saida_log)
+    conferir('log do agente: não deixa sair e-mail, senha, CPF, CNPJ nem hash',
+             all(x not in saida_log for x in ('fulano@', 'segredo', '00000000191', '44.744.950',
+                                              '92606BDDC24BDD28D3E264BAAA0B2455'))
+             and '1052500450038' in saida_log, saida_log)
+    conferir('log do agente: máscara pega senha entre aspas, token solto e hash colado em _',
+             ag.mascarar_log('{"senha": "abc123"} token 12345 ?auth=XYZ sngpc_92606BDDC24BDD28D3E264BAAA0B2455.xml')
+             == '{"senha": "[oculto]"} token [oculto] ?auth=[oculto] sngpc_[hash].xml')
+    with open(log_t, 'w', encoding='utf-8') as f:
+        f.write('[14/10/2026 08:00:00] XML de envio arquivado: sngpc_2026-10-14.xml\n')
+        for i in range(300):
+            f.write('[14/10/2026 09:%02d:00] Publicado: %d itens\n' % (i % 60, i))
+        for causa in ('KeyError: a', 'KeyError: b'):
+            f.write('[15/10/2026 09:00:00] Falha na sincronização:\nTraceback (most recent call last):\n'
+                    '  File "x", line 1\n%s\n' % causa)
+        f.write('[17/10/2026 10:01:00] Fila vazia.\n' + 'x' * 500 + '\n')
+    balde_log = io.StringIO()
+    with contextlib.redirect_stdout(balde_log):
+        ag.modo_log_agente({}, '14/10 15/10 17/10', caminho=log_t,
+                           agora=datetime.datetime(2026, 10, 17, 10, 5))
+    saida_log = balde_log.getvalue()
+    conferir('log do agente: o limite é por dia e a linha de arquivado não some',
+             'sngpc_2026-10-14.xml' in saida_log and 'Publicado: 299 itens' in saida_log
+             and 'Publicado: 0 itens' not in saida_log and 'ficaram de fora' in saida_log, saida_log)
+    conferir('log do agente: dois tracebacks com causas diferentes saem inteiros',
+             'KeyError: a' in saida_log and 'KeyError: b' in saida_log, saida_log)
+    conferir('log do agente: a hora corrente, sem tempo de passagem, não conta como parada',
+             'SEM NADA: 00h às 09h' in saida_log and len(saida_log) < 40000, saida_log[-300:])
+    conferir('log do agente: sem data são os últimos 7 dias',
+             len(ag.datas_do_alvo('', datetime.date(2026, 10, 17))) == 7
+             and datetime.date(2026, 10, 11) in ag.datas_do_alvo('', datetime.date(2026, 10, 17)))
+    conferir('log do agente: é relatório que o app pode pedir', 'log_agente' in ag.RELATORIOS)
+    origem_log = os.path.join(pasta_log, 'digifarma')
+    os.makedirs(origem_log)
+    with open(os.path.join(origem_log, 'SNGPC.XML'), 'w') as f:
+        f.write('<x/>')
+    contados, guardado_reg = [], ag.registrar
+    try:
+        ag.registrar = contados.append
+        ag.arquivar_de(origem_log, os.path.join(pasta_log, 'enviados'))
+        ag.arquivar_de(origem_log, os.path.join(pasta_log, 'enviados'))
+    finally:
+        ag.registrar = guardado_reg
+    conferir('XML novo arquivado fica no log, uma vez só',
+             len([c for c in contados if 'XML de envio arquivado: sngpc_' in c]) == 1, contados)
+    shutil.rmtree(pasta_log, ignore_errors=True)
+
     # hashes colados do Relatório Status de Transmissão do site
     H_OK, H_ERRO, H_FILA = 'B06314E6E830A47EF0D8AB26252DB38C', '92606BDDC24BDD28D3E264BAAA0B2455', 'F191FB8D9B9B4415F7AE3891348B1D48'
     colado = ('RELATÓRIO STATUS DE TRANSMISSÃO Empresa: X CNPJ: 44.744.950/0001-04\n'

@@ -818,6 +818,7 @@ def arquivar_de(pasta, destino_pasta, sufixo=''):
     data = datetime.datetime.fromtimestamp(hora).strftime('%Y-%m-%d')
     os.makedirs(destino_pasta, exist_ok=True)
     destino = os.path.join(destino_pasta, 'sngpc_%s%s.xml' % (data, sufixo))
+    novo = not os.path.exists(destino) or hora > os.path.getmtime(destino)
 
     if origem.lower().endswith('.zip'):
         import zipfile
@@ -829,9 +830,14 @@ def arquivar_de(pasta, destino_pasta, sufixo=''):
                 shutil.copyfileobj(f, saida)
         # a hora do envio, não a da cópia: é por ela que se acha o mais novo
         os.utime(destino, (hora, hora))
-    elif not os.path.exists(destino) or os.path.getmtime(origem) > os.path.getmtime(destino):
+    elif novo:
         shutil.copy2(origem, destino)
 
+    if novo:
+        # sem esta linha, o log não diz se o envio do dia chegou ao servidor
+        registrar('XML de envio arquivado: %s (gerado em %s).' % (
+            os.path.basename(destino),
+            datetime.datetime.fromtimestamp(hora).strftime('%d/%m/%Y %H:%M')))
     return destino
 
 
@@ -7338,6 +7344,166 @@ def modo_config(par):
     return True
 
 
+LOG_AGENTE_DIAS = 7
+LOG_AGENTE_POR_DIA = 80       # por dia, não no total: o dia do envio não some
+LOG_AGENTE_LARGURA = 200      # 7 dias x 80 x 200 fica abaixo de LIMITE_TEXTO
+CARIMBO_DO_LOG = re.compile(r'^\[(\d{2})/(\d{2})/(\d{4}) (\d{2}):\d{2}:\d{2}\] ?(.*)$')
+LINHA_QUE_IMPORTA = re.compile(r'(?i)arquivad|erro|falh|traceback|exce|não consegui|nao consegui')
+
+
+def mascarar_log(linha):
+    """O log não deveria ter dado pessoal nem segredo; se algum escapou,
+    não sai do servidor por aqui. Rede de segurança: tapa o que tem cara de
+    segredo, sem garantir que pega tudo."""
+    linha = re.sub(r'[\w.+-]+@[\w-]+\.[\w.-]+', '[e-mail]', linha)
+    linha = re.sub(r'(?i)\b(senha|password|passwd|token|secret|auth|bearer|private_key)\b'
+                   r'(["\']?\s*[=:]?\s*["\']?)([^\s"\',;&}]+)', r'\1\2[oculto]', linha)
+    linha = re.sub(r'(?<![0-9A-Fa-f])[0-9A-Fa-f]{32,}(?![0-9A-Fa-f])', '[hash]', linha)
+    linha = re.sub(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|(?<!\d)\d{14}(?!\d)', '[CNPJ]', linha)
+    linha = re.sub(r'\d{3}\.\d{3}\.\d{3}-\d{2}|(?<!\d)\d{11}(?!\d)', '[CPF]', linha)
+    return linha
+
+
+def datas_do_alvo(alvo, hoje=None):
+    """'14/10', '14/10/2026', '2026-10-14' ou vários separados por espaço ou
+    vírgula. Sem data: os últimos LOG_AGENTE_DIAS dias."""
+    hoje = hoje or datetime.date.today()
+    datas = set()
+    for d, m, a in re.findall(r'(\d{1,2})/(\d{1,2})(?:/(\d{4}))?', alvo or ''):
+        try:
+            datas.add(datetime.date(int(a or hoje.year), int(m), int(d)))
+        except ValueError:
+            pass
+    for a, m, d in re.findall(r'(\d{4})-(\d{2})-(\d{2})', alvo or ''):
+        try:
+            datas.add(datetime.date(int(a), int(m), int(d)))
+        except ValueError:
+            pass
+    if not datas:
+        datas = {hoje - datetime.timedelta(days=i) for i in range(LOG_AGENTE_DIAS)}
+    return datas
+
+
+def faixas_de_horas(horas):
+    """[3, 4, 5, 9] -> '03h às 05h, 09h'"""
+    faixas, inicio, fim = [], None, None
+    for h in sorted(horas):
+        if inicio is not None and h == fim + 1:
+            fim = h
+            continue
+        if inicio is not None:
+            faixas.append((inicio, fim))
+        inicio = fim = h
+    if inicio is not None:
+        faixas.append((inicio, fim))
+    return ', '.join('%02dh' % a if a == b else '%02dh às %02dh' % (a, b) for a, b in faixas)
+
+
+def modo_log_agente(config, alvo='', caminho=None, agora=None):
+    """O agente.log dos dias pedidos: por dia, as horas em que o agente não
+    deixou nenhuma linha (não rodou), e tudo que ele contou fora as
+    "Fila vazia." de 5 em 5 minutos. Responde "o agente estava rodando no
+    dia do envio? arquivou o XML?" sem ir ao servidor."""
+    caminho = caminho or ARQUIVO_LOG
+    agora = agora or datetime.datetime.now()
+    datas = {d for d in datas_do_alvo(alvo, agora.date()) if d <= agora.date()}
+    if not os.path.exists(caminho):
+        print('Não achei o log do agente em %s.' % caminho)
+        return False
+
+    por_hora = {d: {} for d in datas}
+    fila_vazia = {d: 0 for d in datas}
+    # um bloco é a linha com carimbo mais as sem carimbo que vêm depois
+    # (um traceback). A mesma mensagem no mesmo dia aparece uma vez, com
+    # quantas vezes e a hora da primeira.
+    blocos, vezes = {d: [] for d in datas}, {}
+    atual, dia = None, None
+
+    def fechar_bloco(b):
+        if not b:
+            return
+        chave = (b[0], '\n'.join(b[2]))
+        if chave in vezes:
+            vezes[chave][1] += 1
+        else:
+            vezes[chave] = [b[1], 1]
+            blocos[b[0]].append(chave)
+
+    with open(caminho, encoding='utf-8', errors='replace') as f:
+        for bruta in f:
+            bruta = bruta.rstrip('\r\n')
+            m = CARIMBO_DO_LOG.match(bruta)
+            if not m:
+                if atual and bruta.strip():
+                    atual[2].append(bruta)
+                    atual[1].append(bruta)
+                continue
+            fechar_bloco(atual)
+            atual = None
+            try:
+                dia = datetime.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            except ValueError:
+                continue
+            if dia not in datas:
+                continue
+            hora = int(m.group(4))
+            por_hora[dia][hora] = por_hora[dia].get(hora, 0) + 1
+            if m.group(5).strip() == 'Fila vazia.':
+                fila_vazia[dia] += 1
+                continue
+            atual = (dia, [bruta], [m.group(5).strip()])
+    fechar_bloco(atual)
+
+    print('LOG DO AGENTE — %s' % ', '.join(br(d.isoformat()) for d in sorted(datas)))
+    print('=' * 78)
+    print('Arquivo: %s' % caminho)
+    print()
+    print('POR DIA (o agente passa de 5 em 5 minutos: hora sem linha = não rodou)')
+    for d in sorted(datas):
+        horas = por_hora[d]
+        if not horas:
+            print('  %s  NENHUMA linha: o agente não rodou neste dia.' % br(d.isoformat()))
+            continue
+        # a hora corrente só conta depois de dar tempo de uma passagem
+        ultima = 23 if d < agora.date() else (agora.hour if agora.minute >= 10 else agora.hour - 1)
+        sem = [h for h in range(0, ultima + 1) if h not in horas]
+        print('  %s  %d linha(s), %d "Fila vazia."%s' % (
+            br(d.isoformat()), sum(horas.values()), fila_vazia[d],
+            ('  SEM NADA: %s' % faixas_de_horas(sem)) if sem else '  todas as horas'))
+
+    print()
+    print('O QUE ELE CONTOU (sem as "Fila vazia."; repetida no dia, uma vez;')
+    print('por dia, as de erro/arquivado e as %d mais recentes)' % LOG_AGENTE_POR_DIA)
+    for d in sorted(datas):
+        chaves = blocos[d]
+        if not chaves:
+            continue
+        importa = [c for c in chaves if LINHA_QUE_IMPORTA.search(c[1])]
+        ja = set(importa)
+        resto = [c for c in chaves if c not in ja]
+        sobra = max(0, LOG_AGENTE_POR_DIA - len(importa))
+        mostrar = set(importa[-LOG_AGENTE_POR_DIA:]) | set(resto[-sobra:] if sobra else [])
+        fora = len(chaves) - len(mostrar)
+        print()
+        print('  %s%s' % (br(d.isoformat()), (' (%d mensagem(ns) mais antigas ficaram de fora)' % fora) if fora else ''))
+        for c in chaves:
+            if c not in mostrar:
+                continue
+            linhas, n = vezes[c]
+            for idx, l in enumerate(linhas[:12]):
+                l = mascarar_log(l)
+                if len(l) > LOG_AGENTE_LARGURA:
+                    l = l[:LOG_AGENTE_LARGURA] + '…'
+                if idx == 0 and n > 1:
+                    l += '  (+%d vez(es) no dia)' % (n - 1)
+                print('  ' + l)
+            if len(linhas) > 12:
+                print('    … mais %d linha(s)' % (len(linhas) - 12))
+    if not any(blocos.values()):
+        print('  nada.')
+    return True
+
+
 def texto_do_modo(funcao, *argumentos):
     """Roda um dos modos de linha de comando e devolve o que ele imprimiria.
 
@@ -7369,6 +7535,7 @@ RELATORIOS = {
     'retorno_anvisa': lambda config, alvo: texto_do_modo(modo_retorno_anvisa, config),
     'log_anvisa': lambda config, alvo: texto_do_modo(modo_log_anvisa, config, alvo),
     'xml': lambda config, alvo: texto_do_modo(modo_buscar_xml, config, alvo),
+    'log_agente': lambda config, alvo: texto_do_modo(modo_log_agente, config, alvo),
 }
 
 LIMITE_TEXTO = 120000    # o relatório inteiro cabe; o corte é rede de segurança

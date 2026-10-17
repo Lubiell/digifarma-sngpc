@@ -72,6 +72,14 @@ servidor de longe, ainda não executado no Windows.
   início, saldo linha a linha, se passou do ponteiro) e compara cada período
   de XML guardado com o Digifarma, apontando onde diferem e o que caiu em
   dias sem XML. Para achar a diferença de 2 do BQ37M006 antes de 13/10.
+  Resultado: o lote fecha em 0 no Digifarma (36 entram, 18 perda, 18
+  vendas); a "diferença" era XML faltando. O 13/10 foi aceito no envio de
+  15/10 (período 13–14/10). Lote regularizado.
+- 17/10: relatório "Log do agente (7 dias)" na aba Servidor: por dia, as
+  horas sem nenhuma linha (agente parado) e as mensagens, com e-mail, senha,
+  token, hash, CPF e CNPJ mascarados. O agente passa a registrar "XML de
+  envio arquivado" — para saber por que os XML de 14 e 15/10 não estão no
+  servidor.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade
