@@ -5747,7 +5747,7 @@ def imprimir_conta_do_lote(movimentos):
     for de, ate, entra, sai, saldo in linhas:
         marca = ''
         if saldo < 0 and not avisado:
-            marca = '  <- ficou NEGATIVO aqui: a ANVISA recusa a venda'
+            marca = '  <- NEGATIVO aqui pelos XML lidos (se a entrada for anterior ao 1º XML, não é erro)'
             avisado = True
         print('  %-25s %8g %8g %8g%s' % ('%s a %s' % (br(de), br(ate)), entra, sai, saldo, marca))
     if linhas:

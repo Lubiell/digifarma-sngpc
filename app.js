@@ -96,6 +96,12 @@ async function sha256(texto) {
   return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/* O Firebase devolve lista com buraco como objeto {0:..., 2:...}. */
+function comoLista(v) {
+  if (!v) return [];
+  return (Array.isArray(v) ? v : Object.values(v)).filter(Boolean);
+}
+
 function lista(no) {
   const v = estado.inventario?.[no];
   if (!v) return [];
@@ -389,10 +395,18 @@ function desligarEscutas() {
    ainda nao atendeu apagava o primeiro sem aviso: foi assim que a
    investigacao de um lote sumiu, trocada por um "Sincronizar vendas" antes
    da passagem do agente. Devolve false quando a pessoa desiste. */
+function chaveDoPedido(p) {
+  const fora = new Set(['pedidoEm', 'pedidoPor', 'estado', 'senha', 'mensagem', 'concluidoEm']);
+  return JSON.stringify(Object.keys(p || {}).filter((k) => !fora.has(k)).sort()
+    .map((k) => [k, p[k] === undefined || p[k] === null ? '' : p[k]]));
+}
+
 async function gravarPedido(pedido) {
   const c = estado.comando;
-  // o mesmo pedido de novo (dois toques no botao) nao apaga nada
-  const repetido = c && c.acao === pedido.acao && (c.texto || '') === (pedido.texto || '');
+  // o mesmo pedido de novo (dois toques no botao) nao apaga nada. "O mesmo"
+  // e tudo menos quando e quem: so acao+texto tratava ligar e desligar um
+  // config, ou dois produtos diferentes, como repetidos, e apagava calado
+  const repetido = c && chaveDoPedido(c) === chaveDoPedido(pedido);
   if (c && c.estado === 'pendente' && !repetido && !(await confirmar('Já há um pedido na fila',
     'O agente ainda não atendeu “' + c.acao + '”, pedido em ' + dataHora(c.pedidoEm)
     + '. Mandar este agora apaga aquele.', 'Substituir'))) return false;
@@ -447,6 +461,9 @@ function irPara(vista) {
   document.querySelectorAll('.nav-item').forEach((x) => x.classList.toggle('nav-ativo', x.dataset.vista === vista));
   document.querySelectorAll('.vista').forEach((v) => { v.hidden = v.id !== 'v-' + vista; });
   pintar();
+  // aba nova comeca do topo: "Investigar este lote" no meio do Saldo deixava
+  // a pessoa no meio da aba Servidor, sem ver a resposta
+  window.scrollTo(0, 0);
 }
 document.querySelectorAll('.nav-item').forEach((b) => { b.onclick = () => irPara(b.dataset.vista); });
 document.querySelectorAll('[data-ir]').forEach((b) => { b.onclick = () => irPara(b.dataset.ir); });
@@ -488,7 +505,6 @@ function pintar() {
   pintarEnvio();
   pintarEvolucao();
   pintarPendentes();
-  avisarSobreAnvisa();
   if (estado.vista === 'saldo') pintarSaldo();
   if (estado.vista === 'xml') pintarXml();
   if (estado.vista === 'vendas') pintarVendas();
@@ -565,15 +581,13 @@ function pintarPendentes() {
   });
 }
 
-function avisarSobreAnvisa() {
+function textoSobreAnvisa() {
   const a = estado.inventario?.anvisa;
-  const barra = $('barra-estado');
-  if (!a || !a.precisaLogin) return;
+  if (!a || !a.precisaLogin) return '';
   const dias = a.diasSemSincronizar;
-  barra.textContent = dias === null || dias === undefined
+  return dias === null || dias === undefined
     ? 'O inventário da ANVISA nunca foi baixado. Abra o Anvisa.exe no servidor e faça o login no site do SNGPC.'
     : `O inventário da ANVISA está com ${dias} dia(s). Abra o Anvisa.exe no servidor e faça o login — ele para na tela de login e não anda sozinho.`;
-  barra.hidden = false;
 }
 
 function pintarEnvio() {
@@ -1110,20 +1124,35 @@ function minutosDesde(iso) {
    Em 08/10 a tela mostrava Saldo 5, XML 8 e Vendas 27 que eram de
    10/09 - quase um mes de vendas e entradas que o app nao sabia que
    existiam, sem nada na tela dizendo isso. */
-function avisarDadoVelho() {
-  const barra = $('barra-estado');
+function textoDadoVelho() {
   const quando = estado.inventario?.atualizadoEm;
   const min = minutosDesde(quando);
-  if (min === null || min < HORAS_ATE_VELHO * 60) return false;
-
+  if (min === null || min < HORAS_ATE_VELHO * 60) return '';
   const dias = Math.floor(min / 1440);
   const idade = dias >= 1 ? dias + ' dia(s)' : Math.floor(min / 60) + ' hora(s)';
-  barra.textContent = 'ATENÇÃO: estes números são de ' + dataHora(quando)
+  return 'ATENÇÃO: estes números são de ' + dataHora(quando)
     + ' — ' + idade + ' atrás. O agente não publicou desde então, então as '
     + 'vendas e entradas desse período NÃO estão aqui. Não use para conferir '
     + 'prateleira nem para decidir transmissão.';
-  barra.hidden = false;
-  return true;
+}
+
+/* A barra de estado mostra o dado velho E o inventario da ANVISA velho,
+   juntos, e some sozinha quando os dois passam. So mexe no que ela mesma
+   pos: aviso de permissao e de sem internet continuam onde estao. */
+function avisarDadoVelho() {
+  const barra = $('barra-estado');
+  const partes = [textoDadoVelho(), textoSobreAnvisa()].filter(Boolean);
+  if (partes.length) {
+    barra.textContent = partes.join(' ');
+    barra.dataset.origem = 'dados';
+    barra.hidden = false;
+    return true;
+  }
+  if (barra.dataset.origem === 'dados') {
+    barra.hidden = true;
+    barra.dataset.origem = '';
+  }
+  return false;
 }
 
 function pintarAgenteParado() {
@@ -1470,7 +1499,14 @@ function pintarRelatorio() {
   if (!(acao && estado.relatorios?.[acao]?.texto)) { acao = relatorioMaisNovo(); anterior = true; }
   const r = acao && estado.relatorios?.[acao];
   if (!r || !r.texto) { bloco.hidden = true; return; }
-  $('relatorio-titulo').textContent = (anterior ? 'Último relatório recebido — ' : 'Resposta do servidor — ') + acao;
+  // pedido novo ainda na fila e o relatorio guardado e de antes dele: e o
+  // antigo, nao a resposta (Investigar outro lote mostrava o lote anterior)
+  const c = estado.comando;
+  const esperando = c && c.estado === 'pendente' && c.acao === acao
+    && String(r.em || '') < String(c.pedidoEm || '');
+  if (esperando) anterior = true;
+  $('relatorio-titulo').textContent = (esperando ? 'Relatório ANTERIOR (o agente ainda vai responder o pedido de agora) — '
+    : (anterior ? 'Último relatório recebido — ' : 'Resposta do servidor — ')) + acao;
   $('relatorio-em').textContent = 'gerado em ' + dataHora(r.em)
     + (r.cortado ? ' · texto cortado por ser muito longo' : '');
   $('relatorio').textContent = r.texto;
@@ -1624,7 +1660,7 @@ function datasDeEnvio() {
   // (so se nenhuma linha que ja existe casou com ele pelo arquivo ou periodo,
   // senao o mesmo envio apareceria duas vezes)
   const jaCasados = new Set([...datas].map((d) => envioDaApi(d)).filter(Boolean));
-  (estado.inventario?.apiSngpc?.envios || []).forEach((e) => {
+  comoLista(estado.inventario?.apiSngpc?.envios).forEach((e) => {
     if (e.transmissao && !jaCasados.has(e)) datas.add(String(e.transmissao).slice(0, 10));
   });
   return [...datas].filter(Boolean).sort().reverse();
@@ -1662,10 +1698,11 @@ function pintarRetornos() {
     const vazio = !temErro && retornoSemResposta(r.texto);
     // o arquivo do Digifarma veio vazio, mas a API pode ter a resposta do
     // envio daquele dia: e ela que vale na tarja
-    const daApi = vazio ? envioDaApiPelaData(String(r.em || '').slice(0, 10)) : null;
+    const diaDoRetorno = String(r.em || '').slice(0, 10);
+    const daApi = vazio ? (envioDaApi(diaDoRetorno) || envioDaApiPelaData(diaDoRetorno)) : null;
     const corpo = criar('div');
     if (daApi) corpo.appendChild(linhaDaApi(daApi));
-    if (vazio) {
+    if (vazio && !daApi) {
       const nota = criar('p', 'motivo');
       nota.textContent = 'O Digifarma gravou este arquivo sem a resposta da ANVISA: hash e mensagem '
         + 'em branco, e 30/12/1899 é a data zero do Digifarma (data vazia). Não quer dizer que o envio '
@@ -1707,9 +1744,11 @@ const SITUACAO_API = {
 };
 
 function envioDaApi(data) {
-  const envios = estado.inventario?.apiSngpc?.envios || [];
+  const envios = comoLista(estado.inventario?.apiSngpc?.envios);
   const periodo = estado.inventario?.periodosDeEnvio?.[data];
-  const doArquivo = envios.find((e) => e.arquivo === data);
+  // dois envios do mesmo arquivo/dia (reenvio, ou servidor e caixa): vale o
+  // pior, para um recusado nunca aparecer como aceito
+  const doArquivo = piorEnvio(envios.filter((e) => e.arquivo === data));
   if (doArquivo || !periodo) return doArquivo || null;
   // pelo periodo, so entre os que nao tem arquivo, e o mais recente: num
   // reenvio do mesmo periodo (erro, depois ok) vale a ultima resposta
@@ -1723,10 +1762,18 @@ function envioDaApi(data) {
 /* Sem arquivo e sem periodo: a data do envio e a data em que a ANVISA
    recebeu. E o caso dos envios colados do Relatorio Status de Transmissao. */
 function envioDaApiPelaData(data) {
-  const envios = (estado.inventario?.apiSngpc?.envios || [])
-    .filter((e) => !e.arquivo && String(e.transmissao || '').slice(0, 10) === data);
-  envios.sort((x, y) => String(y.transmissao || '').localeCompare(String(x.transmissao || '')));
-  return envios[0] || null;
+  // linha com periodo conhecido casa pelo periodo (envioDaApi), nunca por aqui:
+  // outro envio recebido no mesmo dia pode ser de outro periodo
+  if (estado.inventario?.periodosDeEnvio?.[data]) return null;
+  return piorEnvio(comoLista(estado.inventario?.apiSngpc?.envios)
+    .filter((e) => !e.arquivo && String(e.transmissao || '').slice(0, 10) === data));
+}
+
+const GRAVIDADE_API = { com_erro: 3, processando: 2, validado: 1 };
+function piorEnvio(lista) {
+  if (!lista.length) return null;
+  return [...lista].sort((x, y) => (GRAVIDADE_API[y.situacao] || 0) - (GRAVIDADE_API[x.situacao] || 0)
+    || String(y.transmissao || '').localeCompare(String(x.transmissao || '')))[0];
 }
 
 const ESTADO_DA_API = { validado: 'aceito', com_erro: 'recusado' };
@@ -1763,8 +1810,9 @@ function pintarResumoApi() {
    um na API oficial e os Aceites se preenchem. Os hashes passam pelo pedido
    e o agente os apaga dali na primeira passagem. */
 function hashesDoTexto(t) {
-  return [...new Set((String(t || '').match(/(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/gi) || [])
-    .map((h) => h.toUpperCase()))];
+  // sem lookbehind: Safari anterior ao 16.4 nao carrega o app.js inteiro
+  return [...new Set((String(t || '').match(/[0-9a-f]+/gi) || [])
+    .filter((h) => h.length === 32).map((h) => h.toUpperCase()))];
 }
 
 function colarRelatorioAnvisa() {
@@ -1791,7 +1839,9 @@ function colarRelatorioAnvisa() {
           acao: 'hashes_anvisa', texto: hashes.slice(0, 40).join(' '),
           pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
         }).then((ok) => {
-          if (ok) avisar(hashes.length + ' envio(s) enviado(s) ao agente. Em até 5 minutos os Aceites se atualizam.');
+          if (ok) avisar((hashes.length > 40
+            ? 'Mandei os 40 primeiros de ' + hashes.length + ' (os mais recentes do relatório). '
+            : hashes.length + ' envio(s) enviado(s) ao agente. ') + 'Em até 5 minutos os Aceites se atualizam.');
         })
           .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
       } }
@@ -1970,10 +2020,12 @@ if (navigator.serviceWorker) {
 }
 window.addEventListener('offline', () => {
   $('barra-estado').textContent = 'Sem internet — os números na tela são os últimos que chegaram.';
+  $('barra-estado').dataset.origem = 'rede';
   $('barra-estado').hidden = false;
 });
 window.addEventListener('online', () => {
   $('barra-estado').hidden = true;
+  $('barra-estado').dataset.origem = '';
   // voltar a internet nao torna o dado recente: se estava velho, continua.
   avisarDadoVelho();
 });
@@ -1997,5 +2049,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista };
 }
