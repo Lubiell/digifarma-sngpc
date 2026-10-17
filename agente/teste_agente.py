@@ -1007,6 +1007,27 @@ def principal():
                  and comando.get('estado') == 'concluido', (recebido, comando))
         arvore['farmacia'].pop('comando', None)
 
+        # sem conseguir apagar a senha do Firebase, não atende
+        recebido.clear()
+        class DbSemApagar(DbMemoria):
+            def reference(self, caminho):
+                ref = DbMemoria.reference(self, caminho)
+                if caminho == 'farmacia/comando':
+                    def recusar(_valores):
+                        raise RuntimeError('Permission denied')
+                    ref.update = recusar
+                return ref
+        teimoso = DbSemApagar({'farmacia': {'comando': {'acao': 'pasta_rede', 'texto': 'CAIXA',
+                                                       'senha': 'Abc12-Def34', 'estado': 'pendente'}}})
+        ag.guardar_pasta_rede = lambda _c, pc, senha: recebido.append((pc, senha)) or 'ok'
+        try:
+            girar_fila(teimoso)
+        finally:
+            ag.guardar_pasta_rede = guardado_rede
+        conferir('sem conseguir apagar a senha do pedido, o agente não atende e tenta na próxima volta',
+                 not recebido and teimoso.arvore['farmacia']['comando']['estado'] == 'pendente',
+                 (recebido, teimoso.arvore['farmacia']['comando']))
+
         sem_celular = DbMemoria({'farmacia': {'aceites': {'2026-10-13': antigo},
                                               'avisado': {'aceites': {'_desde': 'x'}}}})
         enviados.clear()
@@ -1769,6 +1790,34 @@ def principal():
         except RuntimeError:
             invalido = True
         conferir('rede: nome de computador estranho não vira comando', invalido)
+
+        import subprocess as _sp
+        import traceback as _tb
+        def net_lento(argumentos, **_k):
+            raise _sp.TimeoutExpired(['net'] + list(argumentos), 20)
+        try:
+            ag.rodar_net(['use', '\\\\CAIXA\\SNGPC_XML$', SENHA_REDE], [SENHA_REDE], net_lento)
+            rastro = ''
+        except RuntimeError:
+            rastro = _tb.format_exc()
+        conferir('rede: computador que não responde não põe a senha no traceback do log',
+                 'não respondeu' in rastro and SENHA_REDE not in rastro, rastro)
+        guardado_cfg0 = ag.ARQUIVO_CONFIG
+        ag.ARQUIVO_CONFIG = os.path.join(pasta_rede, 'cfg_lento.json')
+        try:
+            def testar_lento(pc, senha, destino):
+                ag.rodar_net(['use', 'x', senha], [senha], net_lento)
+            try:
+                ag.guardar_pasta_rede({'pasta_xml': pasta_rede}, 'CAIXA', SENHA_REDE, testar=testar_lento)
+                rastro = ''
+            except RuntimeError:
+                rastro = _tb.format_exc()
+        finally:
+            ag.ARQUIVO_CONFIG = guardado_cfg0
+        conferir('cadastro: falha no meio não encadeia a exceção com a senha',
+                 rastro and SENHA_REDE not in rastro, rastro)
+        conferir('rede: IP não serve de nome (conta local precisa do nome do computador)',
+                 not ag.NOME_DE_COMPUTADOR.match('192.168.100.20'))
 
         situacoes = []
         guardado_net = ag.rodar_net

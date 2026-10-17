@@ -845,17 +845,31 @@ def arquivar_de(pasta, destino_pasta, sufixo=''):
 PASTA_REDE_XML = 'SNGPC_XML$'
 USUARIO_REDE_XML = 'leitor_sngpc'
 COMPUTADORES_REDE_MAX = 5
-NOME_DE_COMPUTADOR = re.compile(
-    r'^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,14}|\d{1,3}(?:\.\d{1,3}){3})$')
+NET_SEGUNDOS = 20  # computador desligado não pode segurar a sincronização
+# Só o nome: /user:IP\\leitor_sngpc não autentica conta local, o domínio
+# tem de ser o nome do computador (é o que o .bat mostra).
+NOME_DE_COMPUTADOR = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,14}$')
 
 
 def rodar_net(argumentos, segredos=(), rodar=None):
     """(código, saída) do `net`, com os segredos tirados da saída."""
     import subprocess
     rodar = rodar or subprocess.run
-    r = rodar(['net'] + list(argumentos), capture_output=True, text=True, timeout=60,
-              stdin=subprocess.DEVNULL,
-              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    try:
+        r = rodar(['net'] + list(argumentos), capture_output=True, timeout=NET_SEGUNDOS,
+                  stdin=subprocess.DEVNULL,
+                  creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except subprocess.TimeoutExpired:
+        # o texto do TimeoutExpired traz a linha de comando, com a senha:
+        # nem ele nem o encadeamento (from None) podem chegar ao log
+        raise RuntimeError('o computador não respondeu em %d s' % NET_SEGUNDOS) from None
+    except OSError as e:
+        raise RuntimeError('não consegui rodar o net (%s)' % type(e).__name__) from None
+    # o net escreve na página de código do console (OEM), não na do Windows
+    codificacao = 'oem' if sys.platform == 'win32' else 'utf-8'
+    def ler(b):
+        return b.decode(codificacao, errors='replace') if isinstance(b, bytes) else (b or '')
+    r.stdout, r.stderr = ler(r.stdout), ler(r.stderr)
     saida = ' '.join(((r.stdout or '') + ' ' + (r.stderr or '')).split())
     for segredo in segredos:
         if segredo:
@@ -929,7 +943,7 @@ def guardar_pasta_rede(config, computador, senha, testar=None):
             caminho = testar(computador, senha,
                              os.path.join(config.get('pasta_xml') or PASTA, 'enviados'))
         except Exception as e:
-            raise RuntimeError(texto(e).replace(senha, '***'))
+            raise RuntimeError(texto(e).replace(senha, '***')) from None
         lista.append({'computador': computador, 'senha': senha})
         recado = ('%s cadastrado: o agente traz o XML de lá a cada sincronização. %s'
                   % (computador, 'Último envio de lá: %s.' % os.path.basename(caminho)
@@ -7264,11 +7278,14 @@ def modo_fila(config):
     pedido = dict(pedido)  # a senha é lida desta cópia, depois de sair do Firebase
     if pedido.get('senha') is not None:
         # a senha do compartilhamento passa pelo pedido e sai dele na hora:
-        # fica só no agente_config.json do servidor
+        # fica só no agente_config.json do servidor. Sem conseguir apagar,
+        # não atende: o pedido fica pendente e a próxima volta tenta de novo.
         try:
             ref.update({'senha': None})
         except Exception as e:
-            registrar('Não consegui apagar a senha do pedido: %s' % e)
+            registrar('Não consegui apagar a senha do pedido (%s); fica para a próxima volta.'
+                      % type(e).__name__)
+            return
     registrar('Atendendo "%s" pedido por %s.' % (acao, pedido.get('pedidoPor')))
     try:
         recado = atender_pedido(config, db, pedido)

@@ -1424,7 +1424,7 @@ function pintarFerramentas() {
         { texto: 'Cancelar', aoClicar: fecharModal },
         { texto: 'Gravar', estilo: 'botao-principal', aoClicar: () => {
           const computador = nome.value.trim().toUpperCase();
-          if (!/^[A-Z0-9][A-Z0-9_-]{0,14}$|^\d{1,3}(\.\d{1,3}){3}$/.test(computador)) {
+          if (!/^[A-Z0-9][A-Z0-9_-]{0,14}$/.test(computador)) {
             avisar('Nome de computador inválido: use o que o COMPARTILHAR_XML.bat mostrou.');
             return;
           }

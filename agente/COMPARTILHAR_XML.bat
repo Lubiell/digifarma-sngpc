@@ -34,8 +34,8 @@ if errorlevel 1 goto SEM_POWERSHELL
 set "PSEXE=powershell"
 if defined PROCESSOR_ARCHITEW6432 set "PSEXE=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 
-"%PSEXE%" -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:FARM_ARQ); $m='#'+'== POWERSHELL =='; $i=$t.IndexOf($m); if ($i -lt 0) { exit 9 }; iex $t.Substring($i)"
-if errorlevel 9 goto VEIO_QUEBRADO
+"%PSEXE%" -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText($env:FARM_ARQ); $m='#'+'== POWERSHELL =='; $i=$t.IndexOf($m); if ($i -lt 0) { exit 99 }; iex $t.Substring($i)"
+if "%ERRORLEVEL%"=="99" goto VEIO_QUEBRADO
 goto FIM
 
 :SEM_POWERSHELL
@@ -121,7 +121,35 @@ if (-not $pasta) {
         return
     }
 }
+$pasta = $pasta.TrimEnd('\')
+
+# A pasta compartilhada e o limite do que o servidor ve: raiz de disco, a
+# pasta do Digifarma inteira ou pasta com o banco abririam dado de paciente
+# que nao e o XML. So vale a pasta que tem o XML de envio.
+$item = Get-Item -LiteralPath $pasta
+$temXml = @($xmlDeEnvio | Where-Object { Test-Path (Join-Path $pasta $_) }).Count -gt 0
+$banco = Get-ChildItem -LiteralPath $pasta -Recurse -Depth 2 -File -Include '*.fdb', '*.gdb', '*.fbk', '*.gbk' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $item.Parent -or -not $item.Parent.Parent) {
+    Dizer (' {0} e raiz de disco ou a pasta principal do Digifarma: grande demais' -f $pasta)
+    Dizer ' para compartilhar. Nada foi alterado.'
+    return
+}
+if (-not $temXml) {
+    Dizer (' {0} nao tem SNGPC.XML, MOVIMENTACAO.XML nem sngpc.zip. Nada foi alterado.' -f $pasta)
+    return
+}
+if ($banco) {
+    Dizer (' {0} tem um banco de dados dentro ({1}). Nada foi alterado.' -f $pasta, $banco.Name)
+    return
+}
 Dizer (' Pasta do XML: {0}' -f $pasta)
+$sub = @(Get-ChildItem -LiteralPath $pasta -Directory -ErrorAction SilentlyContinue).Count
+if ($sub) { Dizer (' (tem {0} subpasta(s); o servidor so vai ler os arquivos desta pasta)' -f $sub) }
+$ok = (Read-Host ' Compartilhar SOMENTE LEITURA esta pasta com o servidor? S ou N').Trim().ToUpper()
+if ($ok -ne 'S') {
+    Dizer ' Nada foi alterado.'
+    return
+}
 
 # 2. o IP do servidor, o unico que vai poder ler
 $ipServidor = (Read-Host ' IP do servidor [Enter = 192.168.100.8]').Trim()
@@ -154,19 +182,21 @@ try {
     if (-not (Test-Path $chaveLista)) { New-Item -Path $chaveLista -Force | Out-Null }
     New-ItemProperty -Path $chaveLista -Name $usuario -Value 0 -PropertyType DWord -Force | Out-Null
 
-    # 5. so leitura, na pasta e no compartilhamento
-    & icacls $pasta /grant ('{0}:(OI)(CI)RX' -f $usuario) | Out-Null
+    # 5. servico de compartilhamento ligado ANTES de compartilhar
+    Set-Service -Name LanmanServer -StartupType Automatic
+    Start-Service -Name LanmanServer
+
+    # 6. so leitura, so os arquivos desta pasta (OI sem CI: subpasta nao herda)
+    & icacls $pasta /grant ('{0}:(OI)RX' -f $usuario) | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'nao consegui dar leitura na pasta' }
     New-SmbShare -Name $compart -Path $pasta -ReadAccess $usuario -Description 'XML do SNGPC, so leitura, para o servidor' | Out-Null
 
-    # 6. servico de compartilhamento ligado e firewall so para o servidor
-    Set-Service -Name LanmanServer -StartupType Automatic
-    Start-Service -Name LanmanServer -ErrorAction SilentlyContinue
+    # 7. firewall so para o servidor
     New-NetFirewallRule -DisplayName $regra -Direction Inbound -Protocol TCP -LocalPort 445 -RemoteAddress $ipServidor -Action Allow -Profile Any | Out-Null
 } catch {
     Dizer (' Deu errado: {0}' -f $_.Exception.Message)
     Dizer ' Desfazendo o que foi feito...'
-    Tirar-Tudo
+    try { Tirar-Tudo } catch { Dizer (' Nao consegui desfazer tudo: {0}' -f $_.Exception.Message) }
     return
 }
 
@@ -181,5 +211,6 @@ Dizer ' Anote agora: a senha nao fica guardada neste computador e nao'
 Dizer ' aparece de novo. Perdeu? Rode este arquivo outra vez: ele gera'
 Dizer ' outra senha e a antiga deixa de valer.'
 Dizer ''
-Dizer (' So o servidor ({0}) consegue ler, e so le.' -f $ipServidor)
+Dizer (' So o servidor ({0}) consegue ler, e so le. Se o IP do servidor' -f $ipServidor)
+Dizer ' mudar, rode este arquivo de novo com o IP novo.'
 Linha
