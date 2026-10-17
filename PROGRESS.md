@@ -60,6 +60,13 @@ servidor de longe, ainda não executado no Windows.
   próximo envio pelo servidor, rodar Login SNGPC — se HASH_ULT_ENVIO mudar,
   os envios do balcão eram a causa do hash parado desde 08/10 e o aceite
   passa a vir sozinho pela API; se não mudar, mandar o chamado ao Digifarma.
+- 17/10: Login SNGPC mostrou que o Digifarma só guarda o hash do último envio
+  (nenhuma outra tabela com HASH). O Relatório Status de Transmissão do site
+  mostra o de todos: na aba Aceites, "Colar relatório da ANVISA" manda os
+  hashes ao agente, que consulta cada um na API; sem marcação manual, o selo
+  mostra o que a ANVISA respondeu. O relatório de 17/10 mostrou o envio de
+  14/10 (movimento de 13/10) RECUSADO: Escitalopram 1.0525.0045.003-8, lote
+  BQ37M006, venda maior que o estoque; o de 15/10 ainda sem validação.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade

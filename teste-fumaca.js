@@ -467,6 +467,27 @@ if (exportado.detalheDoSaldo) {
   });
 }
 
+if (exportado.hashesDoTexto && exportado.envioDaApiPelaData) {
+  conferir('aceites: tira os hashes do relatório colado e casa o envio pela data de recebimento', () => {
+    const h = exportado.hashesDoTexto('CNPJ 44.744.950/0001-04 F191FB8D9B9B4415F7AE3891348B1D48 f191fb8d9b9b4415f7ae3891348b1d48 0123456789ABCDEF0123456789ABCDEF0');
+    if (h.length !== 1 || h[0] !== 'F191FB8D9B9B4415F7AE3891348B1D48') throw new Error(JSON.stringify(h));
+    try {
+      exportado.estado.inventario = { apiSngpc: { envios: [
+        { arquivo: '', transmissao: '2026-10-14T16:26:00', situacao: 'com_erro' },
+        { arquivo: '2026-10-08', transmissao: '2026-10-08T17:00:07', situacao: 'validado' }] } };
+      igual(exportado.envioDaApiPelaData('2026-10-14').situacao, 'com_erro', 'pela data');
+      igual(exportado.envioDaApiPelaData('2026-10-08'), null, 'quem tem arquivo casa pelo arquivo');
+      exportado.estado.inventario = {
+        enviosConhecidos: ['2026-10-16'],
+        periodosDeEnvio: { '2026-10-16': { de: '2026-10-15', ate: '2026-10-15' } },
+        apiSngpc: { envios: [{ arquivo: '', de: '2026-10-15', ate: '2026-10-15', transmissao: '2026-10-17T08:00:00', situacao: 'validado' }] } };
+      igual(JSON.stringify(exportado.datasDeEnvio()), '["2026-10-16"]', 'envio já casado pelo período não vira segunda linha');
+    } finally {
+      exportado.estado.inventario = {};
+    }
+  });
+}
+
 if (exportado.textoXmlRede) {
   conferir('servidor: mostra a situação do XML de cada computador, sem senha', () => {
     if (!exportado.textoXmlRede(undefined).includes('só o servidor')) throw new Error('vazio');
