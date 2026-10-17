@@ -1469,6 +1469,47 @@ def principal():
              'veredito' not in comum['itens'][0], comum['itens'][0])
     conferir('o resumo de pendentes mantém os próprios rótulos',
              ag.NOME_PENDENTE.get('saidas') == 'VENDAS')
+    # Pendentes: as vendas aparecem na lista, e venda que o último XML
+    # já levou é apontada (17/10: envio aceito, ponteiro parado em 48513)
+    hoje_p = datetime.date.today()
+    ontem_p = (hoje_p - datetime.timedelta(days=1)).isoformat()
+    dados_p = {
+        'envio': {'ULT_SAIDA_VENDA_NOTA_ID': 48513, 'ULT_ENTRADA_CAB_NOTA_ID': 1686,
+                  'data': (hoje_p - datetime.timedelta(days=1)).isoformat()},
+        'pendentes': {'vendas': [
+            {'id': 48514, 'data': ontem_p, 'hora': '15:10', 'descricao': 'CLONAZEPAM 2MG',
+             'lote': 'A1', 'quantidade': 1},
+            {'id': 48600, 'data': hoje_p.isoformat(), 'hora': '09:00', 'descricao': 'ZOLPIDEM',
+             'lote': 'Z9', 'quantidade': 2}], 'entradas': [], 'perdas': [], 'transferencias': []},
+        'conferenciaXmlResumo': {'temXml': True, 'arquivo': 'C:\\x\\enviados\\sngpc_hoje.xml',
+                                 'periodoDe': ontem_p, 'periodoAte': ontem_p, 'fimNoXml': ontem_p},
+    }
+    guardados_p = (ag.conectar_firebird, ag.fechar, ag.montar_inventario)
+    try:
+        ag.conectar_firebird = lambda _c: object()
+        ag.fechar = lambda _c: None
+        ag.montar_inventario = lambda _c, _cfg: dados_p
+        balde_p = io.StringIO()
+        with contextlib.redirect_stdout(balde_p):
+            ag.modo_pendentes({})
+        saida_p = balde_p.getvalue()
+        # XML sem data no cabeçalho: periodoAte vira o último envio, e isso não é prova
+        dados_p['conferenciaXmlResumo'] = {'temXml': True, 'periodoAte': ontem_p, 'fimNoXml': ''}
+        balde_p = io.StringIO()
+        with contextlib.redirect_stdout(balde_p):
+            ag.modo_pendentes({})
+        saida_p2 = balde_p.getvalue()
+    finally:
+        ag.conectar_firebird, ag.fechar, ag.montar_inventario = guardados_p
+    conferir('Pendentes lista as vendas, não só o total',
+             'VENDAS — 2' in saida_p and '48514' in saida_p and 'ZOLPIDEM' in saida_p
+             and '[JÁ NO ÚLTIMO XML]' in saida_p and '[sobe amanhã]' in saida_p, saida_p)
+    conferir('Pendentes aponta venda que o último XML já levou e o período certo do próximo envio',
+             'ATENÇÃO: 1 venda(s)' in saida_p and 'sngpc_hoje.xml' in saida_p
+             and 'começar em %s' % ag.br(hoje_p.isoformat()) in saida_p
+             and 'Nada atrasado' not in saida_p, saida_p)
+    conferir('Pendentes sem o fim do período escrito no XML não acusa nada',
+             'Nada atrasado' in saida_p2 and 'ATENÇÃO' not in saida_p2, saida_p2)
     conferir('M.S. errado com o lote certo não casa',
              not ag.lote_procurado({'ms': ms, 'lote': 'A1'}, '1111111111111|A1')
              and ag.lote_procurado({'ms': ms, 'lote': 'A1'}, 'a1'))
