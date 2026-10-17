@@ -475,6 +475,24 @@ def principal():
     conferir('lote so de digitos, vindo da investigacao, e procurado como lote',
              'lote 1052500680092' in saida_lote.getvalue()
              and 'CLV4N003' not in saida_lote.getvalue(), saida_lote.getvalue())
+    guardadas_ficha = (ag.conectar_firebird, ag.fechar, ag.ficha_do_lote)
+    saida_ficha = io.StringIO()
+    try:
+        ag.conectar_firebird = lambda _c: object()
+        ag.fechar = lambda _c: None
+        ag.ficha_do_lote = lambda _c, lote: [
+            {'data': '2026-08-01', 'tipo': 'entrada', 'qtd': 2, 'doc': 7,
+             'nota': '123', 'ms': '1052500680092', 'transmitido': True}] if lote == 'CLV4N003' else []
+        with contextlib.redirect_stdout(saida_ficha):
+            ag.modo_buscar_xml(cfg_busca, 'CLV4N003', so_lote=True)
+    finally:
+        ag.conectar_firebird, ag.fechar, ag.ficha_do_lote = guardadas_ficha
+    conferir('busca por lote traz a ficha do lote lida do Digifarma',
+             'FICHA DO LOTE NO DIGIFARMA' in saida_ficha.getvalue()
+             and 'saldo pelo Digifarma: 2' in saida_ficha.getvalue(), saida_ficha.getvalue())
+    conferir('sem o banco, a busca por lote segue sem a ficha',
+             'FICHA DO LOTE' not in saida_lote.getvalue()
+             and 'lote 1052500680092' in saida_lote.getvalue(), saida_lote.getvalue())
     conferir('a busca nos XML nao imprime CPF nem CNPJ do cabecalho',
              '00000000191' not in achado + auto, achado)
     shutil.rmtree(pasta_busca, ignore_errors=True)
@@ -1710,6 +1728,46 @@ def principal():
              '13/10/2026 a 13/10/2026' in balde_c.getvalue()
              and 'NEGATIVO aqui pelos XML lidos' in balde_c.getvalue()
              and balde_c.getvalue().count('NEGATIVO') == 1, balde_c.getvalue())
+
+    # ficha do lote no Digifarma: as consultas do SNGPC com o lote no WHERE
+    sqls_ficha = []
+    def banco_ficha(conexao, sql, parametros=()):
+        sqls_ficha.append((sql, parametros))
+        if sql == ag.CONSULTAS['ponteiros']:
+            return [{'ULT_SAIDA_VENDA_NOTA_ID': 500, 'ULT_ENTRADA_CAB_NOTA_ID': 90,
+                     'SENHA': 'nao-pode-sair', 'EMAIL': 'x@y'}]
+        if 'CAB_VENDAS' in sql:
+            return [{'VENDA_NOTA_ID': 400, 'DATA': '2026-08-26', 'REGISTRO_MS': '1052500450038', 'QUANTIDADE': 21},
+                    {'VENDA_NOTA_ID': 600, 'DATA': '2026-10-13', 'REGISTRO_MS': '1052500450038', 'QUANTIDADE': 2}]
+        if 'CAB_NOTAS' in sql and "ENTRADA_SAIDA = 'E'" in sql:
+            return [{'CAB_NOTA_ID': 80, 'NOTA_FISCAL': '123', 'DATA_RECEBIMENTO': '2026-08-25', 'REGISTRO_MS': '1052500450038', 'QUANTIDADE': 18},
+                    {'CAB_NOTA_ID': 81, 'NOTA_FISCAL': '124', 'DATA_RECEBIMENTO': '2026-08-26', 'REGISTRO_MS': '1052500450038', 'QUANTIDADE': 18}]
+        return []
+    guardado = ag.consultar
+    ag.consultar = banco_ficha
+    try:
+        ficha_t = ag.ficha_do_lote(None, ' bq37m006 ')
+    finally:
+        ag.consultar = guardado
+    conferir('ficha do lote: lê do Digifarma com o lote no WHERE, em ordem, e marca o que passou do ponteiro',
+             [(m['data'], m['tipo'], m['qtd'], m['transmitido']) for m in ficha_t] ==
+             [('2026-08-25', 'entrada', 18, True), ('2026-08-26', 'entrada', 18, True),
+              ('2026-08-26', 'venda', 21, True), ('2026-10-13', 'venda', 2, False)]
+             and all(par[-1] == 'BQ37M006' for q, par in sqls_ficha if q != ag.CONSULTAS['ponteiros'])
+             and all('UPPER(TRIM(' in q for q, par in sqls_ficha if q != ag.CONSULTAS['ponteiros']),
+             ficha_t)
+    balde_f = io.StringIO()
+    with contextlib.redirect_stdout(balde_f):
+        ag.imprimir_ficha_do_lote(ficha_t,
+                                  [('2026-08-25', '2026-08-25', 'entrada', 'M', 18),
+                                   ('2026-08-26', '2026-08-26', 'entrada', 'M', 18),
+                                   ('2026-08-26', '2026-08-26', 'venda', 'M', 20)],
+                                  [('2026-08-25', '2026-08-25'), ('2026-08-26', '2026-08-26')])
+    saida_f = balde_f.getvalue()
+    conferir('ficha do lote: aponta o período em que Digifarma e XML diferem, e o que não tem XML',
+             '26/08/2026 a 26/08/2026' in saida_f and 'Digifarma 18/21  XML 18/20  <- DIFERENTE' in saida_f
+             and '1 movimento(s) em dias sem XML' in saida_f and 'saldo pelo Digifarma: 13' in saida_f
+             and 'nao-pode-sair' not in saida_f and 'x@y' not in saida_f, saida_f)
 
     # hashes colados do Relatório Status de Transmissão do site
     H_OK, H_ERRO, H_FILA = 'B06314E6E830A47EF0D8AB26252DB38C', '92606BDDC24BDD28D3E264BAAA0B2455', 'F191FB8D9B9B4415F7AE3891348B1D48'
