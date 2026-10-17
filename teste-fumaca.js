@@ -518,6 +518,14 @@ if (exportado.chaveDoPedido && exportado.envioDaApi) {
   });
 }
 
+if (exportado.datasBR) {
+  conferir('datas AAAA-MM-DD viram DD/MM/AAAA no texto', () => {
+    igual(exportado.datasBR('2026-10-13 a 2026-10-14'), '13/10/2026 a 14/10/2026', 'período');
+    igual(exportado.datasBR('2027-03-31'), '31/03/2027', 'validade');
+    igual(exportado.datasBR(undefined), '', 'vazio');
+  });
+}
+
 if (exportado.comoLista) {
   conferir('lista do Firebase com buraco vira lista', () => {
     igual(JSON.stringify(exportado.comoLista({ 0: 'a', 2: 'b' })), '["a","b"]', 'objeto');
