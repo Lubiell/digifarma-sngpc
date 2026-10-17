@@ -1343,7 +1343,8 @@ const RELATORIOS_SERVIDOR = [
   ['resumo', 'Resumo'], ['pendentes', 'Pendentes'], ['ponteiro', 'Ponteiro'],
   ['tarefas', 'Tarefas'], ['negativos', 'Negativos'], ['inventario', 'Inventario'],
   ['login_sngpc', 'Login SNGPC'], ['retorno_anvisa', 'Retorno ANVISA'],
-  ['log_anvisa', 'Log do Anvisa'], ['colunas', 'Colunas do banco']
+  ['log_anvisa', 'Log do Anvisa'], ['log_agente', 'Log do agente (7 dias)'],
+  ['colunas', 'Colunas do banco']
 ];
 
 function pedirRelatorio(acao, rotulo) {
