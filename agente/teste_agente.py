@@ -1693,6 +1693,24 @@ def principal():
              ag.foto_sem_envio_validado('2026-10-15', foto_hora, antigo) is None)
     shutil.rmtree(pasta_api, ignore_errors=True)
 
+    # conta do lote pelos XML: o caso do BQ37M006 (13/10)
+    movs = [('2026-08-25', '2026-08-25', 'entrada', 'M', 18),
+            ('2026-08-26', '2026-08-26', 'entrada', 'M', 18),
+            ('2026-08-26', '2026-08-26', 'venda', 'M', 21),
+            ('2026-10-07', '2026-10-07', 'venda', 'M', 14),
+            ('2026-10-13', '2026-10-13', 'venda', 'M', 3),
+            ('2026-10-13', '2026-10-13', 'venda', 'M', 3)]  # mesmo período em dois XML
+    linhas_c, repetidos_c = ag.conta_do_lote(movs)
+    conferir('conta do lote: soma em ordem, tira o período repetido e chega ao saldo',
+             [l[4] for l in linhas_c] == [18, 15, 1, -2] and repetidos_c == 1, (linhas_c, repetidos_c))
+    balde_c = io.StringIO()
+    with contextlib.redirect_stdout(balde_c):
+        ag.imprimir_conta_do_lote(movs)
+    conferir('conta do lote: marca o período em que ficou negativo',
+             '13/10/2026 a 13/10/2026' in balde_c.getvalue()
+             and 'ficou NEGATIVO aqui' in balde_c.getvalue()
+             and balde_c.getvalue().count('NEGATIVO') == 1, balde_c.getvalue())
+
     # hashes colados do Relatório Status de Transmissão do site
     H_OK, H_ERRO, H_FILA = 'B06314E6E830A47EF0D8AB26252DB38C', '92606BDDC24BDD28D3E264BAAA0B2455', 'F191FB8D9B9B4415F7AE3891348B1D48'
     colado = ('RELATÓRIO STATUS DE TRANSMISSÃO Empresa: X CNPJ: 44.744.950/0001-04\n'
