@@ -96,7 +96,7 @@ h3{font-size:16px;text-transform:uppercase;letter-spacing:.08em}
 }
 .operador-atual{margin:2px 0 0;font-size:13px;color:var(--tinta-fraca)}
 .topo-acoes{display:flex;gap:8px;flex-shrink:0}
-.topo-acoes .botao{padding:8px 10px;font-size:13px;min-height:38px}
+.topo-acoes .botao{padding:8px 10px;font-size:13px;min-height:44px}
 
 main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
 .cabeca-vista{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px}

@@ -80,6 +80,11 @@ function dataBR(iso) {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : esc(iso);
 }
 
+/* Troca toda data AAAA-MM-DD de um texto por DD/MM/AAAA (validade, período). */
+function datasBR(t) {
+  return String(t ?? '').replace(/(\d{4})-(\d{2})-(\d{2})/g, '$3/$2/$1');
+}
+
 function normalizar(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -114,6 +119,7 @@ function lista(no) {
 let fecharModalAtual = null;
 
 function abrirModal({ titulo, corpo, acoes }) {
+  const quemAbriu = document.activeElement;
   $('modal-titulo').textContent = titulo;
   const alvo = $('modal-corpo');
   alvo.innerHTML = '';
@@ -132,12 +138,27 @@ function abrirModal({ titulo, corpo, acoes }) {
   fecharModalAtual = () => {
     $('modal').hidden = true; fecharModalAtual = null;
     if (recarregarAoFecharModal) window.location.reload();
+    // o foco volta para quem abriu, senao o teclado cai no topo da pagina
+    if (quemAbriu && typeof quemAbriu.focus === 'function' && document.contains(quemAbriu)) quemAbriu.focus();
   };
   const primeiro = alvo.querySelector('input, select, textarea');
   if (primeiro) setTimeout(() => primeiro.focus(), 60);
 }
 
 function fecharModal() { fecharModalAtual?.(); }
+
+/* Tab e Shift+Tab ficam dentro do modal aberto: sem isto o foco ia para a
+   pagina de tras, que o modal cobre. */
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Tab' || $('modal').hidden) return;
+  const focaveis = [...$('modal').querySelectorAll('button, input, textarea, select, a[href], [tabindex]:not([tabindex="-1"])')]
+    .filter((e) => !e.disabled && e.offsetParent !== null);
+  if (!focaveis.length) return;
+  const primeiro = focaveis[0], ultimo = focaveis[focaveis.length - 1];
+  if (ev.shiftKey && document.activeElement === primeiro) { ev.preventDefault(); ultimo.focus(); }
+  else if (!ev.shiftKey && document.activeElement === ultimo) { ev.preventDefault(); primeiro.focus(); }
+  else if (!$('modal').contains(document.activeElement)) { ev.preventDefault(); primeiro.focus(); }
+});
 
 function confirmar(titulo, texto, textoOk = 'Confirmar', estilo = 'botao-principal') {
   return new Promise((resolve) => {
@@ -659,13 +680,13 @@ function definicoes(pares) {
    entrada que nao subiu quanto saldo errado no Digifarma. Afirmar a causa
    na etiqueta manda gente conferir prateleira a toa. */
 const MOTIVO_SALDO = {
-  negativo: ['Saldo negativo no Digifarma', 'Lote com saldo abaixo de zero. Isso e erro de escrituracao, nao de prateleira.'],
-  lote_em_dois_ms: ['Mesmo lote em dois registros M.S.', 'Lote e numeracao de fabricante: dois fabricantes podem usar o mesmo numero. Confira o fabricante na caixa antes de mexer em cadastro.'],
-  so_na_anvisa: ['So aparece na ANVISA', 'A ANVISA tem saldo deste lote e o Digifarma nao o conhece.'],
+  negativo: ['Saldo negativo no Digifarma', 'Lote com saldo abaixo de zero. Isso é erro de escrituração, não de prateleira.'],
+  lote_em_dois_ms: ['Mesmo lote em dois registros M.S.', 'Lote é numeração de fabricante: dois fabricantes podem usar o mesmo número. Confira o fabricante na caixa antes de mexer em cadastro.'],
+  so_na_anvisa: ['Só aparece na ANVISA', 'A ANVISA tem saldo deste lote e o Digifarma não o conhece.'],
   quantidade: ['Quantidade diferente', 'Os dois lados conhecem o lote, com saldos diferentes.'],
-  anvisa_zerada_lote: ['Lote zerado na ANVISA', 'O M.S. esta no inventario, este lote nao. Costuma ser entrada ainda nao transmitida.'],
-  anvisa_zerada_produto: ['Produto zerado na ANVISA', 'O M.S. inteiro esta fora do inventario da ANVISA.'],
-  sem_ms: ['Produto sem registro M.S.', 'Sem M.S. cadastrado nao da para comparar com a ANVISA.']
+  anvisa_zerada_lote: ['Lote zerado na ANVISA', 'O M.S. está no inventário, este lote não. Costuma ser entrada ainda não transmitida.'],
+  anvisa_zerada_produto: ['Produto zerado na ANVISA', 'O M.S. inteiro está fora do inventário da ANVISA.'],
+  sem_ms: ['Produto sem registro M.S.', 'Sem M.S. cadastrado não dá para comparar com a ANVISA.']
 };
 const ORDEM_MOTIVO = ['negativo', 'lote_em_dois_ms', 'so_na_anvisa', 'quantidade',
                       'anvisa_zerada_lote', 'anvisa_zerada_produto', 'sem_ms'];
@@ -673,11 +694,11 @@ const ORDEM_MOTIVO = ['negativo', 'lote_em_dois_ms', 'so_na_anvisa', 'quantidade
 /* Por que a comparacao de saldo pode nao valer. A chave vem do agente;
    a frase e daqui, porque quem escreve frase e a tela. */
 const MOTIVO_CONFIANCA = {
-  sem_inventario: 'O inventario da ANVISA nunca foi baixado, entao nao ha com o que comparar.',
-  foto_anterior_ao_envio: 'O inventario da ANVISA e anterior ao ultimo envio. O que subiu nesse meio ja passou do ponteiro e nao entra em "falta transmitir" — fica contado em lugar nenhum e aparece como sobra.',
-  lote_recusado: 'Um lote foi recusado pela ANVISA. A recusa derruba o envio inteiro, mas o ponteiro do Digifarma andou assim mesmo: ele considera transmitido o que a ANVISA nao registrou.',
-  pendente_sem_lote: 'Ha movimento pendente sem numero de lote. Sem lote ele nao soma a lote nenhum e some da conta.',
-  pendente_sem_casar: 'Ha movimento pendente com M.S. ou lote grafado diferente do cadastro, que nao casou com nenhum lote dos dois lados.'
+  sem_inventario: 'O inventário da ANVISA nunca foi baixado, então não há com o que comparar.',
+  foto_anterior_ao_envio: 'O inventário da ANVISA é anterior ao último envio. O que subiu nesse meio já passou do ponteiro e não entra em "falta transmitir" — fica contado em lugar nenhum e aparece como sobra.',
+  lote_recusado: 'Um lote foi recusado pela ANVISA. A recusa derruba o envio inteiro, mas o ponteiro do Digifarma andou assim mesmo: ele considera transmitido o que a ANVISA não registrou.',
+  pendente_sem_lote: 'Há movimento pendente sem número de lote. Sem lote ele não soma a lote nenhum e some da conta.',
+  pendente_sem_casar: 'Há movimento pendente com M.S. ou lote grafado diferente do cadastro, que não casou com nenhum lote dos dois lados.'
 };
 
 function pintarConfiancaDoSaldo() {
@@ -688,8 +709,8 @@ function pintarConfiancaDoSaldo() {
 
   foto.hidden = !inv.data;
   if (inv.data) {
-    foto.textContent = 'O inventario da ANVISA e uma foto, de '
-      + dataBR(inv.data) + '. A conta e: essa foto mais o que ainda nao subiu.';
+    foto.textContent = 'O inventário da ANVISA é uma foto, de '
+      + dataBR(inv.data) + '. A conta é: essa foto mais o que ainda não subiu.';
   }
 
   const frases = (c && !c.confiavel ? c.motivos || [] : []).map((m) => MOTIVO_CONFIANCA[m] || m);
@@ -707,7 +728,7 @@ function pintarConfiancaDoSaldo() {
       + 'a divergência deles é falsa: a conta desconta a mesma venda duas vezes.');
   }
   if (!frases.length) { barra.hidden = true; return; }
-  barra.innerHTML = '<strong>Estes numeros podem nao ser divergencia de estoque.</strong><br>'
+  barra.innerHTML = '<strong>Estes números podem não ser divergência de estoque.</strong><br>'
     + frases.map(esc).join('<br>');
   barra.hidden = false;
 }
@@ -795,7 +816,7 @@ function detalheDoSaldo(i, dif) {
     // Os totais batendo mudam o que a farmacia tem de fazer: nao e conferir
     // prateleira, e ver em qual cadastro a entrada foi lancada.
     nota.textContent = i.totaisBatem
-      ? 'Os totais do lote batem nos dois lados: a farmacia tem a quantidade certa, repartida entre os cadastros de um jeito diferente. E lancamento no cadastro errado, nao falta de mercadoria.'
+      ? 'Os totais do lote batem nos dois lados: a farmácia tem a quantidade certa, repartida entre os cadastros de um jeito diferente. É lançamento no cadastro errado, não falta de mercadoria.'
       : MOTIVO_SALDO.lote_em_dois_ms[1];
   } else if (VEREDITO_SALDO[i.veredito]) {   // lote_em_dois_ms vem antes: e cadastro
     nota.textContent = VEREDITO_SALDO[i.veredito][1](i);
@@ -914,7 +935,7 @@ function pintarSaldo() {
         i.ms && 'M.S. ' + i.ms,
         i.ean && 'EAN ' + i.ean,
         i.lote && 'Lote ' + i.lote,
-        i.validade && 'Val. ' + i.validade
+        i.validade && 'Val. ' + datasBR(i.validade)
       ],
       tarja: [(i.motivo !== 'lote_em_dois_ms' && VEREDITO_SALDO[i.veredito]?.[0])
               || (bateSoSemMovimento(i) && 'Iguais hoje, com movimento pendente')
@@ -992,7 +1013,7 @@ function pintarXml() {
         c.laboratorio && 'Lab. ' + c.laboratorio,
         c.ms && 'M.S. ' + c.ms,
         c.lote && 'Lote ' + c.lote,
-        c.periodo && 'Período ' + c.periodo
+        c.periodo && 'Período ' + datasBR(c.periodo)
       ],
       tarja: [rotulo, `banco ${c.qtdBanco ?? 0} · xml ${c.qtdXml ?? 0}`],
       tarjaClasse: classe,
@@ -1313,7 +1334,7 @@ function pintarAgente() {
    inventada aqui: acao que o agente nao conhece vira botao que nao faz
    nada, e o teste_bat.py cruza as duas listas por isso. */
 const ACOES_SERVIDOR = [
-  ['atualizar_agente', 'Atualizar o agente', 'Baixa a versao mais nova do GitHub e troca, conferindo antes. E o ATUALIZAR_AGENTE.bat.'],
+  ['atualizar_agente', 'Atualizar o agente', 'Baixa a versão mais nova do GitHub e troca, conferindo antes. É o ATUALIZAR_AGENTE.bat.'],
   ['anvisa', 'Abrir o Anvisa.exe', 'Abre o programa da ANVISA no servidor. Ele para na tela de login do SNGPC, por desenho da ANVISA.'],
   ['arrumar_tarefa_anvisa', 'Arrumar a tarefa do Anvisa', 'Reescreve a tarefa agendada AnvisaSNGPC_Login quando ela aponta para caminho errado.']
 ];
@@ -1331,7 +1352,7 @@ function pedirRelatorio(acao, rotulo) {
   }).then((ok) => {
     if (!ok) return;
     estado.relatorioPedido = acao;
-    avisar(rotulo + ' pedido. O agente atende na proxima passagem dele.');
+    avisar(rotulo + ' pedido. O agente atende na próxima passagem dele.');
   });
 }
 
@@ -1404,7 +1425,11 @@ function pintarFerramentas() {
     const campo = criar('input', 'busca');
     campo.type = 'search';
     campo.placeholder = 'Ex.: 1004313820110 ou DFG3073A';
+    campo.setAttribute('aria-label', 'M.S. ou lote para buscar nos XML');
     corpo.append(p, campo);
+    campo.onkeydown = (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); document.querySelector('#modal-acoes .botao-principal')?.click(); }
+    };
     abrirModal({
       titulo: 'Buscar nos XML',
       corpo,
@@ -1418,7 +1443,7 @@ function pintarFerramentas() {
           }).then((ok) => {
             if (!ok) return;
             estado.relatorioPedido = 'xml';
-            avisar('Busca pedida. O agente atende na proxima passagem dele.');
+            avisar('Busca pedida. O agente atende na próxima passagem dele.');
           })
             .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
         } }
@@ -1440,10 +1465,12 @@ function pintarFerramentas() {
       + 'Senha em branco tira o computador da lista.';
     const nome = criar('input', 'busca');
     nome.placeholder = 'Nome do computador, ex.: CAIXA-01';
+    nome.setAttribute('aria-label', 'Nome do computador');
     nome.autocomplete = 'off';
     const senha = criar('input', 'busca');
     senha.type = 'password';
     senha.placeholder = 'Senha';
+    senha.setAttribute('aria-label', 'Senha do compartilhamento');
     senha.autocomplete = 'new-password';
     corpo.append(p, nome, senha);
     abrirModal({
@@ -1462,7 +1489,7 @@ function pintarFerramentas() {
             acao: 'pasta_rede', texto: computador, senha: senha.value,
             pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
           }).then((ok) => {
-            if (ok) avisar('Pedido gravado. O agente testa a leitura na proxima passagem dele.');
+            if (ok) avisar('Pedido gravado. O agente testa a leitura na próxima passagem dele.');
           })
             .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
         } }
@@ -1597,6 +1624,7 @@ function pedirChaveDeAviso() {
     + 'Certificados push da Web > Gerar par de chaves. Copie a chave e cole aqui.';
   const campo = criar('input', 'busca');
   campo.placeholder = 'Chave pública (começa com B…)';
+  campo.setAttribute('aria-label', 'Chave pública de avisos');
   corpo.append(p, campo);
   abrirModal({
     titulo: 'Chave de avisos',
@@ -1823,6 +1851,7 @@ function colarRelatorioAnvisa() {
   const campo = criar('textarea', 'busca');
   campo.rows = 6;
   campo.placeholder = 'Cole aqui o relatório (ou só os códigos de Hash Identificação)';
+  campo.setAttribute('aria-label', 'Relatório Status de Transmissão colado');
   const conta = criar('p', 'sublinha');
   campo.oninput = () => { conta.textContent = hashesDoTexto(campo.value).length + ' envio(s) encontrado(s)'; };
   corpo.append(p, campo, conta);
@@ -1949,6 +1978,7 @@ function pedirRecusa(data) {
   campo.rows = 5;
   campo.maxLength = LIMITE_ERRO_ACEITE;
   campo.placeholder = 'Ex.: A quantidade vendida (1) do produto ... do lote ... é maior que a quantidade em estoque.';
+  campo.setAttribute('aria-label', 'Erro que a ANVISA mostrou');
   campo.value = anterior;
   corpo.append(p, campo);
   abrirModal({
@@ -2038,8 +2068,8 @@ window.addEventListener('online', () => {
    servido por http(s) — GitHub Pages ou um servidor local. */
 if (location.protocol === 'file:') {
   const barra = document.getElementById('barra-estado');
-  const texto = 'Esta pagina foi aberta direto do arquivo (file://). '
-    + 'Nesse modo o navegador bloqueia o login, a camera e o funcionamento offline. '
+  const texto = 'Esta página foi aberta direto do arquivo (file://). '
+    + 'Nesse modo o navegador bloqueia o login, a câmera e o funcionamento offline. '
     + 'Publique no GitHub Pages ou rode um servidor local na pasta: python -m http.server 8000';
   if (barra) { barra.textContent = texto; barra.hidden = false; }
   const erro = document.getElementById('login-erro');
@@ -2049,5 +2079,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR };
 }
