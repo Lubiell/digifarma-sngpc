@@ -67,6 +67,11 @@ servidor de longe, ainda não executado no Windows.
   mostra o que a ANVISA respondeu. O relatório de 17/10 mostrou o envio de
   14/10 (movimento de 13/10) RECUSADO: Escitalopram 1.0525.0045.003-8, lote
   BQ37M006, venda maior que o estoque; o de 15/10 ainda sem validação.
+- 17/10: "Buscar nos XML" com um lote traz no fim a ficha do lote lida do
+  banco do Digifarma (entradas, vendas, perdas e transferências desde o
+  início, saldo linha a linha, se passou do ponteiro) e compara cada período
+  de XML guardado com o Digifarma, apontando onde diferem e o que caiu em
+  dias sem XML. Para achar a diferença de 2 do BQ37M006 antes de 13/10.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade

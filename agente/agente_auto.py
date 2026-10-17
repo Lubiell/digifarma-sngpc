@@ -5664,6 +5664,20 @@ def modo_buscar_xml(config, alvo='', so_lote=False):
         datas += [d for d in (de, ate) if d]
         lidos.append((os.path.relpath(caminho, pasta), de, ate, dados.get('movimentos') or {}))
 
+    cobertos = [(de, ate) for _, de, ate, _ in lidos if de and ate]
+    fichas = {}
+    lotes_buscados = [p['lote'] for p in procurados if p['lote']]
+    if lotes_buscados and alvo:
+        try:
+            conexao = conectar_firebird(config)
+            try:
+                for lote in lotes_buscados:
+                    fichas[lote] = ficha_do_lote(conexao, lote)
+            finally:
+                fechar(conexao)
+        except (Exception, SystemExit) as e:
+            registrar('Ficha do lote: não abri o banco (%s).' % type(e).__name__)
+
     print('BUSCA NOS XML DE TRANSMISSÃO')
     print('=' * 78)
     print('Pasta: %s' % pasta)
@@ -5682,6 +5696,7 @@ def modo_buscar_xml(config, alvo='', so_lote=False):
         print(rotulo)
         print('-' * 78)
         exatos, outros, conta = [], [], []
+        ficha = fichas.get(p['lote']) if p['lote'] else None
         for arquivo, de, ate, movimentos in lidos:
             for tipo, balde in movimentos.items():
                 for (ms, lote), reg in balde.items():
@@ -5704,7 +5719,112 @@ def modo_buscar_xml(config, alvo='', so_lote=False):
             print(l)
         if p['lote'] and conta:
             imprimir_conta_do_lote(conta)
+        if p['lote'] and ficha is not None:
+            imprimir_ficha_do_lote(ficha, conta, cobertos)
     return True
+
+
+# A ficha do lote no Digifarma: as MESMAS consultas do que vai ao SNGPC
+# (mesmos filtros de controlado, CFOP, venda paga, item não cancelado), com o
+# corte por ponteiro trocado por "desde sempre" e o lote no WHERE.
+COLUNA_LOTE_NA_CONSULTA = {'vendas': 'IVL.NUM_LOTE', 'entradas': 'L.NUM_LOTE',
+                           'perdas': 'PP.LOTE', 'transferencias': 'IL.NUM_LOTE'}
+DATA_NA_CONSULTA = {'vendas': 'DATA', 'entradas': 'DATA_RECEBIMENTO',
+                    'perdas': 'DATA', 'transferencias': 'DATA_EMISSAO'}
+DOC_NA_CONSULTA = {'vendas': 'VENDA_NOTA_ID', 'entradas': 'CAB_NOTA_ID',
+                   'perdas': 'PERDA_ID', 'transferencias': 'CAB_NOTA_ID'}
+PONTEIRO_DO_TIPO = {'vendas': 'ULT_SAIDA_VENDA_NOTA_ID', 'entradas': 'ULT_ENTRADA_CAB_NOTA_ID',
+                    'perdas': 'ULT_SAIDA_PERDA_ID', 'transferencias': 'ULT_SAIDA_TRANSFERENCIA_ID'}
+TIPO_DA_FICHA = {'vendas': 'venda', 'entradas': 'entrada', 'perdas': 'perda',
+                 'transferencias': 'transferencia'}
+
+
+def ficha_do_lote(conexao, lote):
+    """[{data, tipo, qtd, doc, nota, ms, transmitido}] do lote no Digifarma,
+    do mais antigo ao mais novo. Nada de paciente, prescritor ou receita."""
+    lote = texto(lote).strip().upper()
+    try:
+        ponteiros = (consultar(conexao, CONSULTAS['ponteiros']) or [{}])[0]
+    except Exception:
+        ponteiros = {}
+    linhas = []
+    for tipo, (base, antes, depois) in DESDE_A_FOTO.items():
+        sql = CONSULTAS[base]
+        if antes not in sql:
+            registrar('Ficha do lote: o WHERE de %s mudou de forma.' % tipo)
+            continue
+        sql = sql.replace(antes, '%s AND UPPER(TRIM(%s)) = ?' % (
+            depois, COLUNA_LOTE_NA_CONSULTA[tipo]))
+        try:
+            achados = consultar(conexao, sql, ('2000-01-01', lote))
+        except Exception as e:
+            registrar('Ficha do lote: falha ao ler %s: %s' % (tipo, type(e).__name__))
+            continue
+        ptr = int(numero(ponteiros.get(PONTEIRO_DO_TIPO[tipo])))
+        for l in achados:
+            doc = int(numero(l.get(DOC_NA_CONSULTA[tipo])))
+            linhas.append({
+                'data': texto(l.get(DATA_NA_CONSULTA[tipo]))[:10],
+                'tipo': TIPO_DA_FICHA[tipo],
+                'qtd': numero(l.get('QUANTIDADE')),
+                'doc': doc,
+                'nota': texto(l.get('NOTA_FISCAL')).strip(),
+                'ms': so_digitos(l.get('REGISTRO_MS')),
+                'transmitido': bool(ptr) and doc <= ptr,
+            })
+    linhas.sort(key=lambda x: (x['data'], 0 if x['tipo'] == 'entrada' else 1, x['doc']))
+    return linhas
+
+
+def imprimir_ficha_do_lote(ficha, conta_xml, cobertos):
+    """A ficha do Digifarma e, por dia, a diferença para os XML lidos."""
+    print()
+    print('  FICHA DO LOTE NO DIGIFARMA (tudo que entra no SNGPC, desde o início)')
+    if not ficha:
+        print('  nenhum movimento deste lote no banco do Digifarma.')
+        return
+    print('  %-10s %-13s %7s %8s  %-22s %s' % ('data', 'movimento', 'qtd', 'saldo', 'documento', 'passou do ponteiro?'))
+    saldo = 0
+    for m in ficha:
+        saldo += m['qtd'] if m['tipo'] == 'entrada' else -m['qtd']
+        doc = ('NF %s (nota %d)' % (m['nota'], m['doc'])) if m['nota'] else ('nº %d' % m['doc'])
+        print('  %-10s %-13s %7g %8g  %-22s %s' % (
+            br(m['data']), m['tipo'], m['qtd'], saldo, doc[:22], 'sim' if m['transmitido'] else 'NÃO'))
+    print('  saldo pelo Digifarma: %g' % saldo)
+    outros_ms = sorted({m['ms'] for m in ficha if m['ms']})
+    if len(outros_ms) > 1:
+        print('  ATENÇÃO: o mesmo lote aparece com %d M.S. diferentes: %s' % (len(outros_ms), ', '.join(outros_ms)))
+
+    # por período de XML: o que o Digifarma tem contra o que o XML levou
+    def somar(itens):
+        e = sum(q for t, q in itens if t == 'entrada')
+        return e, sum(q for t, q in itens if t != 'entrada')
+    xml_por_periodo, vistos = {}, set()
+    for de, ate, tipo, ms, qtd in conta_xml or []:
+        if (de, ate, tipo, ms, qtd) in vistos:
+            continue
+        vistos.add((de, ate, tipo, ms, qtd))
+        xml_por_periodo.setdefault((de, ate), []).append((tipo, qtd))
+    periodos = sorted(set(cobertos))
+    print()
+    print('  DIGIFARMA x XML, POR PERÍODO DE ENVIO (entrada/saída)')
+    diferencas = 0
+    for de, ate in periodos:
+        d = somar([(m['tipo'], m['qtd']) for m in ficha if de <= m['data'] <= ate])
+        x = somar(xml_por_periodo.get((de, ate), []))
+        if d == x:
+            continue
+        diferencas += 1
+        print('  %-25s Digifarma %g/%g  XML %g/%g  <- DIFERENTE' % (
+            '%s a %s' % (br(de), br(ate)), d[0], d[1], x[0], x[1]))
+    fora = [m for m in ficha if not any(de <= m['data'] <= ate for de, ate in periodos)]
+    if not diferencas:
+        print('  nos períodos que têm XML guardado, o Digifarma e o XML batem.')
+    if fora:
+        e, s_ = somar([(m['tipo'], m['qtd']) for m in fora])
+        print('  %d movimento(s) em dias sem XML guardado (entrada %g, saída %g): não dá'
+              % (len(fora), e, s_))
+        print('  para comparar daqui — confira esses no Relatório do site da ANVISA.')
 
 
 def conta_do_lote(movimentos):
