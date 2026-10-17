@@ -31,6 +31,11 @@ O XML tem nome e CPF de paciente e de prescritor.
   É a mais limpa, sem senha nova, mas depende do Digifarma e não tem prazo.
   O código de B atende C sem mudança: basta apontar a pasta.
 
+## Situação (17/10)
+Implementado (PR #32), mas não ativado: a farmácia decidiu enviar o SNGPC só
+pelo servidor. Sem computador cadastrado o agente não lê a rede. Para ativar
+um dia, basta seguir esta spec a partir do COMPARTILHAR_XML.bat.
+
 ## Solução escolhida
 B, e C quando o Digifarma responder. O agente ganha `pastas_xml_rede` no
 config: uma lista de `{computador, senha}`. A cada sincronização ele conecta

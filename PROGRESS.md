@@ -54,6 +54,12 @@ servidor de longe, ainda não executado no Windows.
   cadastra nome e senha; o agente traz o XML para enviados\ do servidor
   (sngpc_AAAA-MM-DD_<PC>.xml). O PowerShell do .bat não foi executado aqui
   (sem Windows): o primeiro uso é o teste.
+- 17/10: decisão da farmácia: os envios ao SNGPC passam a sair SÓ do servidor.
+  O COMPARTILHAR_XML.bat não será rodado; o código de rede fica parado (sem
+  computador em pastas_xml_rede não faz nada). Teste pendente: depois do
+  próximo envio pelo servidor, rodar Login SNGPC — se HASH_ULT_ENVIO mudar,
+  os envios do balcão eram a causa do hash parado desde 08/10 e o aceite
+  passa a vir sozinho pela API; se não mudar, mandar o chamado ao Digifarma.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade
