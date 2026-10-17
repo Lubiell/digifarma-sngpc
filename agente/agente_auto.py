@@ -2894,6 +2894,9 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
         'arquivo': (dados_xml or {}).get('arquivo'),
         'periodoDe': periodo_de,
         'periodoAte': periodo_ate,
+        # só o fim escrito no XML; o periodoAte cai para o último envio
+        # registrado quando o cabeçalho não tem data
+        'fimNoXml': texto(cabecalho.get('dataFim'))[:10],
     }
     if dados_xml and periodo_de and periodo_ate:
         saidas = consultar(conexao, CONSULTAS['saidas_periodo'], (periodo_de, periodo_ate))
@@ -5152,6 +5155,7 @@ def modo_anvisa(config):
 
 
 NOME_PENDENTE = {
+    'vendas': 'VENDAS',
     'saidas': 'VENDAS',
     'entradas': 'ENTRADAS (notas de compra)',
     'perdas': 'PERDAS',
@@ -5510,7 +5514,28 @@ def modo_pendentes(config):
             if texto(l.get('data'))[:10] < ontem:
                 atrasados += 1
 
-    if atrasados:
+    # O ponteiro parado engana o "ontem ou hoje": em 17/10 o envio das
+    # vendas de 16/10 foi aceito e o Digifarma não registrou (ponteiro e
+    # último envio ficaram como antes). O XML arquivado diz o que já foi.
+    xml = dados.get('conferenciaXmlResumo') or {}
+    ate_xml = texto(xml.get('fimNoXml'))[:10] if xml.get('temXml') else ''
+    ja_no_xml = [l for l in pendentes.get('vendas') or []
+                 if ate_xml and texto(l.get('data'))[:10] and texto(l.get('data'))[:10] <= ate_xml]
+    if ja_no_xml:
+        try:
+            comeco = br((datetime.date.fromisoformat(ate_xml) + datetime.timedelta(days=1)).isoformat())
+        except ValueError:
+            comeco = 'o dia seguinte'
+        print('*** ATENÇÃO: %d venda(s) daqui têm data até %s, e o último XML de envio'
+              % (len(ja_no_xml), br(ate_xml)))
+        print('(%s) já cobre esse período. Se esse envio foi aceito (confira em'
+              % (os.path.basename(texto(xml.get('arquivo'))) or 'arquivado'))
+        print('Aceites), o Digifarma não registrou que enviou — último envio')
+        print('registrado: %s, venda %s — e pode mandar essas vendas de novo.'
+              % (br(envio.get('data')), envio.get('ULT_SAIDA_VENDA_NOTA_ID') or '?'))
+        print('No próximo envio o período tem de começar em %s. Se começar antes,' % comeco)
+        print('não envie: peça ao suporte do Digifarma para acertar o ponteiro.')
+    elif atrasados:
         print('*** %d movimento(s) de ANTES DE ONTEM ainda aqui.' % atrasados)
         print('A venda do dia sobe no dia seguinte, então isso passou do')
         print('ritmo: é envio que não aconteceu, e explica divergência de')
@@ -5520,7 +5545,9 @@ def modo_pendentes(config):
         print('venda do dia sobe no dia seguinte.')
     print('')
 
-    for tipo in ('saidas', 'entradas', 'perdas', 'transferencias'):
+    # a chave das vendas é 'vendas' (montar_inventario); 'saidas' ficava
+    # sem nada, e a lista saía só com o total
+    for tipo in ('vendas', 'entradas', 'perdas', 'transferencias'):
         linhas_tipo = pendentes.get(tipo) or []
         if not linhas_tipo:
             continue
@@ -5535,7 +5562,9 @@ def modo_pendentes(config):
         for dia in sorted(por_dia):
             do_dia = por_dia[dia]
             soma = round(sum(numero(l.get('quantidade')) for l in do_dia), 3)
-            if dia == hoje:
+            if tipo == 'vendas' and ja_no_xml and dia and dia <= ate_xml:
+                quando = 'JÁ NO ÚLTIMO XML'
+            elif dia == hoje:
                 quando = 'sobe amanhã'
             elif dia == ontem:
                 quando = 'sobe hoje'

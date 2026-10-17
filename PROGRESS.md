@@ -80,6 +80,14 @@ servidor de longe, ainda não executado no Windows.
   token, hash, CPF e CNPJ mascarados. O agente passa a registrar "XML de
   envio arquivado" — para saber por que os XML de 14 e 15/10 não estão no
   servidor.
+  Resultado: o agente rodou toda hora; os XML de 14 e 15/10 foram gerados
+  em outro computador.
+- 17/10: o envio de 17/10 (vendas de 16/10) foi aceito, mas o Digifarma não
+  o registrou: ponteiro de venda parado em 48513 e último envio 16/10. O
+  relatório Pendentes não listava as vendas (procurava a chave 'saidas',
+  que é 'vendas') e dizia "nada atrasado"; agora lista e aponta a venda que
+  o último XML já levou, com o dia em que o próximo envio tem de começar.
+  Envio de 19/10 (17 e 18/10): conferir que o período começa em 17/10.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade
