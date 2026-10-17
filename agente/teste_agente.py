@@ -934,6 +934,16 @@ def principal():
                     for p in partes[:-1]:
                         no = no.get(p, {})
                     no.pop(partes[-1], None)
+
+                def update(self, valores):
+                    no = db.arvore
+                    for p in partes:
+                        no = no.setdefault(p, {})
+                    for k, v in valores.items():
+                        if v is None:
+                            no.pop(k, None)
+                        else:
+                            no[k] = v
             return Ref()
 
     def girar_fila(db):
@@ -980,6 +990,43 @@ def principal():
                  and enviados[0][2].startswith('Envio de 14/10/2026 marcado como RECUSADO por Bia — '
                                                'Quantidade vendida maior')
                  and '123.456' not in enviados[0][2], enviados)
+
+        # a senha do compartilhamento sai do pedido antes de qualquer coisa
+        recebido = []
+        guardado_rede = ag.guardar_pasta_rede
+        ag.guardar_pasta_rede = lambda _c, pc, senha: recebido.append((pc, senha)) or 'CAIXA cadastrado'
+        try:
+            arvore['farmacia']['comando'] = {'acao': 'pasta_rede', 'texto': 'CAIXA',
+                                            'senha': 'Abc12-Def34', 'estado': 'pendente'}
+            girar_fila(db)
+        finally:
+            ag.guardar_pasta_rede = guardado_rede
+        comando = arvore['farmacia']['comando']
+        conferir('pedido do XML de outro computador: o agente recebe a senha e a apaga do Firebase',
+                 recebido == [('CAIXA', 'Abc12-Def34')] and 'senha' not in comando
+                 and comando.get('estado') == 'concluido', (recebido, comando))
+        arvore['farmacia'].pop('comando', None)
+
+        # sem conseguir apagar a senha do Firebase, não atende
+        recebido.clear()
+        class DbSemApagar(DbMemoria):
+            def reference(self, caminho):
+                ref = DbMemoria.reference(self, caminho)
+                if caminho == 'farmacia/comando':
+                    def recusar(_valores):
+                        raise RuntimeError('Permission denied')
+                    ref.update = recusar
+                return ref
+        teimoso = DbSemApagar({'farmacia': {'comando': {'acao': 'pasta_rede', 'texto': 'CAIXA',
+                                                       'senha': 'Abc12-Def34', 'estado': 'pendente'}}})
+        ag.guardar_pasta_rede = lambda _c, pc, senha: recebido.append((pc, senha)) or 'ok'
+        try:
+            girar_fila(teimoso)
+        finally:
+            ag.guardar_pasta_rede = guardado_rede
+        conferir('sem conseguir apagar a senha do pedido, o agente não atende e tenta na próxima volta',
+                 not recebido and teimoso.arvore['farmacia']['comando']['estado'] == 'pendente',
+                 (recebido, teimoso.arvore['farmacia']['comando']))
 
         sem_celular = DbMemoria({'farmacia': {'aceites': {'2026-10-13': antigo},
                                               'avisado': {'aceites': {'_desde': 'x'}}}})
@@ -1686,6 +1733,144 @@ def principal():
     saida, _ = rodar_api([(200, json.dumps(TOKEN)), (200, resposta_ok), (200, resposta_ok)])
     conferir('API: o relatório Login SNGPC procura hash nas outras tabelas, sem segredo',
              'colunas com HASH nas tabelas do Digifarma' in saida and sem_segredo(saida), saida)
+
+    # ------------------------------------------------------------
+    # XML dos outros computadores: só leitura, senha nunca na saída
+    # ------------------------------------------------------------
+    pasta_rede = tempfile.mkdtemp()
+    origem_pc = os.path.join(pasta_rede, 'caixa_compartilhado')
+    os.makedirs(origem_pc)
+    xml_pc = os.path.join(origem_pc, 'SNGPC.XML')
+    with open(xml_pc, 'w', encoding='utf-8') as f:
+        f.write('<mensagemSNGPC/>')
+    hora_pc = datetime.datetime(2026, 10, 15, 8, 1).timestamp()
+    os.utime(xml_pc, (hora_pc, hora_pc))
+    enviados_srv = os.path.join(pasta_rede, 'enviados')
+    arquivado = ag.arquivar_de(origem_pc, enviados_srv, '_CAIXA')
+    conferir('XML do caixa cai no enviados do servidor com a data do envio e o nome do computador',
+             os.path.basename(arquivado) == 'sngpc_2026-10-15_CAIXA.xml'
+             and abs(os.path.getmtime(arquivado) - hora_pc) < 2, arquivado)
+    conferir('pasta sem XML de envio não arquiva nada',
+             ag.arquivar_de(enviados_srv, os.path.join(pasta_rede, 'x')) is False)
+
+    SENHA_REDE = 'Kq7m2-X9fp3-Hh4tw-Pz8ra'
+    chamadas_net = []
+    class SaidaNet:
+        def __init__(self, codigo, texto_):
+            self.returncode, self.stdout, self.stderr = codigo, texto_, ''
+    def net_que(conecta):
+        def rodar(argumentos, **_k):
+            chamadas_net.append(argumentos)
+            if SENHA_REDE in argumentos:
+                return SaidaNet(0 if conecta else 86, 'Erro de sistema 86. senha ' + SENHA_REDE)
+            return SaidaNet(0, '')
+        return rodar
+    guardado_arquivar = ag.arquivar_de
+    ag.arquivar_de = lambda pasta, destino, sufixo='': (chamadas_net.append(['ARQUIVAR', pasta, sufixo])
+                                                         or os.path.join(destino, 'sngpc_2026-10-15%s.xml' % sufixo))
+    try:
+        trazido = ag.xml_de_um_computador('CAIXA', SENHA_REDE, enviados_srv, net_que(True))
+        conferir('rede: desconecta, conecta sem gravar credencial, arquiva e desconecta',
+                 [c[:2] for c in chamadas_net] == [['net', 'use'], ['net', 'use'], ['ARQUIVAR', '\\\\CAIXA\\SNGPC_XML$'], ['net', 'use']]
+                 and chamadas_net[1][-2:] == ['/user:CAIXA\\leitor_sngpc', '/persistent:no']
+                 and chamadas_net[3][-2:] == ['/delete', '/y']
+                 and trazido.endswith('_CAIXA.xml'), chamadas_net)
+        chamadas_net.clear()
+        try:
+            ag.xml_de_um_computador('CAIXA', SENHA_REDE, enviados_srv, net_que(False))
+            erro_net = ''
+        except RuntimeError as e:
+            erro_net = str(e)
+        conferir('rede: senha errada vira erro sem a senha e sem tentar ler',
+                 'não conectei em CAIXA' in erro_net and SENHA_REDE not in erro_net
+                 and not any(c[0] == 'ARQUIVAR' for c in chamadas_net), erro_net)
+        try:
+            ag.xml_de_um_computador('CAIXA & del', SENHA_REDE, enviados_srv, net_que(True))
+            invalido = False
+        except RuntimeError:
+            invalido = True
+        conferir('rede: nome de computador estranho não vira comando', invalido)
+
+        import subprocess as _sp
+        import traceback as _tb
+        def net_lento(argumentos, **_k):
+            raise _sp.TimeoutExpired(['net'] + list(argumentos), 20)
+        try:
+            ag.rodar_net(['use', '\\\\CAIXA\\SNGPC_XML$', SENHA_REDE], [SENHA_REDE], net_lento)
+            rastro = ''
+        except RuntimeError:
+            rastro = _tb.format_exc()
+        conferir('rede: computador que não responde não põe a senha no traceback do log',
+                 'não respondeu' in rastro and SENHA_REDE not in rastro, rastro)
+        guardado_cfg0 = ag.ARQUIVO_CONFIG
+        ag.ARQUIVO_CONFIG = os.path.join(pasta_rede, 'cfg_lento.json')
+        try:
+            def testar_lento(pc, senha, destino):
+                ag.rodar_net(['use', 'x', senha], [senha], net_lento)
+            try:
+                ag.guardar_pasta_rede({'pasta_xml': pasta_rede}, 'CAIXA', SENHA_REDE, testar=testar_lento)
+                rastro = ''
+            except RuntimeError:
+                rastro = _tb.format_exc()
+        finally:
+            ag.ARQUIVO_CONFIG = guardado_cfg0
+        conferir('cadastro: falha no meio não encadeia a exceção com a senha',
+                 rastro and SENHA_REDE not in rastro, rastro)
+        conferir('rede: IP não serve de nome (conta local precisa do nome do computador)',
+                 not ag.NOME_DE_COMPUTADOR.match('192.168.100.20'))
+
+        situacoes = []
+        guardado_net = ag.rodar_net
+        def net_por_pc(argumentos, segredos=(), rodar=None):
+            if 'FARMA' in argumentos[1] and len(argumentos) > 3 and argumentos[2] != '/delete':
+                return 2, 'O nome da rede não foi encontrado. ' + ' '.join(segredos)
+            return 0, ''
+        ag.rodar_net = net_por_pc
+        try:
+            trazidos, situacoes = ag.copiar_xml_da_rede({
+                'pasta_xml': pasta_rede,
+                'pastas_xml_rede': [{'computador': 'caixa', 'senha': SENHA_REDE},
+                                    {'computador': 'FARMA', 'senha': 'Outra-Senha-123'}]})
+        finally:
+            ag.rodar_net = guardado_net
+        conferir('rede: um computador desligado não impede o outro, e nada de senha na situação',
+                 len(trazidos) == 1 and [l['computador'] for l in situacoes] == ['CAIXA', 'FARMA']
+                 and situacoes[0]['ok'] and not situacoes[1]['ok']
+                 and SENHA_REDE not in json.dumps(situacoes) and 'Outra-Senha' not in json.dumps(situacoes),
+                 situacoes)
+    finally:
+        ag.arquivar_de = guardado_arquivar
+
+    guardado_cfg = ag.ARQUIVO_CONFIG
+    ag.ARQUIVO_CONFIG = os.path.join(pasta_rede, 'agente_config.json')
+    try:
+        with open(ag.ARQUIVO_CONFIG, 'w', encoding='utf-8') as f:
+            json.dump({'pasta_xml': pasta_rede, 'outra': 1}, f)
+        cfg = {'pasta_xml': pasta_rede}
+        def nao_le(pc, senha, destino):
+            raise RuntimeError('não conectei em %s (senha %s)' % (pc, senha))
+        try:
+            ag.guardar_pasta_rede(cfg, 'caixa', SENHA_REDE, testar=nao_le)
+            recusado = ''
+        except RuntimeError as e:
+            recusado = str(e)
+        gravado = json.load(open(ag.ARQUIVO_CONFIG, encoding='utf-8'))
+        conferir('cadastro: só grava depois de conseguir ler, e o erro não mostra a senha',
+                 recusado and SENHA_REDE not in recusado and 'pastas_xml_rede' not in gravado, recusado)
+        recado = ag.guardar_pasta_rede(cfg, 'caixa', SENHA_REDE,
+                                       testar=lambda pc, senha, destino: os.path.join(destino, 'sngpc_2026-10-15_CAIXA.xml'))
+        gravado = json.load(open(ag.ARQUIVO_CONFIG, encoding='utf-8'))
+        conferir('cadastro: grava o computador no config sem apagar o resto, e o recado não tem a senha',
+                 gravado.get('pastas_xml_rede') == [{'computador': 'CAIXA', 'senha': SENHA_REDE}]
+                 and gravado.get('outra') == 1 and SENHA_REDE not in recado
+                 and 'sngpc_2026-10-15_CAIXA.xml' in recado, (gravado, recado))
+        ag.guardar_pasta_rede(cfg, 'CAIXA', '')
+        gravado = json.load(open(ag.ARQUIVO_CONFIG, encoding='utf-8'))
+        conferir('cadastro: senha em branco tira o computador da lista',
+                 gravado.get('pastas_xml_rede') == [] and cfg['pastas_xml_rede'] == [], gravado)
+    finally:
+        ag.ARQUIVO_CONFIG = guardado_cfg
+        shutil.rmtree(pasta_rede, ignore_errors=True)
 
     saida, pedidos = rodar_api([], senha='')
     conferir('API: sem senha guardada não chama nada', not pedidos and 'nada a testar' in saida, saida)

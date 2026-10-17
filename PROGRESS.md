@@ -45,6 +45,15 @@ servidor de longe, ainda não executado no Windows.
   aba Servidor mostra "Última atualização" com data, origem e motivo da
   falha. Vale depois que o servidor receber esta versão uma vez (botão ou a
   troca diária de 20 h).
+- 17/10: os envios saem de três computadores (servidor, caixa, farmacêutico),
+  e o XML fica no disco de quem enviou. Spec aprovada
+  (docs/specs/2026-10-16-xml-dos-outros-computadores.md): o
+  agente/COMPARTILHAR_XML.bat, rodado uma vez em cada computador, compartilha
+  a pasta do SNGPC.XML como SNGPC_XML$, somente leitura, para o usuário
+  leitor_sngpc e só para o IP do servidor; no app, "XML de outro computador"
+  cadastra nome e senha; o agente traz o XML para enviados\ do servidor
+  (sngpc_AAAA-MM-DD_<PC>.xml). O PowerShell do .bat não foi executado aqui
+  (sem Windows): o primeiro uso é o teste.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade

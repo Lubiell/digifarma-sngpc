@@ -1255,6 +1255,7 @@ function pintarAgente() {
       ['Arquivo do agente', a.bytes ? a.bytes + ' bytes · ' + (a.hash || '') : 'o agente não publicou — versão antiga no servidor'],
       ['Agente gravado em', a.em ? dataHora(a.em) : '—'],
       ['Última atualização', textoDaAtualizacao(a.ultimaAtualizacao)],
+      ['XML de outros computadores', textoXmlRede(estado.inventario?.xmlRede)],
       ['Última passagem', estado.inventario?.vistoEm ? dataHora(estado.inventario.vistoEm) : 'o agente não publicou vistoEm — versão antiga no servidor'],
       ['Último resultado', estado.inventario?.atualizadoEm ? dataHora(estado.inventario.atualizadoEm) : '—'],
       ['Conta de serviço', a.chave?.conta || '—'],
@@ -1396,6 +1397,59 @@ function pintarFerramentas() {
     });
   };
   alvo.appendChild(busca);
+
+  /* O caixa e o computador do farmaceutico tambem transmitem, e o XML fica
+     no disco de quem enviou. Depois do COMPARTILHAR_XML.bat naquele
+     computador, aqui se digita o nome e a senha que ele mostrou. A senha
+     passa pelo pedido e o agente a apaga dali na primeira passagem. */
+  const rede = criar('button', 'botao botao-fantasma');
+  rede.textContent = 'XML de outro computador';
+  rede.onclick = () => {
+    const corpo = criar('div');
+    const p = criar('p', 'sublinha');
+    p.textContent = 'Nome e senha que o COMPARTILHAR_XML.bat mostrou no outro computador. '
+      + 'Senha em branco tira o computador da lista.';
+    const nome = criar('input', 'busca');
+    nome.placeholder = 'Nome do computador, ex.: CAIXA-01';
+    nome.autocomplete = 'off';
+    const senha = criar('input', 'busca');
+    senha.type = 'password';
+    senha.placeholder = 'Senha';
+    senha.autocomplete = 'new-password';
+    corpo.append(p, nome, senha);
+    abrirModal({
+      titulo: 'XML de outro computador',
+      corpo,
+      acoes: [
+        { texto: 'Cancelar', aoClicar: fecharModal },
+        { texto: 'Gravar', estilo: 'botao-principal', aoClicar: () => {
+          const computador = nome.value.trim().toUpperCase();
+          if (!/^[A-Z0-9][A-Z0-9_-]{0,14}$/.test(computador)) {
+            avisar('Nome de computador inválido: use o que o COMPARTILHAR_XML.bat mostrou.');
+            return;
+          }
+          fecharModal();
+          gravarPedido({
+            acao: 'pasta_rede', texto: computador, senha: senha.value,
+            pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+          }).then((ok) => {
+            if (ok) avisar('Pedido gravado. O agente testa a leitura na proxima passagem dele.');
+          })
+            .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
+        } }
+      ]
+    });
+  };
+  alvo.appendChild(rede);
+}
+
+/* Situacao de cada computador cadastrado, como o agente publicou. */
+function textoXmlRede(lista) {
+  if (!Array.isArray(lista) || !lista.length) return 'nenhum computador cadastrado (só o servidor)';
+  return lista.map((l) => (l.computador || '?') + ': '
+    + (l.ok ? (l.arquivo ? 'ok, último ' + l.arquivo : 'ok, sem XML de envio lá')
+      : 'FALHOU: ' + (l.erro || 'sem mensagem'))
+    + (l.em ? ' (' + dataHora(l.em) + ')' : '')).join(' · ');
 }
 
 function relatorioMaisNovo() {
@@ -1827,5 +1881,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede };
 }

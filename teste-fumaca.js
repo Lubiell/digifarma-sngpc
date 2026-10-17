@@ -467,6 +467,17 @@ if (exportado.detalheDoSaldo) {
   });
 }
 
+if (exportado.textoXmlRede) {
+  conferir('servidor: mostra a situação do XML de cada computador, sem senha', () => {
+    if (!exportado.textoXmlRede(undefined).includes('só o servidor')) throw new Error('vazio');
+    const t = exportado.textoXmlRede([
+      { computador: 'CAIXA', ok: true, arquivo: 'sngpc_2026-10-15_CAIXA.xml', em: '2026-10-17T08:00:00' },
+      { computador: 'FARMA', ok: false, erro: 'não conectei em FARMA (O nome da rede não foi encontrado.)' }]);
+    if (!t.includes('CAIXA: ok, último sngpc_2026-10-15_CAIXA.xml') || !t.includes('FARMA: FALHOU: não conectei'))
+      throw new Error(t);
+  });
+}
+
 if (exportado.textoDaAtualizacao) {
   conferir('servidor: mostra a última atualização do agente e o motivo da falha', () => {
     const vazio = exportado.textoDaAtualizacao(undefined);
