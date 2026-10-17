@@ -33,32 +33,51 @@ O XML tem nome e CPF de paciente e de prescritor.
 
 ## Solução escolhida
 B, e C quando o Digifarma responder. O agente ganha `pastas_xml_rede` no
-config: uma lista de `{caminho, usuario, senha}`. A cada sincronização ele
-conecta (`net use`, sem gravar credencial no Windows), copia os XML de envio
-novos, desconecta, e a conferência e os Aceites passam a ler `enviados\` mais
-`enviados_rede\*\`. O relatório Login SNGPC passa a tentar a fórmula do hash
-também nesses arquivos.
+config: uma lista de `{computador, senha}`. A cada sincronização ele conecta
+(`net use`, sem gravar credencial no Windows), copia o XML de envio,
+desconecta. Detalhes em "Mudanças na implementação".
+
+## Mudanças na implementação (17/10)
+- **Pasta compartilhada:** não é `enviados\`, que é criada pelo agente e só
+  existe no servidor. É a pasta onde o Digifarma do computador grava o
+  `SNGPC.XML` (o `.bat` acha sozinha, a padrão é
+  `C:\Digifarma\Aplicativos\VerificaXML`).
+- **Onde ficam as cópias:** a cada sincronização o agente copia o XML de
+  lá para o `enviados\` do servidor como `sngpc_AAAA-MM-DD_<COMPUTADOR>.xml`.
+  A conferência, os Aceites e a busca da fórmula do hash leem esses arquivos
+  sem outra mudança. Vale o XML mais novo entre o do servidor e os da rede.
+- **Caminho da senha:** o servidor não tem tela para digitar a senha. Ela é
+  digitada no app (botão "XML de outro computador"), passa pelo pedido em
+  `farmacia/comando` (que só os autorizados leem) e o agente a apaga dali
+  na primeira passagem, antes de atender. Depois fica só no
+  `agente_config.json`. O computador só é gravado no config se o agente
+  conseguir ler a pasta de lá. Mesmo com a senha vazada, ela só serve a
+  partir do IP do servidor, e só para ler.
 
 ## Fora de escopo
 - Gravar, apagar ou mudar qualquer arquivo nos outros computadores. O acesso é
   somente leitura.
 - Publicar no Firebase mais do que hoje. O XML não sobe; sobe só o resultado
   da conferência, como já acontece com o do servidor.
-- Compartilhar outra pasta que não `enviados\`, ou dar acesso a qualquer outro
-  usuário ou IP.
+- Compartilhar outra pasta que não a do `SNGPC.XML`, ou dar acesso a qualquer
+  outro usuário ou IP.
+- Recuperar envios antigos: o Digifarma sobrescreve o `SNGPC.XML` a cada
+  envio, então de cada computador só vem o último envio feito nele, e daí
+  em diante cada novo.
 - Domínio, Active Directory, OneDrive ou serviço de nuvem.
 
 ## Arquivos afetados
 `agente/agente_auto.py`, `agente/teste_agente.py`,
-`agente/COMPARTILHAR_XML.bat` (novo), `agente/teste_bat.py` ou `teste_bat.py`,
-`PROGRESS.md`, `.gitignore` (`enviados_rede/`).
+`agente/COMPARTILHAR_XML.bat` (novo), `agente/regras-firebase.json` (ação
+`pasta_rede`), `app.js`, `sw.js`, `teste-fumaca.js`, `PROGRESS.md`.
 
 ## Como saber que deu certo
 - O `COMPARTILHAR_XML.bat` imprime o caminho, e do servidor
   `dir \\COMPUTADOR\SNGPC_XML$` lista os XML.
 - Tentar gravar no compartilhamento a partir do servidor dá "acesso negado".
-- Na aba XML aparecem os envios de 12, 14 e 15/10 feitos no caixa e no
-  computador do farmacêutico.
+- A aba Servidor mostra "CAIXA: ok, último sngpc_…_CAIXA.xml", e o próximo
+  envio feito no caixa ou no computador do farmacêutico entra na conferência
+  do XML e nos Aceites.
 - Testes simulam pasta de rede fora do ar e senha errada sem derrubar a
   sincronização, e confirmam que nenhuma senha vai para log, Firebase ou tela.
 

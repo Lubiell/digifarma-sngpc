@@ -790,7 +790,21 @@ def arquivar_xml(config):
     if not os.path.isdir(pasta):
         registrar('Pasta do XML não encontrada: %s' % pasta)
         return None
+    destino = arquivar_de(pasta, os.path.join(pasta, 'enviados'))
+    if destino is False:
+        registrar('Nenhum XML de envio em %s' % pasta)
+        return None
+    return destino
 
+
+def arquivar_de(pasta, destino_pasta, sufixo=''):
+    """O XML de envio de `pasta` vira destino_pasta\\sngpc_AAAA-MM-DD<sufixo>.xml.
+    False quando não há XML de envio; None quando o .zip não tem XML.
+
+    O sufixo é o nome do computador que enviou: os envios do caixa e do
+    farmacêutico caem no mesmo enviados\\ do servidor sem sobrescrever o
+    envio do mesmo dia feito no servidor, e quem lê pela data (os 10
+    caracteres depois de "sngpc_") não muda nada."""
     origem = None
     for nome in XML_DE_ENVIO:
         caminho = os.path.join(pasta, nome)
@@ -798,13 +812,12 @@ def arquivar_xml(config):
             origem = caminho
             break
     if not origem:
-        registrar('Nenhum XML de envio em %s' % pasta)
-        return None
+        return False
 
-    data = datetime.datetime.fromtimestamp(os.path.getmtime(origem)).strftime('%Y-%m-%d')
-    destino_pasta = os.path.join(pasta, 'enviados')
+    hora = os.path.getmtime(origem)
+    data = datetime.datetime.fromtimestamp(hora).strftime('%Y-%m-%d')
     os.makedirs(destino_pasta, exist_ok=True)
-    destino = os.path.join(destino_pasta, 'sngpc_%s.xml' % data)
+    destino = os.path.join(destino_pasta, 'sngpc_%s%s.xml' % (data, sufixo))
 
     if origem.lower().endswith('.zip'):
         import zipfile
@@ -814,10 +827,121 @@ def arquivar_xml(config):
                 return None
             with z.open(nomes[0]) as f, open(destino, 'wb') as saida:
                 shutil.copyfileobj(f, saida)
+        # a hora do envio, não a da cópia: é por ela que se acha o mais novo
+        os.utime(destino, (hora, hora))
     elif not os.path.exists(destino) or os.path.getmtime(origem) > os.path.getmtime(destino):
         shutil.copy2(origem, destino)
 
     return destino
+
+
+# ------------------------------------------------------------
+# XML dos outros computadores (spec 2026-10-16-xml-dos-outros-computadores)
+# ------------------------------------------------------------
+# O caixa e o computador do farmacêutico também transmitem, e o Digifarma
+# grava o SNGPC.XML no disco de quem enviou. O COMPARTILHAR_XML.bat, rodado
+# uma vez em cada um, compartilha essa pasta SOMENTE LEITURA, só para o IP
+# do servidor, para um usuário próprio. Aqui o agente só lê.
+PASTA_REDE_XML = 'SNGPC_XML$'
+USUARIO_REDE_XML = 'leitor_sngpc'
+COMPUTADORES_REDE_MAX = 5
+NOME_DE_COMPUTADOR = re.compile(
+    r'^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,14}|\d{1,3}(?:\.\d{1,3}){3})$')
+
+
+def rodar_net(argumentos, segredos=(), rodar=None):
+    """(código, saída) do `net`, com os segredos tirados da saída."""
+    import subprocess
+    rodar = rodar or subprocess.run
+    r = rodar(['net'] + list(argumentos), capture_output=True, text=True, timeout=60,
+              stdin=subprocess.DEVNULL,
+              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    saida = ' '.join(((r.stdout or '') + ' ' + (r.stderr or '')).split())
+    for segredo in segredos:
+        if segredo:
+            saida = saida.replace(segredo, '***')
+    return r.returncode, saida[:200]
+
+
+def xml_de_um_computador(computador, senha, destino_pasta, rodar=None):
+    """Conecta em \\\\COMPUTADOR\\SNGPC_XML$, arquiva o XML de envio de lá
+    e desconecta. Sem gravar credencial no Windows (/persistent:no)."""
+    if not NOME_DE_COMPUTADOR.match(computador or ''):
+        raise RuntimeError('nome de computador inválido: use o nome que o '
+                           'COMPARTILHAR_XML.bat mostrou')
+    unc = '\\\\%s\\%s' % (computador, PASTA_REDE_XML)
+    rodar_net(['use', unc, '/delete', '/y'], rodar=rodar)
+    codigo, saida = rodar_net(
+        ['use', unc, senha, '/user:%s\\%s' % (computador, USUARIO_REDE_XML),
+         '/persistent:no'], [senha], rodar)
+    if codigo != 0:
+        raise RuntimeError('não conectei em %s (%s)' % (computador, saida or 'sem mensagem'))
+    try:
+        caminho = arquivar_de(unc, destino_pasta, '_' + computador.upper().replace('.', '-'))
+    finally:
+        rodar_net(['use', unc, '/delete', '/y'], rodar=rodar)
+    return caminho or None
+
+
+def copiar_xml_da_rede(config, rodar=None):
+    """Traz o XML de envio de cada computador cadastrado. Devolve
+    ([arquivos trazidos], [situação por computador, sem senha])."""
+    itens = [i for i in (config.get('pastas_xml_rede') or []) if isinstance(i, dict)]
+    if not itens:
+        return [], []
+    destino = os.path.join(config.get('pasta_xml') or PASTA, 'enviados')
+    trazidos, situacao = [], []
+    for item in itens[:COMPUTADORES_REDE_MAX]:
+        computador = texto(item.get('computador')).strip().upper()
+        senha = texto(item.get('senha'))
+        linha = {'computador': computador,
+                 'em': datetime.datetime.now().isoformat(timespec='seconds')}
+        try:
+            caminho = xml_de_um_computador(computador, senha, destino, rodar)
+            linha.update(ok=True, arquivo=os.path.basename(caminho) if caminho else None)
+            if caminho:
+                trazidos.append(caminho)
+        except Exception as e:
+            erro = texto(e).replace(senha, '***') if senha else texto(e)
+            registrar('XML de %s: %s' % (computador, erro))
+            linha.update(ok=False, erro=erro[:200])
+        situacao.append(linha)
+    return trazidos, situacao
+
+
+def guardar_pasta_rede(config, computador, senha, testar=None):
+    """O botão do app: cadastra (com senha) ou tira (senha vazia) um
+    computador. Só cadastra depois de conseguir ler o XML de lá."""
+    testar = testar or xml_de_um_computador
+    computador = texto(computador).strip().upper()
+    if not NOME_DE_COMPUTADOR.match(computador):
+        raise RuntimeError('nome de computador inválido: "%s"' % computador[:20])
+    atual = {}
+    if os.path.exists(ARQUIVO_CONFIG):
+        with open(ARQUIVO_CONFIG, encoding='utf-8') as f:
+            atual = json.load(f)
+    lista = [i for i in (atual.get('pastas_xml_rede') or [])
+             if isinstance(i, dict) and texto(i.get('computador')).upper() != computador]
+    if senha:
+        if len(lista) >= COMPUTADORES_REDE_MAX:
+            raise RuntimeError('já há %d computadores cadastrados' % COMPUTADORES_REDE_MAX)
+        try:
+            caminho = testar(computador, senha,
+                             os.path.join(config.get('pasta_xml') or PASTA, 'enviados'))
+        except Exception as e:
+            raise RuntimeError(texto(e).replace(senha, '***'))
+        lista.append({'computador': computador, 'senha': senha})
+        recado = ('%s cadastrado: o agente traz o XML de lá a cada sincronização. %s'
+                  % (computador, 'Último envio de lá: %s.' % os.path.basename(caminho)
+                     if caminho else 'Ainda não há XML de envio na pasta de lá.'))
+    else:
+        recado = '%s tirado da lista: o agente não lê mais o XML de lá.' % computador
+    atual['pastas_xml_rede'] = lista
+    with open(ARQUIVO_CONFIG + '.novo', 'w', encoding='utf-8') as f:
+        json.dump(atual, f, indent=2, ensure_ascii=False)
+    os.replace(ARQUIVO_CONFIG + '.novo', ARQUIVO_CONFIG)
+    config['pastas_xml_rede'] = lista
+    return recado
 
 
 # ============================================================
@@ -2304,6 +2428,17 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
     # 2. XML da última transmissão
     # ------------------------------------------------------------
     caminho_xml = arquivar_xml(config)
+    try:
+        da_rede, situacao_rede = copiar_xml_da_rede(config)
+        if situacao_rede:
+            resultado['xmlRede'] = situacao_rede
+    except Exception as e:
+        registrar('Falha ao trazer o XML dos outros computadores (%s).' % type(e).__name__)
+        da_rede = []
+    # o último envio pode ter saído do caixa: vale o arquivo mais novo
+    candidatos = [c for c in [caminho_xml] + da_rede if c and os.path.exists(c)]
+    if candidatos:
+        caminho_xml = max(candidatos, key=os.path.getmtime)
     dados_xml = None
     if caminho_xml:
         try:
@@ -2844,7 +2979,8 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
         arquivos = sorted(
             n for n in os.listdir(pasta_enviados)
             if n.lower().startswith('sngpc_') and n.lower().endswith('.xml'))[-60:]
-        resultado['enviosConhecidos'] = [n[6:16] for n in arquivos]
+        # sngpc_2026-10-15.xml e sngpc_2026-10-15_CAIXA.xml são o mesmo dia
+        resultado['enviosConhecidos'] = sorted({n[6:16] for n in arquivos})
 
         periodos = {}
         # só os últimos: abrir 60 XMLs a cada sincronização custa caro, e
@@ -7064,6 +7200,9 @@ def atender_pedido(config, db, pedido):
                                  'Os avisos deste celular estão funcionando.', tokens)
         return 'Aviso de teste entregue a %d de %d celular(es).' % (entregues, len(tokens))
 
+    if acao == 'pasta_rede':
+        return guardar_pasta_rede(config, alvo, texto(pedido.get('senha')))
+
     if acao == 'config':
         recado = aplicar_config(config, pedido)
         # a mudança só aparece nos números depois de recalcular
@@ -7122,6 +7261,14 @@ def modo_fila(config):
         return
 
     acao = pedido.get('acao')
+    pedido = dict(pedido)  # a senha é lida desta cópia, depois de sair do Firebase
+    if pedido.get('senha') is not None:
+        # a senha do compartilhamento passa pelo pedido e sai dele na hora:
+        # fica só no agente_config.json do servidor
+        try:
+            ref.update({'senha': None})
+        except Exception as e:
+            registrar('Não consegui apagar a senha do pedido: %s' % e)
     registrar('Atendendo "%s" pedido por %s.' % (acao, pedido.get('pedidoPor')))
     try:
         recado = atender_pedido(config, db, pedido)
