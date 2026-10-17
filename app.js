@@ -1592,6 +1592,14 @@ function datasDeEnvio() {
   const envio = estado.inventario?.envio?.data;
   if (envio) datas.add(String(envio).slice(0, 10));
   lista('enviosConhecidos').forEach((d) => datas.add(String(d).slice(0, 10)));
+  // envio que so a API conhece (feito em outro computador, ou antes do
+  // agente arquivar): entra pela data em que a ANVISA recebeu
+  // (so se nenhuma linha que ja existe casou com ele pelo arquivo ou periodo,
+  // senao o mesmo envio apareceria duas vezes)
+  const jaCasados = new Set([...datas].map((d) => envioDaApi(d)).filter(Boolean));
+  (estado.inventario?.apiSngpc?.envios || []).forEach((e) => {
+    if (e.transmissao && !jaCasados.has(e)) datas.add(String(e.transmissao).slice(0, 10));
+  });
   return [...datas].filter(Boolean).sort().reverse();
 }
 
@@ -1678,6 +1686,17 @@ function envioDaApi(data) {
   return mesmos[0] || null;
 }
 
+/* Sem arquivo e sem periodo: a data do envio e a data em que a ANVISA
+   recebeu. E o caso dos envios colados do Relatorio Status de Transmissao. */
+function envioDaApiPelaData(data) {
+  const envios = (estado.inventario?.apiSngpc?.envios || [])
+    .filter((e) => !e.arquivo && String(e.transmissao || '').slice(0, 10) === data);
+  envios.sort((x, y) => String(y.transmissao || '').localeCompare(String(x.transmissao || '')));
+  return envios[0] || null;
+}
+
+const ESTADO_DA_API = { validado: 'aceito', com_erro: 'recusado' };
+
 function linhaDaApi(e) {
   const p = criar('p', 'sublinha');
   p.style.margin = '2px 0 0';
@@ -1695,8 +1714,50 @@ function pintarResumoApi() {
   if (!api || !api.consultadoEm) { p.hidden = true; return; }
   p.textContent = 'API da ANVISA consultada pelo agente em ' + dataHora(api.consultadoEm)
     + (api.erro ? ' — ' + api.erro + '.' : '.')
-    + (api.formulaDoHash ? '' : ' Só o último envio guardado pelo Digifarma pode ser consultado.');
+    + (api.formulaDoHash ? '' : ' O Digifarma só guarda o último envio: para os outros, toque em '
+      + '"Colar relatório da ANVISA".');
   p.hidden = false;
+}
+
+/* O Digifarma so guarda o hash do ultimo envio; o Relatorio Status de
+   Transmissao do site mostra o de todos. Colado aqui, o agente consulta cada
+   um na API oficial e os Aceites se preenchem. Os hashes passam pelo pedido
+   e o agente os apaga dali na primeira passagem. */
+function hashesDoTexto(t) {
+  return [...new Set((String(t || '').match(/(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/gi) || [])
+    .map((h) => h.toUpperCase()))];
+}
+
+function colarRelatorioAnvisa() {
+  const corpo = criar('div');
+  const p = criar('p', 'sublinha');
+  p.textContent = 'No site do SNGPC, abra o Relatório Status de Transmissão, selecione a página '
+    + 'toda, copie e cole aqui. O agente consulta cada envio na ANVISA e marca os Aceites.';
+  const campo = criar('textarea', 'busca');
+  campo.rows = 6;
+  campo.placeholder = 'Cole aqui o relatório (ou só os códigos de Hash Identificação)';
+  const conta = criar('p', 'sublinha');
+  campo.oninput = () => { conta.textContent = hashesDoTexto(campo.value).length + ' envio(s) encontrado(s)'; };
+  corpo.append(p, campo, conta);
+  abrirModal({
+    titulo: 'Colar relatório da ANVISA',
+    corpo,
+    acoes: [
+      { texto: 'Cancelar', aoClicar: fecharModal },
+      { texto: 'Enviar', estilo: 'botao-principal', aoClicar: () => {
+        const hashes = hashesDoTexto(campo.value);
+        if (!hashes.length) { avisar('Nenhum código de Hash Identificação no texto colado.'); return; }
+        fecharModal();
+        gravarPedido({
+          acao: 'hashes_anvisa', texto: hashes.slice(0, 40).join(' '),
+          pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+        }).then((ok) => {
+          if (ok) avisar(hashes.length + ' envio(s) enviado(s) ao agente. Em até 5 minutos os Aceites se atualizam.');
+        })
+          .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
+      } }
+    ]
+  });
 }
 
 function pintarAceites() {
@@ -1704,12 +1765,19 @@ function pintarAceites() {
   pintarResumoApi();
   const alvo = $('lista-aceites');
   alvo.innerHTML = '';
+  const colar = criar('button', 'botao botao-secundario');
+  colar.textContent = 'Colar relatório da ANVISA';
+  colar.onclick = colarRelatorioAnvisa;
+  alvo.appendChild(colar);
   const datas = datasDeEnvio();
   $('aceites-vazio').hidden = datas.length > 0;
 
   datas.forEach((data) => {
     const a = estado.aceites?.[data] || {};
-    const estadoAtual = a.status || 'pendente';
+    const daApi = envioDaApi(data) || envioDaApiPelaData(data);
+    // a marcacao a mao manda; sem ela, vale o que a ANVISA respondeu na API
+    const pelaApi = !a.status && daApi && ESTADO_DA_API[daApi.situacao];
+    const estadoAtual = a.status || pelaApi || 'pendente';
     const el = criar('div', 'aceite');
 
     const esquerda = criar('div');
@@ -1718,14 +1786,14 @@ function pintarAceites() {
     esquerda.appendChild(d);
     const sub = criar('p', 'sublinha');
     sub.style.margin = '2px 0 0';
-    sub.textContent = a.por ? `${estadoAtual === 'aceito' ? 'Aceite' : 'Recusa'} marcada por ${a.por} em ${dataHora(a.em)}` : 'Ainda não conferido no site da ANVISA';
+    sub.textContent = a.por ? `${estadoAtual === 'aceito' ? 'Aceite' : 'Recusa'} marcada por ${a.por} em ${dataHora(a.em)}`
+      : (pelaApi ? 'Pela API da ANVISA, sem ninguém marcar' : 'Ainda não conferido no site da ANVISA');
     esquerda.appendChild(sub);
     if (estadoAtual === 'recusado' && a.erro) {
       const erro = criar('p', 'motivo');
       erro.textContent = 'Erro da ANVISA: ' + a.erro;
       esquerda.appendChild(erro);
     }
-    const daApi = envioDaApi(data);
     if (daApi) esquerda.appendChild(linhaDaApi(daApi));
     el.appendChild(esquerda);
 
@@ -1881,5 +1949,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio };
 }

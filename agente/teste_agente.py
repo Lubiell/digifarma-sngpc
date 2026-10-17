@@ -1007,6 +1007,21 @@ def principal():
                  and comando.get('estado') == 'concluido', (recebido, comando))
         arvore['farmacia'].pop('comando', None)
 
+        # os hashes colados também saem do pedido antes de atender
+        guardado_hashes = ag.atender_pedido
+        vistos = []
+        ag.atender_pedido = lambda _c, _db, pedido: vistos.append(pedido.get('texto')) or 'ok'
+        try:
+            arvore['farmacia']['comando'] = {'acao': 'hashes_anvisa', 'texto': 'ABC ' + 'F' * 32,
+                                            'estado': 'pendente'}
+            girar_fila(db)
+        finally:
+            ag.atender_pedido = guardado_hashes
+        conferir('hashes colados: o agente lê e apaga o texto do Firebase antes de atender',
+                 vistos == ['ABC ' + 'F' * 32] and 'texto' not in arvore['farmacia']['comando'],
+                 (vistos, arvore['farmacia']['comando']))
+        arvore['farmacia'].pop('comando', None)
+
         # sem conseguir apagar a senha do Firebase, não atende
         recebido.clear()
         class DbSemApagar(DbMemoria):
@@ -1677,6 +1692,56 @@ def principal():
     conferir('Saldo: período antigo revalidado depois da foto não mexe na conta',
              ag.foto_sem_envio_validado('2026-10-15', foto_hora, antigo) is None)
     shutil.rmtree(pasta_api, ignore_errors=True)
+
+    # hashes colados do Relatório Status de Transmissão do site
+    H_OK, H_ERRO, H_FILA = 'B06314E6E830A47EF0D8AB26252DB38C', '92606BDDC24BDD28D3E264BAAA0B2455', 'F191FB8D9B9B4415F7AE3891348B1D48'
+    colado = ('RELATÓRIO STATUS DE TRANSMISSÃO Empresa: X CNPJ: 44.744.950/0001-04\n'
+              'Hash Identificação ' + H_FILA.lower() + ' 13/10/2026 14/10/2026 NÃO NÃO\n'
+              + H_ERRO + ' 13/10/2026 SIM NÃO MEDICAMENTO - SAÍDA POR VENDA: A quantidade vendida\n'
+              + H_OK + ' 10/10/2026 SIM SIM ' + H_OK + ' repetido 0123456789ABCDEF0123456789ABCDEF0 (33)')
+    if os.path.exists(ag.ARQUIVO_CACHE_API):
+        os.remove(ag.ARQUIVO_CACHE_API)
+    recebidos = ag.receber_hashes_do_site(colado)
+    conferir('site: tira do relatório colado só os hashes de 32, sem repetir e sem o CNPJ',
+             recebidos == [H_FILA, H_ERRO, H_OK]
+             and ag.ler_cache_api().get('_informados') == recebidos
+             and ag.ler_cache_api().get('_em') == '', recebidos)
+    respostas_site = {
+        H_OK: resposta_real('10/10/2026 14:55:00', '12/10/2026 14:55:00', '13/10/2026 14:55:00', '13/10/2026 21:42:00'),
+        H_ERRO: resposta_real('13/10/2026 16:26:00', '13/10/2026 16:26:00', '14/10/2026 16:26:00',
+                              '14/10/2026 21:22:00', 'A quantidade vendida (1) do lote BQ37M006 é maior'),
+        H_FILA: resposta_real('13/10/2026 16:46:00', '14/10/2026 16:46:00', '15/10/2026 16:46:00', ''),
+    }
+    def chamar_site(metodo, url, corpo=None, token=None, timeout=30):
+        if metodo == 'POST':
+            return 200, json.dumps(TOKEN)
+        for h, r in respostas_site.items():
+            if url.endswith('/' + h):
+                return 200, r
+        return 404, ''
+    def tabela_site(conexao, sql, parametros=()):
+        if 'RDB$RELATION_FIELDS' in sql:
+            return [{'CAMPO': c} for c in ('EMAIL', 'SENHA', 'HASH_ULT_ENVIO')]
+        if sql == ag.CONSULTAS['ponteiros']:
+            return [{'CNPJ': CNPJ}]
+        return [{'EMAIL': EMAIL, 'SENHA': SENHA, 'HASH_ULT_ENVIO': 'A' * 32}]
+    guardado = ag.consultar
+    ag.consultar = tabela_site
+    try:
+        ag.atualizar_api_sngpc(None, dict(ag.CONFIG_PADRAO, pasta_xml=pasta),
+                               chamar=chamar_site, agora=datetime.datetime(2026, 10, 17, 20, 0))
+    finally:
+        ag.consultar = guardado
+    publicado = ag.envios_da_api_em_cache()
+    por_transmissao = {e['transmissao'][:10]: e['situacao'] for e in publicado['envios']}
+    conferir('site: cada hash colado é consultado na API e publicado sem o hash',
+             por_transmissao == {'2026-10-13': 'validado', '2026-10-14': 'com_erro', '2026-10-15': 'processando'}
+             and not any(h in json.dumps(publicado) for h in (H_OK, H_ERRO, H_FILA)), publicado)
+    resumo = ag.resumo_dos_hashes(recebidos)
+    conferir('site: o recado conta validados, recusados e na fila, sem mostrar hash',
+             '1 validado(s) sem erro' in resumo and '1 RECUSADO(S) com erro' in resumo
+             and '1 ainda sem validação' in resumo and H_OK not in resumo, resumo)
+    conferir('site: texto sem hash não vira consulta', ag.receber_hashes_do_site('CNPJ 44744950000104') == [])
 
     swagger = json.dumps({'paths': {
         '/v1/Authentication/GetToken': {'post': {}},

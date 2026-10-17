@@ -6492,6 +6492,9 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
     alvos = {}
     if hash_envio:
         alvos[hash_envio.upper()] = ''
+    # os que a farmácia colou do Relatório Status de Transmissão do site
+    for h in cache.get('_informados') or []:
+        alvos.setdefault(h, '')
     if formula:
         for chave, caminho in arquivados:
             try:
@@ -6549,6 +6552,47 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
         falhas[hash_] = (agora + datetime.timedelta(
             hours=API_RECUO_HASH_HORAS)).isoformat(timespec='seconds')
     gravar_cache_api(cache)
+
+
+HASH_DO_SITE = re.compile(r'(?<![0-9A-Fa-f])[0-9A-Fa-f]{32}(?![0-9A-Fa-f])')
+API_INFORMADOS_MAX = 40
+
+
+def receber_hashes_do_site(colado):
+    """Os hashes do Relatório Status de Transmissão, colados no app. O
+    Digifarma só guarda o do último envio; o site mostra o de cada um. Ficam
+    no cache do servidor (não sobem) e entram na próxima consulta."""
+    novos = []
+    for h in HASH_DO_SITE.findall(texto(colado)):
+        h = h.upper()
+        if h not in novos:
+            novos.append(h)
+    if not novos:
+        return []
+    cache = ler_cache_api()
+    lista = [h for h in (cache.get('_informados') or []) if h not in novos] + novos
+    cache['_informados'] = lista[-API_INFORMADOS_MAX:]
+    cache['_em'] = ''  # consulta já, sem esperar a hora
+    for h in novos:
+        (cache.get('_falhas') or {}).pop(h, None)
+    gravar_cache_api(cache)
+    return novos
+
+
+def resumo_dos_hashes(hashes, cache=None):
+    """'3 validados, 1 com erro, ...' dos hashes colados, sem mostrar hash."""
+    cache = ler_cache_api() if cache is None else cache
+    envios = cache.get('envios') or {}
+    conta = {}
+    for h in hashes:
+        situacao = (envios.get(h) or {}).get('situacao') or 'sem resposta'
+        conta[situacao] = conta.get(situacao, 0) + 1
+    nomes = {'validado': 'validado(s) sem erro', 'com_erro': 'RECUSADO(S) com erro',
+             'processando': 'ainda sem validação', 'sem resposta': 'sem resposta da API'}
+    partes = ['%d %s' % (n, nomes.get(k, k)) for k, n in sorted(conta.items())]
+    erro = cache.get('_erro')
+    return '%d envio(s) do site: %s.%s' % (len(hashes), ', '.join(partes),
+                                           ' API: %s.' % erro if erro else '')
 
 
 def envios_da_api_em_cache(cache=None):
@@ -7214,6 +7258,14 @@ def atender_pedido(config, db, pedido):
                                  'Os avisos deste celular estão funcionando.', tokens)
         return 'Aviso de teste entregue a %d de %d celular(es).' % (entregues, len(tokens))
 
+    if acao == 'hashes_anvisa':
+        hashes = receber_hashes_do_site(alvo)
+        if not hashes:
+            raise RuntimeError('não achei nenhum hash (32 letras e números) no texto colado')
+        # a sincronização completa consulta a API e publica nos Aceites
+        modo_auto(config)
+        return resumo_dos_hashes(hashes)
+
     if acao == 'pasta_rede':
         return guardar_pasta_rede(config, alvo, texto(pedido.get('senha')))
 
@@ -7276,14 +7328,18 @@ def modo_fila(config):
 
     acao = pedido.get('acao')
     pedido = dict(pedido)  # a senha é lida desta cópia, depois de sair do Firebase
-    if pedido.get('senha') is not None:
-        # a senha do compartilhamento passa pelo pedido e sai dele na hora:
-        # fica só no agente_config.json do servidor. Sem conseguir apagar,
-        # não atende: o pedido fica pendente e a próxima volta tenta de novo.
+    # o que não pode ficar no Firebase: a senha do compartilhamento e os
+    # hashes colados do site. Lidos desta cópia, saem do pedido na hora e
+    # ficam só no servidor. Sem conseguir apagar, não atende: o pedido fica
+    # pendente e a próxima volta tenta de novo.
+    apagar = {c: None for c in ('senha',) if pedido.get(c) is not None}
+    if acao == 'hashes_anvisa' and pedido.get('texto'):
+        apagar['texto'] = None
+    if apagar:
         try:
-            ref.update({'senha': None})
+            ref.update(apagar)
         except Exception as e:
-            registrar('Não consegui apagar a senha do pedido (%s); fica para a próxima volta.'
+            registrar('Não consegui apagar do pedido o dado que não fica no Firebase (%s); fica para a próxima volta.'
                       % type(e).__name__)
             return
     registrar('Atendendo "%s" pedido por %s.' % (acao, pedido.get('pedidoPor')))

@@ -76,3 +76,13 @@ precisar), `PROGRESS.md`.
   e nenhuma depois da resposta final.
 - Voltar atrás: `consultar_api_sngpc: false` no agente_config.json desliga
   tudo; o código antigo continua funcionando sem a API.
+
+## Mudança em 17/10: hashes colados do site
+O Digifarma guarda só o hash do último envio (relatório Login SNGPC de 17/10:
+nenhuma tabela tem histórico), mas o Relatório Status de Transmissão do site
+mostra o hash de cada envio. Na aba Aceites, "Colar relatório da ANVISA"
+manda os hashes ao agente pelo pedido em `farmacia/comando`; o agente os apaga
+dali na primeira passagem, guarda no `api_sngpc_cache.json` (até 40) e
+consulta cada um. O que sobe continua sem hash. Sem marcação manual, o selo
+do envio passa a mostrar o que a API respondeu (aceito/recusado); a marcação
+da farmácia continua mandando e nada a sobrescreve.
