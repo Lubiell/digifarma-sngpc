@@ -137,6 +137,20 @@ conferir('todos os getElementById existem no index.html', () => {
 });
 
 /* ---------- 3. JSON e manifest ---------- */
+/* Aba sem secao e aba morta: o botao aparece, o usuario toca e a tela
+   fica em branco. Secao sem aba e o contrario — a tela existe e nao ha
+   como chegar nela. Os dois so aparecem usando o app, e nenhum da erro. */
+conferir('toda aba da navegação tem a seção dela, e vice-versa', () => {
+  const html = fs.readFileSync(path.join(pasta, 'index.html'), 'utf8');
+  const abas = [...html.matchAll(/data-vista="([a-z]+)"/g)].map((m) => m[1]);
+  const secoes = [...html.matchAll(/<section id="v-([a-z]+)"/g)].map((m) => m[1]);
+  const semSecao = abas.filter((v) => !secoes.includes(v));
+  const semAba = secoes.filter((v) => !abas.includes(v));
+  if (semSecao.length) throw new Error('aba sem seção: ' + semSecao.join(', '));
+  if (semAba.length) throw new Error('seção sem aba: ' + semAba.join(', '));
+  if (!abas.length) throw new Error('nenhuma aba encontrada no index.html');
+});
+
 conferir('manifest.json é JSON válido e aponta para ícones existentes', () => {
   const m = JSON.parse(fs.readFileSync(path.join(pasta, 'manifest.json'), 'utf8'));
   m.icons.forEach((i) => {
