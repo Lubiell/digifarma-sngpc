@@ -557,6 +557,17 @@ if (exportado.temSaldo) {
   });
 }
 
+if (exportado.doGrupo) {
+  conferir('controlados: psicotrópico e antimicrobiano em listas separadas', () => {
+    const ambos = { psicotropico: true, antimicrobiano: true };
+    igual(exportado.doGrupo({ psicotropico: true }, 'psicotropico'), true, 'psico na lista de controlados');
+    igual(exportado.doGrupo({ psicotropico: true }, 'antimicrobiano'), false, 'psico fora dos antimicrobianos');
+    igual(exportado.doGrupo({ antimicrobiano: true }, 'psicotropico'), false, 'atb fora dos controlados');
+    igual(exportado.doGrupo({ antimicrobiano: true }, 'antimicrobiano'), true, 'atb nos antimicrobianos');
+    igual(exportado.doGrupo(ambos, 'psicotropico') && exportado.doGrupo(ambos, 'antimicrobiano'), true, 'as duas marcas nas duas listas');
+  });
+}
+
 if (exportado.textoXmlRede) {
   conferir('servidor: mostra a situação do XML de cada computador, sem senha', () => {
     if (!exportado.textoXmlRede(undefined).includes('só o servidor')) throw new Error('vazio');

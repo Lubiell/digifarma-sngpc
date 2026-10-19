@@ -86,6 +86,8 @@ h3{font-size:16px;text-transform:uppercase;letter-spacing:.08em}
 .botao-perigo{background:var(--vermelho);color:#fff}
 .botao:disabled{opacity:.5;cursor:not-allowed}
 .chip{border:1px solid var(--linha);background:#fff;border-radius:999px;padding:8px 14px;cursor:pointer;min-height:40px}
+.chip[aria-pressed="true"]{background:var(--tarja);border-color:var(--tarja);color:#fff}
+.grupo-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
 
 /* ---------- topo e navegação ---------- */
 .topo{
