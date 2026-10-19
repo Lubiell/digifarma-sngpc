@@ -108,9 +108,13 @@ main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
   position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;
   background:var(--cartao);border-top:1px solid var(--linha);
   padding-bottom:env(safe-area-inset-bottom);
+  /* Sete abas nao cabem em celular de 360px (nem com a fonte do sistema
+     aumentada): a barra rola de lado em vez de empurrar abas para fora. */
+  overflow-x:auto;scrollbar-width:none;
 }
+.navegacao::-webkit-scrollbar{display:none}
 .nav-item{
-  flex:1;border:0;background:transparent;padding:12px 4px;
+  flex:1 0 auto;border:0;white-space:nowrap;background:transparent;padding:12px 4px;
   font-size:12px;font-weight:650;color:var(--tinta-fraca);
   cursor:pointer;position:relative;min-height:56px;
 }
