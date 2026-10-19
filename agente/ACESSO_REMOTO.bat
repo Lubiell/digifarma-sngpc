@@ -11,6 +11,10 @@ REM  O que NUNCA faz: abrir porta para qualquer endereco (a regra de
 REM  firewall fica presa a faixa da rede local e da VPN), criar usuario,
 REM  trocar senha, mexer no roteador, instalar AnyDesk ou TeamViewer.
 REM
+REM  No fim ele da um veredito: se nem SSH nem RDP ficaram de pe, o
+REM  relatorio diz isso e recomenda o AnyDesk, que sai de dentro para
+REM  fora e nao abre porta nenhuma. Recomenda; nao instala.
+REM
 REM  A logica fica no bloco PowerShell no fim deste arquivo: calcular
 REM  faixa de rede e mexer em regra de firewall em CMD puro era fragil
 REM  demais. Continua sendo um .bat so: o bloco e lido deste proprio
@@ -21,10 +25,11 @@ echo  ACESSO REMOTO AO SERVIDOR
 echo ============================================================
 echo.
 echo  Testa: administrador, placa de rede, VPN OpenVPN, edicao do
-echo  Windows, OpenSSH Server, portas 22 e 3389, AnyDesk/TeamViewer
-echo  e as tres tarefas do agente.
+echo  Windows, OpenSSH Server, portas 22 e 3389, AnyDesk/TeamViewer,
+echo  as tres tarefas do agente e onde a pasta dele mora.
 echo  Configura o que passar: SSH, firewall da porta 22 so para a
 echo  rede local e a VPN, PowerShell no SSH, e RDP se for Pro.
+echo  No fim da o veredito; se nada passar, recomenda o AnyDesk.
 echo.
 
 set "FARM_ARQ=%~f0"
@@ -330,6 +335,10 @@ foreach ($porta in 22, 3389) {
 
 # ------------------------------------------------------------------
 Secao '7. AnyDesk e TeamViewer'
+# Guardo o que achei para o veredito do fim: se o caminho nativo nao
+# ficar de pe, o que ja esta instalado nesta maquina vale mais que uma
+# recomendacao de baixar algo.
+$terceiros = New-Object System.Collections.Generic.List[string]
 foreach ($nome in 'AnyDesk', 'TeamViewer') {
     $ss = @(Get-Service -Name "$nome*" -ErrorAction SilentlyContinue)
     $ps = @(Get-Process -Name "$nome*" -ErrorAction SilentlyContinue)
@@ -338,9 +347,11 @@ foreach ($nome in 'AnyDesk', 'TeamViewer') {
         foreach ($s in $ss) { Dizer "  $nome : servico $($s.Name) - $($s.Status), partida $($s.StartType)" }
         Dizer "    instalado como servico: entra sem ninguem na frente, se o acesso autonomo tiver senha."
         Resumo $nome "instalado ($(@($ss)[0].Status))"
+        $terceiros.Add("$nome (servico)")
     } elseif ($ps -or $no) {
         Dizer "  $nome : presente sem servico; so funciona com alguem aceitando na tela"
         Resumo $nome 'sem servico (precisa de alguem na tela)'
+        $terceiros.Add("$nome (sem servico: precisa de alguem na tela)")
     } else {
         Dizer "  $nome : nao instalado. Nao instalo sozinho."
         Resumo $nome 'nao instalado'
@@ -395,6 +406,30 @@ foreach ($nome in 'AgenteSNGPC', 'AgenteSNGPC_Fila', 'AnvisaSNGPC_Login') {
     }
 }
 Dizer '  (so testo as tarefas; quem conserta e o INSTALAR_AGENTE.bat)'
+
+# ------------------------------------------------------------------
+# A pasta do agente ja se perdeu duas vezes na Area de Trabalho,
+# levando a chave do Firebase junto. Aqui eu so digo onde ela esta e o
+# que fazer. Quem move e o MOVER_PARA_C.bat, que para as tarefas,
+# confere a copia e recria o caminho. Nao movo nada sozinho.
+Secao '9. onde a pasta do agente mora'
+$aqui = "$env:FARM_PASTA".TrimEnd('\')
+$certo = 'C:\FARMACIA-SNGPC'
+Dizer "  esta pasta: $aqui"
+if ($aqui -ieq $certo -or $aqui -like "$certo\*") {
+    Dizer '  OK: ja esta no lugar certo.'
+    Resumo 'pasta do agente' 'ok, em C:\FARMACIA-SNGPC'
+} elseif ($aqui -match '(?i)\\(Desktop|Area de Trabalho|Downloads|OneDrive[^\\]*)(\\|$)') {
+    Dizer '  LUGAR RUIM: Area de Trabalho, Downloads ou OneDrive. Daqui a'
+    Dizer '  pasta ja sumiu duas vezes, levando a chave do Firebase junto.'
+    Dizer "  O lugar certo e $certo."
+    Dizer '  Conserto, nesta ordem: MOVER_PARA_C.bat como administrador e'
+    Dizer '  depois INSTALAR_AGENTE.bat, que recria as tarefas no caminho novo.'
+    Resumo 'pasta do agente' 'LUGAR RUIM - mover para C:\FARMACIA-SNGPC'
+} else {
+    Dizer "  fora de $certo, mas nao na Area de Trabalho, Downloads nem OneDrive."
+    Resumo 'pasta do agente' "fora de $certo"
+}
 
 # ------------------------------------------------------------------
 
@@ -506,6 +541,46 @@ if ($rdpOk) {
     Dizer ''
     Dizer '  Area de Trabalho Remota: app "Windows App" da Microsoft,'
     Dizer "  adicionar PC com o IP acima e o usuario $usuario."
+}
+
+# ------------------------------------------------------------------
+# Caminho nativo = SSH ou RDP de pe. Se nenhum dos dois ficou, o
+# relatorio tem de dizer isso na cara e apontar a saida, senao ele fica
+# sem acesso e sem saber o que fazer. A recomendacao e o AnyDesk porque
+# ele sai de dentro para fora, pelo proprio servidor: nao abre porta,
+# nao depende de faixa de rede, de VPN nem do roteador - que e
+# exatamente o que costuma derrubar o caminho nativo aqui. Recomendo e
+# paro: baixar e por senha fica com o usuario.
+Secao 'veredito do acesso remoto'
+if (-not $admin) {
+    Dizer '  INCONCLUSIVO: rodei sem administrador, entao nao configurei nada.'
+    Dizer '  Rode este arquivo como administrador antes de concluir qualquer coisa.'
+    Resumo 'veredito' 'inconclusivo - sem administrador'
+} elseif ($sshOk -or $rdpOk) {
+    $vias = @()
+    if ($sshOk) { $vias += 'SSH (porta 22)' }
+    if ($rdpOk) { $vias += 'RDP (porta 3389)' }
+    Dizer "  OK: o caminho nativo esta de pe -> $($vias -join ' e ')."
+    Dizer '  Preso a rede local e a VPN; nada exposto na internet.'
+    Resumo 'veredito' ($vias -join ' e ')
+} elseif ($terceiros.Count -gt 0) {
+    Dizer '  NADA DEU CERTO pelo caminho nativo: nem SSH nem RDP ficaram de pe.'
+    Dizer '  O motivo esta nas secoes acima.'
+    Dizer "  Ja existe outro caminho nesta maquina: $($terceiros -join ', ')."
+    Dizer '  Use ele por enquanto. Com acesso autonomo e senha propria, o'
+    Dizer '  AnyDesk entra sem ninguem na frente do servidor.'
+    Resumo 'veredito' "nativo FALHOU - use o que ja esta instalado: $($terceiros -join ', ')"
+} else {
+    Dizer '  NADA DEU CERTO pelo caminho nativo: nem SSH nem RDP ficaram de pe.'
+    Dizer '  O motivo esta nas secoes acima.'
+    Dizer '  RECOMENDACAO: AnyDesk, baixado do site oficial anydesk.com.'
+    Dizer '  Ele sai de dentro para fora, pelo proprio servidor: nao abre'
+    Dizer '  porta, nao precisa de VPN e nao depende do roteador. Num'
+    Dizer '  servidor com banco de controlados isso importa, porque porta'
+    Dizer '  de senha aberta na internet leva ataque no mesmo dia.'
+    Dizer '  Instale com o Acesso Autonomo ligado e uma senha forte so dele.'
+    Dizer '  Nao instalo sozinho: o download e a senha ficam com voce.'
+    Resumo 'veredito' 'nativo FALHOU - recomendo o AnyDesk'
 }
 
 # ------------------------------------------------------------------

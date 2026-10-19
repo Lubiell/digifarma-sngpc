@@ -351,10 +351,105 @@ def conferir_menu_do_farmacia():
     return falhas
 
 
+# As regras de firewall deste projeto saem SEMPRE presas a faixa da rede
+# local e da VPN. Uma regra de ENTRADA sem -RemoteAddress vale para
+# qualquer endereco: num servidor com banco de controlados isso e a porta
+# do SSH exposta na internet, que leva ataque de senha no mesmo dia. O
+# -RemoteAddress mora na linha de continuacao, longe do nome da regra, e
+# por isso e facil de perder numa edicao - e nada na tela acusaria.
+# Varre todo .bat, nao uma lista a mao: .bat novo que crie regra entra
+# nesta checagem sozinho. Lista a mao envelhece calada, e uma checagem que
+# cobre zero arquivo passa sem acusar nada.
+ABERTO = re.compile(r'(?i)^(any|\*|internet[46]?|0\.0\.0\.0(/0)?'
+                    r'|0\.0\.0\.0-255\.255\.255\.255|::(/0)?|::0(/0)?)$')
+
+
+def conferir_firewall_restrito():
+    """Regra de entrada presa a uma faixa, nunca para qualquer endereco."""
+    falhas = []
+    contadas = 0
+    presas_programa = 0
+    arquivos = 0
+    for nome in ALVOS:
+        try:
+            bruto = open(nome, encoding='cp1252', newline='').read()
+        except FileNotFoundError:
+            continue
+        if not re.search(r'(?i)-NetFirewallRule\b', bruto):
+            continue
+        arquivos += 1
+        # a chamada se parte em varias linhas com ` no fim: junto antes de
+        # procurar, senao o -RemoteAddress da linha de baixo nao e visto.
+        emendado = re.sub(r'`\s*\n\s*', ' ', bruto.replace('\r\n', '\n'))
+        for linha in emendado.split('\n'):
+            limpa = sem_comentario(linha)
+            nova = re.search(r'(?i)\bNew-NetFirewallRule\b', limpa)
+            muda = re.search(r'(?i)\bSet-NetFirewallRule\b', limpa)
+            if not nova and not muda:
+                continue
+            if re.search(r'(?i)-Action\s+Block', limpa):
+                continue
+            remoto = re.search(r'(?i)-RemoteAddress\s+(\S+)', limpa)
+            programa = re.search(r'(?i)-Program\s+(\S+)', limpa)
+            if nova:
+                if not re.search(r'(?i)-Direction\s+Inbound', limpa):
+                    continue
+                if not remoto and not programa:
+                    falhas.append('%s: regra de entrada sem -RemoteAddress'
+                                  ' nem -Program, que libera para qualquer'
+                                  ' endereco' % nome)
+                    continue
+            elif not remoto:
+                # Set- mexendo noutra coisa (ligar, desligar) nao e disto
+                continue
+
+            if not remoto:
+                # Unica excecao do projeto: a porta do SERVIDOR OpenVPN, que
+                # precisa receber o cliente de qualquer lugar - e para isso
+                # que a VPN existe. Ela fica presa ao proprio openvpn.exe e a
+                # uma porta, e a entrada da VPN e por certificado, nao senha.
+                # Trocar o -RemoteAddress por um -Program qualquer NAO compra
+                # essa excecao: seria a porta aberta na internet de novo, so
+                # com outra fachada.
+                if not re.search(r'(?i)vpn', programa.group(1)):
+                    falhas.append('%s: regra de entrada sem -RemoteAddress,'
+                                  ' presa a um -Program que nao e o da VPN'
+                                  % nome)
+                    continue
+                # e nem a VPN abre porta de senha
+                for porta in re.findall(r'(?i)-LocalPort\s+(\d+)', limpa):
+                    if porta in ('22', '3389'):
+                        falhas.append('%s: porta %s aberta para a internet,'
+                                      ' presa so ao programa' % (nome, porta))
+                presas_programa += 1
+                continue
+
+            alvo = remoto.group(1).strip('\'"')
+            if ABERTO.match(alvo):
+                falhas.append('%s: regra de entrada liberando %s'
+                              % (nome, remoto.group(1)))
+            contadas += 1
+
+    # quem cria regra hoje: ACESSO_REMOTO e LIGAR_FIREWALL. Se a varredura
+    # nao achar nenhum, a checagem virou enfeite e eu prefiro que ela grite.
+    if arquivos == 0:
+        falhas.append('nao achei nenhum .bat criando regra de firewall:'
+                      ' a checagem ficou inerte')
+
+    for f in falhas:
+        print('  FALHA firewall restrito: %s' % f)
+    if not falhas:
+        print('  OK    firewall restrito (%d arquivo(s), %d regra(s) presa(s)'
+              ' a uma faixa, %d ao programa)'
+              % (arquivos, contadas, presas_programa))
+    return falhas
+
+
 def conferir():
     total = (list(conferir_gitignore()) + list(conferir_url_do_repositorio())
              + list(conferir_protocolo_do_app())
-             + list(conferir_menu_do_farmacia()))
+             + list(conferir_menu_do_farmacia())
+             + list(conferir_firewall_restrito()))
     for nome in ALVOS:
         try:
             bruto = open(nome, encoding='cp1252', newline='').read()
