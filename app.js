@@ -918,15 +918,19 @@ function pedirDesmarcar(i) {
    ============================================================
    Espelha a aba Saldo na forma: mesma linha expansivel, mesma busca,
    mesmo detalhe. Muda o que lista — ali e quem DIVERGE da ANVISA,
-   aqui e o cadastro inteiro.
-
-   A diferenca importa: produto marcado por engano e sem movimento
-   nenhum nao diverge de nada, entao nunca aparece no Saldo. E
-   justamente ele que se quer achar para desmarcar. */
+   aqui e todo controlado do cadastro que tem saldo no Digifarma,
+   divergindo ou nao. Os de saldo zero ficam de fora (temSaldo). */
 function listaControlados() {
   const v = estado.inventario?.controlados;
   if (!v) return [];
   return Array.isArray(v) ? v.filter(Boolean) : Object.values(v);
+}
+
+/* So entra quem tem saldo no Digifarma. Vale qualquer um dos dois saldos:
+   a soma dos lotes (a do SNGPC) ou o PROD_SALDO (o da tela do balcao).
+   Quando discordam, o produto fica — e justamente o caso a conferir. */
+function temSaldo(c) {
+  return Number(c.saldo || 0) > 0 || Number(c.saldoProduto || 0) > 0;
 }
 
 function classeDoControlado(c) {
@@ -942,7 +946,7 @@ function pintarControlados() {
   alvo.innerHTML = '';
 
   const aviso = $('controlados-aviso');
-  const todos = listaControlados();
+  const todos = listaControlados().filter(temSaldo);
   if (!estado.inventario?.controlados) {
     // Lista ausente nao e lista vazia: o agente pode ser antigo ou a
     // consulta pode ter falhado. Dizer "nenhum controlado" aqui seria
@@ -2186,5 +2190,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo };
 }
