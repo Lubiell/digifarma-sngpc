@@ -57,9 +57,13 @@
 <!-- 4. APP -->
 <div id="app" hidden>
   <header class="topo">
-    <div>
-      <p class="marca">Farmácia<span class="tarja">SNGPC</span></p>
-      <p id="rotulo-operador" class="operador-atual"></p>
+    <div class="topo-esquerda">
+      <button id="btn-menu" class="botao-menu" type="button" aria-label="Abrir o menu de abas"
+        aria-expanded="false" aria-controls="menu-abas">☰<span id="selo-menu" class="selo" hidden>!</span></button>
+      <div>
+        <p class="marca">Farmácia<span class="tarja">SNGPC</span></p>
+        <p id="rotulo-operador" class="operador-atual"></p>
+      </div>
     </div>
     <div class="topo-acoes">
       <button id="btn-config" class="botao botao-fantasma">Config</button>
@@ -232,7 +236,8 @@
     </section>
   </main>
 
-  <nav class="navegacao">
+  <div id="fundo-menu" class="fundo-menu" hidden></div>
+  <nav id="menu-abas" class="navegacao" aria-label="Abas">
     <button class="nav-item nav-ativo" data-vista="painel">Situação</button>
     <button class="nav-item" data-vista="saldo">Saldo<span id="selo-saldo" class="selo" hidden>0</span></button>
     <button class="nav-item" data-vista="xml">XML<span id="selo-xml" class="selo" hidden>0</span></button>
