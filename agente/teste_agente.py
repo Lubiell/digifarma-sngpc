@@ -63,6 +63,17 @@ RESPOSTAS = {
          'PRODUTO': 'ALPRAZOLAM', 'REGISTRO_MS': '1444400010023', 'COD_BARRAS': '790',
          'NUM_LOTE': 'B77Z', 'QUANTIDADE': 20},
     ],
+    'controlados_em_estoque': [
+        {'PRODUTO_ID': 101, 'PRODUTO': 'CLONAZEPAM 2MG', 'REGISTRO_MS': '1.0033.0122.001-9',
+         'COD_BARRAS': '789', 'PSICOTROPICO': 'S', 'ANTIMICROBIANO': 'N',
+         'PROD_SALDO': 12, 'SOMA_LOTES': 10},
+        {'PRODUTO_ID': 102, 'PRODUTO': 'AMOXICILINA 500MG', 'REGISTRO_MS': '1.4444.0001.002-3',
+         'COD_BARRAS': '790', 'PSICOTROPICO': 'N', 'ANTIMICROBIANO': 'S',
+         'PROD_SALDO': 5, 'SOMA_LOTES': 5},
+        {'PRODUTO_ID': 103, 'PRODUTO': 'DIPIRONA 500MG', 'REGISTRO_MS': '1.0000.0000.000-0',
+         'COD_BARRAS': '791', 'PSICOTROPICO': 'N', 'ANTIMICROBIANO': 'N',
+         'PROD_SALDO': 99, 'SOMA_LOTES': 99},
+    ],
     'perdas_pendentes': [],
     'transferencias_pendentes': [],
     'saidas_periodo': [
@@ -160,6 +171,11 @@ def principal():
         # o nome pelo M.S., para a venda que só está no XML
         if 'P.REGISTRO_MS IS NOT NULL' in sql:
             return [{'REGISTRO_MS': '1.0047.0434.016-8', 'PRODUTO': 'FLUOXETINA 20MG'}]
+        # controlados_em_estoque tambem tem subselect FROM LOTES: precisa
+        # ser desviada ANTES, senao cai no ramo do saldo_digifarma e
+        # devolve as linhas erradas.
+        if 'SOMA_LOTES' in sql and 'P.PSICOTROPICO' in sql:
+            return RESPOSTAS['controlados_em_estoque']
         # saldo_digifarma tem o {SALDO} trocado antes de rodar
         if 'FROM LOTES' in sql:
             return RESPOSTAS['saldo_digifarma']
@@ -2140,6 +2156,21 @@ def principal():
 
     saida, pedidos = rodar_api([], senha='')
     conferir('API: sem senha guardada não chama nada', not pedidos and 'nada a testar' in saida, saida)
+
+    # --- aba Controlados: o cadastro inteiro, nao so quem diverge ---
+    controlados = dados.get('controlados') or []
+    codigos = [c['codigo'] for c in controlados]
+    conferir('lista os controlados do cadastro, com saldo',
+             len(controlados) == 2, codigos)
+    conferir('produto sem marca nenhuma fica de fora',
+             '103' not in codigos, codigos)
+    psico = next((c for c in controlados if c['codigo'] == '101'), {})
+    conferir('separa psicotropico de antimicrobiano',
+             psico.get('psicotropico') is True and psico.get('antimicrobiano') is False, psico)
+    conferir('traz os dois saldos que o Digifarma guarda',
+             psico.get('saldo') == 10 and psico.get('saldoProduto') == 12, psico)
+    conferir('o M.S. vai so com digitos, como no resto do app',
+             psico.get('ms') == '1003301220019', psico)
 
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))

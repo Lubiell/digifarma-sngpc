@@ -427,6 +427,25 @@ CONSULTAS = {
            AND ((P.PROD_ATIVO = 'S') OR (P.PROD_ATIVO IS NULL))
     """,
 
+    # --- todo controlado do cadastro, com o saldo (aba Controlados) ---
+    # A aba Saldo só mostra quem DIVERGE da ANVISA. Esta lista é o cadastro
+    # inteiro: serve para achar o que foi marcado por engano, que nunca
+    # aparece como divergência justamente por não ter movimento nenhum.
+    #
+    # Dois saldos, como em totais_produto: PROD_SALDO é o que a tela do
+    # balcão lê, SOMA_LOTES é o que a comparação com o SNGPC usa. Mostrar
+    # os dois evita decidir desmarcar olhando o número errado.
+    "controlados_em_estoque": """
+        SELECT P.PRODUTO_ID, P.PRODUTO, P.REGISTRO_MS, P.COD_BARRAS,
+               P.PSICOTROPICO, P.ANTIMICROBIANO, P.PROD_SALDO,
+               (SELECT SUM({EXPRESSAO}) FROM LOTES L
+                 WHERE L.PRODUTO_ID = P.PRODUTO_ID) AS SOMA_LOTES
+          FROM PRODUTOS P
+         WHERE {CONTROLADO}
+           AND ((P.PROD_ATIVO = 'S') OR (P.PROD_ATIVO IS NULL))
+         ORDER BY P.PRODUTO
+    """,
+
     # --- cadastro de um produto, pelo nome (--produto) ---
     # O CAST é o mesmo cuidado das outras: sem ele o fdb reclama que o
     # parâmetro é maior que a coluna e a busca morre antes de rodar.
@@ -2426,6 +2445,38 @@ def classificar_divergencia(registro, saldo_anvisa, ms_no_inventario):
     return 'quantidade'
 
 
+def listar_controlados(conexao, info):
+    """Todo produto marcado como psicotrópico ou antimicrobiano, com saldo.
+
+    A aba Saldo só enxerga quem diverge da ANVISA. Produto marcado por
+    engano e sem movimento nenhum nunca aparece lá — e é exatamente ele que
+    se quer achar para desmarcar. Por isso esta lista é o cadastro inteiro,
+    não o que sobrou de uma comparação.
+
+    Devolve o que a tela precisa para decidir sem ir ao servidor: as duas
+    marcas separadas (desmarcar uma não é desmarcar a outra) e os dois
+    saldos que o Digifarma guarda."""
+    sql = CONSULTAS['controlados_em_estoque'].replace(
+        '{EXPRESSAO}', montar_expressao_saldo(info))
+    itens = []
+    for linha in consultar(conexao, sql):
+        psico = texto(linha.get('PSICOTROPICO')).strip().upper() == 'S'
+        anti = texto(linha.get('ANTIMICROBIANO')).strip().upper() == 'S'
+        if not psico and not anti:
+            continue
+        itens.append({
+            'codigo': texto(linha.get('PRODUTO_ID')),
+            'descricao': texto(linha.get('PRODUTO')).strip(),
+            'ms': so_digitos(linha.get('REGISTRO_MS')),
+            'ean': so_digitos(linha.get('COD_BARRAS')),
+            'psicotropico': psico,
+            'antimicrobiano': anti,
+            'saldo': round(numero(linha.get('SOMA_LOTES')), 3),
+            'saldoProduto': round(numero(linha.get('PROD_SALDO')), 3),
+        })
+    return itens
+
+
 def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
     import mapa_xml
 
@@ -2699,6 +2750,14 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
         por_chave, info_saldo = saldo_por_lote(conexao, config)
         resultado['inventario']['colunaSaldo'] = info_saldo['coluna']
         resultado['inventario']['modoSaldo'] = info_saldo['modo']
+
+        # O cadastro inteiro de controlados, para a aba Controlados. Falhar
+        # aqui não pode derrubar o inventário: é lista de consulta, não a
+        # conta do saldo.
+        try:
+            resultado['controlados'] = listar_controlados(conexao, info_saldo)
+        except Exception as e:
+            registrar('Não consegui listar os controlados do cadastro: %s' % e)
 
         total_ms_digifarma = {}
         for (ms_lote, _), registro in por_chave.items():

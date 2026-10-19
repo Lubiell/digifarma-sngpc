@@ -45,6 +45,7 @@ const estado = {
   vista: 'painel',
   buscaSaldo: '',
   buscaXml: '',
+  buscaControlados: '',
   relatorios: {},       // farmacia/relatorios
   historico: {},        // farmacia/historico (ultimos 30 dias)
   relatorioPedido: null,
@@ -489,6 +490,7 @@ function irPara(vista) {
 document.querySelectorAll('.nav-item').forEach((b) => { b.onclick = () => irPara(b.dataset.vista); });
 document.querySelectorAll('[data-ir]').forEach((b) => { b.onclick = () => irPara(b.dataset.ir); });
 $('busca-saldo').oninput = (e) => { estado.buscaSaldo = e.target.value; pintarSaldo(); };
+$('busca-controlados').oninput = (e) => { estado.buscaControlados = e.target.value; pintarControlados(); };
 $('busca-xml').oninput = (e) => { estado.buscaXml = e.target.value; pintarXml(); };
 
 /* ============================================================
@@ -527,6 +529,7 @@ function pintar() {
   pintarEvolucao();
   pintarPendentes();
   if (estado.vista === 'saldo') pintarSaldo();
+  if (estado.vista === 'controlados') pintarControlados();
   if (estado.vista === 'xml') pintarXml();
   if (estado.vista === 'vendas') pintarVendas();
   if (estado.vista === 'aceites') pintarAceites();
@@ -908,6 +911,109 @@ function pedirDesmarcar(i) {
       } }
     ]
   });
+}
+
+/* ============================================================
+   ABA CONTROLADOS
+   ============================================================
+   Espelha a aba Saldo na forma: mesma linha expansivel, mesma busca,
+   mesmo detalhe. Muda o que lista — ali e quem DIVERGE da ANVISA,
+   aqui e o cadastro inteiro.
+
+   A diferenca importa: produto marcado por engano e sem movimento
+   nenhum nao diverge de nada, entao nunca aparece no Saldo. E
+   justamente ele que se quer achar para desmarcar. */
+function listaControlados() {
+  const v = estado.inventario?.controlados;
+  if (!v) return [];
+  return Array.isArray(v) ? v.filter(Boolean) : Object.values(v);
+}
+
+function classeDoControlado(c) {
+  if (c.psicotropico && c.antimicrobiano) return 'Psicotrópico e antimicrobiano';
+  if (c.psicotropico) return 'Psicotrópico';
+  if (c.antimicrobiano) return 'Antimicrobiano';
+  return 'Sem marca';
+}
+
+function pintarControlados() {
+  const alvo = $('lista-controlados');
+  if (!alvo) return;
+  alvo.innerHTML = '';
+
+  const aviso = $('controlados-aviso');
+  const todos = listaControlados();
+  if (!estado.inventario?.controlados) {
+    // Lista ausente nao e lista vazia: o agente pode ser antigo ou a
+    // consulta pode ter falhado. Dizer "nenhum controlado" aqui seria
+    // afirmar o que nao se sabe, e logo sobre o que vai ser desmarcado.
+    aviso.textContent = 'O agente ainda não publicou a lista de controlados. '
+      + 'Atualize o agente na aba Servidor e sincronize.';
+    aviso.hidden = false;
+  } else {
+    aviso.hidden = true;
+  }
+
+  const itens = todos
+    .filter((c) => combina(c, estado.buscaControlados, ['descricao', 'ms', 'ean', 'codigo']))
+    .sort((a, b) => String(a.descricao || '').localeCompare(String(b.descricao || ''), 'pt-BR'));
+
+  $('controlados-vazio').hidden = itens.length > 0 || !!estado.buscaControlados
+    || !estado.inventario?.controlados;
+
+  const selo = $('selo-controlados');
+  if (selo) { selo.textContent = todos.length; selo.hidden = todos.length === 0; }
+
+  itens.forEach((c, n) => {
+    const saldo = Number(c.saldo || 0);
+    const outro = Number(c.saldoProduto || 0);
+    alvo.appendChild(linha({
+      chave: 'ctrl:' + (c.codigo || n),
+      titulo: c.descricao || ('Código ' + (c.codigo || '?')),
+      meta: [
+        c.codigo && 'Cód. ' + c.codigo,
+        c.ms && 'M.S. ' + c.ms,
+        c.ean && 'EAN ' + c.ean
+      ],
+      tarja: [classeDoControlado(c), 'saldo ' + saldo],
+      tarjaClasse: saldo > 0 ? 'sobra' : 'falta',
+      detalhe: detalheDoControlado(c, saldo, outro)
+    }));
+  });
+
+  if (!itens.length && estado.buscaControlados) {
+    const p = criar('p', 'vazio');
+    p.textContent = 'Nada encontrado para “' + estado.buscaControlados + '”.';
+    alvo.appendChild(p);
+  }
+}
+
+function detalheDoControlado(c, saldo, outro) {
+  const d = definicoes([
+    ['Código do Digifarma', c.codigo],
+    ['Registro M.S.', c.ms],
+    ['Código de barras', c.ean],
+    ['Psicotrópico', c.psicotropico ? 'SIM' : 'não'],
+    ['Antimicrobiano', c.antimicrobiano ? 'SIM' : 'não'],
+    ['Saldo pela soma dos lotes', saldo],
+    ['Saldo do produto (PROD_SALDO)', outro]
+  ]);
+
+  // Os dois saldos discordando e sinal de que um dos lados esta errado;
+  // quem for desmarcar precisa ver isso antes, nao depois.
+  if (Math.abs(saldo - outro) >= 0.001) {
+    const nota = criar('p', 'motivo');
+    nota.textContent = 'Os dois saldos que o Digifarma guarda não batem: a soma dos lotes dá '
+      + saldo + ' e o total do produto dá ' + outro + '. A tela do balcão lê o segundo; '
+      + 'a comparação com o SNGPC usa o primeiro.';
+    d.appendChild(nota);
+  }
+
+  const b = criar('button', 'botao botao-perigo');
+  b.textContent = 'Desmarcar controlado/antibiótico no Digifarma';
+  b.onclick = () => pedirDesmarcar(c);
+  d.appendChild(b);
+  return d;
 }
 
 function pintarSaldo() {

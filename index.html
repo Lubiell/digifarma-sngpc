@@ -128,6 +128,18 @@
       <p id="saldo-vazio" class="vazio" hidden>Nenhuma divergência de saldo. Digifarma e inventário batem.</p>
     </section>
 
+    <!-- CONTROLADOS -->
+    <section id="v-controlados" class="vista" hidden>
+      <div class="cabeca-vista"><h2>Controlados</h2></div>
+      <p class="sublinha">Todo produto marcado como psicotrópico ou antimicrobiano no cadastro do Digifarma, com o saldo.</p>
+      <p class="nota">A aba Saldo só mostra quem diverge da ANVISA. Produto marcado por engano e sem
+      movimento nenhum nunca aparece lá — aqui aparece.</p>
+      <div id="controlados-aviso" class="barra-aviso" hidden></div>
+      <input id="busca-controlados" class="busca" type="search" aria-label="Buscar nos Controlados" placeholder="Buscar por descrição, M.S., código de barras ou código" autocomplete="off">
+      <div id="lista-controlados" class="pilha"></div>
+      <p id="controlados-vazio" class="vazio" hidden>Nenhum produto marcado como controlado no cadastro.</p>
+    </section>
+
     <!-- CONFERÊNCIA XML -->
     <section id="v-xml" class="vista" hidden>
       <div class="cabeca-vista"><h2>Conferência do XML</h2></div>
@@ -221,6 +233,7 @@
     <button class="nav-item" data-vista="saldo">Saldo<span id="selo-saldo" class="selo" hidden>0</span></button>
     <button class="nav-item" data-vista="xml">XML<span id="selo-xml" class="selo" hidden>0</span></button>
     <button class="nav-item" data-vista="vendas">Vendas<span id="selo-vendas" class="selo" hidden>0</span></button>
+    <button class="nav-item" data-vista="controlados">Controlados<span id="selo-controlados" class="selo" hidden>0</span></button>
     <button class="nav-item" data-vista="aceites">Aceites</button>
     <button class="nav-item" data-vista="servidor">Servidor<span id="selo-servidor" class="selo" hidden>!</span></button>
   </nav>
