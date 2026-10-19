@@ -16,6 +16,7 @@
   --verde:#1F6B4A;
   --verde-claro:#E4F0E9;
   --raio:8px;
+  --lateral:92px;   /* largura da barra de abas */
   --sombra:0 1px 2px rgba(22,22,22,.08), 0 8px 24px rgba(22,22,22,.06);
   --fonte:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
@@ -100,23 +101,29 @@ h3{font-size:16px;text-transform:uppercase;letter-spacing:.08em}
 .topo-acoes{display:flex;gap:8px;flex-shrink:0}
 .topo-acoes .botao{padding:8px 10px;font-size:13px;min-height:44px}
 
-main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
+main{padding:16px 16px 32px;max-width:900px;margin:0 auto}
 .cabeca-vista{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .cabeca-acoes{display:flex;gap:8px;flex-wrap:wrap}
 
 .navegacao{
-  position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;
-  background:var(--cartao);border-top:1px solid var(--linha);
-  padding-bottom:env(safe-area-inset-bottom);
+  /* Abas na lateral esquerda, uma embaixo da outra. A largura cabe a
+     maior palavra ("Controlados"); se as abas passarem da altura da
+     tela, a coluna rola. O #app abre espaco a esquerda do mesmo tamanho. */
+  position:fixed;top:0;bottom:0;left:0;z-index:30;width:var(--lateral);
+  display:flex;flex-direction:column;overflow-y:auto;
+  background:var(--cartao);border-right:1px solid var(--linha);
+  padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);
+  padding-left:env(safe-area-inset-left);
 }
+#app{padding-left:calc(var(--lateral) + env(safe-area-inset-left))}
 .nav-item{
-  flex:1;border:0;background:transparent;padding:12px 4px;
+  flex:0 0 auto;border:0;background:transparent;padding:12px 8px;text-align:left;
   font-size:12px;font-weight:650;color:var(--tinta-fraca);
-  cursor:pointer;position:relative;min-height:56px;
+  cursor:pointer;position:relative;min-height:56px;border-bottom:1px solid var(--linha);
 }
-.nav-ativo{color:var(--tinta);box-shadow:inset 0 3px 0 var(--tarja)}
+.nav-ativo{color:var(--tinta);background:var(--papel);box-shadow:inset 4px 0 0 var(--tarja)}
 .selo{
-  position:absolute;top:8px;left:50%;margin-left:12px;
+  position:absolute;top:3px;right:4px;
   background:var(--vermelho);color:#fff;font-size:10px;line-height:1;
   padding:3px 5px;border-radius:999px;
 }
@@ -200,6 +207,8 @@ main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
   border-top:6px solid var(--tarja);
 }
 @media (min-width:600px){
+  :root{--lateral:160px}
+  .nav-item{font-size:14px;padding:14px 16px}
   .modal{align-items:center;padding:24px}
   .modal-caixa{border-radius:12px}
 }
@@ -207,10 +216,10 @@ main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
 .modal-acoes .botao{flex:1 1 auto}
 
 .aviso{
-  position:fixed;left:50%;transform:translateX(-50%);
-  bottom:calc(76px + env(safe-area-inset-bottom));z-index:60;
+  position:fixed;left:calc(50% + var(--lateral) / 2);transform:translateX(-50%);
+  bottom:calc(16px + env(safe-area-inset-bottom));z-index:60;
   background:var(--tarja);color:#fff;padding:12px 18px;border-radius:999px;
-  font-size:14px;font-weight:600;box-shadow:var(--sombra);max-width:92vw;text-align:center;
+  font-size:14px;font-weight:600;box-shadow:var(--sombra);max-width:calc(92vw - var(--lateral));text-align:center;
 }
 .aviso-erro{color:var(--vermelho);font-size:14px;margin:8px 0 0;font-weight:600}
 .barra-estado{background:var(--vermelho-claro);color:var(--vermelho);padding:8px 16px;font-size:13px;font-weight:600;text-align:center}

@@ -482,6 +482,7 @@ function pintarComando() {
 function irPara(vista) {
   estado.vista = vista;
   document.querySelectorAll('.nav-item').forEach((x) => x.classList.toggle('nav-ativo', x.dataset.vista === vista));
+  document.querySelector('.nav-item.nav-ativo')?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
   document.querySelectorAll('.vista').forEach((v) => { v.hidden = v.id !== 'v-' + vista; });
   pintar();
   // aba nova comeca do topo: "Investigar este lote" no meio do Saldo deixava
