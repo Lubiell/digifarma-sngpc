@@ -482,14 +482,41 @@ function pintarComando() {
 function irPara(vista) {
   estado.vista = vista;
   document.querySelectorAll('.nav-item').forEach((x) => x.classList.toggle('nav-ativo', x.dataset.vista === vista));
-  document.querySelector('.nav-item.nav-ativo')?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
   document.querySelectorAll('.vista').forEach((v) => { v.hidden = v.id !== 'v-' + vista; });
   pintar();
   // aba nova comeca do topo: "Investigar este lote" no meio do Saldo deixava
   // a pessoa no meio da aba Servidor, sem ver a resposta
   window.scrollTo(0, 0);
 }
-document.querySelectorAll('.nav-item').forEach((b) => { b.onclick = () => irPara(b.dataset.vista); });
+document.querySelectorAll('.nav-item').forEach((b) => { b.onclick = () => { irPara(b.dataset.vista); fecharMenu(); }; });
+
+/* Menu das abas: abre pelo botao do topo, fecha ao escolher, tocar fora
+   ou Esc. O foco volta para o botao, para quem navega pelo teclado. */
+function abrirMenu() {
+  $('menu-abas').classList.add('aberta');
+  $('fundo-menu').hidden = false;
+  $('btn-menu').setAttribute('aria-expanded', 'true');
+  document.querySelector('.nav-item.nav-ativo')?.focus?.();
+}
+function fecharMenu() {
+  if (!$('menu-abas').classList.contains('aberta')) return;
+  $('menu-abas').classList.remove('aberta');
+  $('fundo-menu').hidden = true;
+  $('btn-menu').setAttribute('aria-expanded', 'false');
+  $('btn-menu').focus?.();
+}
+$('btn-menu').onclick = () => ($('menu-abas').classList.contains('aberta') ? fecharMenu() : abrirMenu());
+$('fundo-menu').onclick = fecharMenu;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharMenu(); });
+
+/* Com o menu fechado os selos das abas somem da vista: o botao mostra "!"
+   quando alguma aba tem pendencia. */
+function pintarSeloMenu() {
+  $('selo-menu').hidden = ![...document.querySelectorAll('.navegacao .selo')].some((s) => !s.hidden);
+}
+if (typeof MutationObserver !== 'undefined') {
+  new MutationObserver(pintarSeloMenu).observe($('menu-abas'), { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+}
 document.querySelectorAll('[data-ir]').forEach((b) => { b.onclick = () => irPara(b.dataset.ir); });
 $('busca-saldo').oninput = (e) => { estado.buscaSaldo = e.target.value; pintarSaldo(); };
 $('busca-controlados').oninput = (e) => { estado.buscaControlados = e.target.value; pintarControlados(); };
