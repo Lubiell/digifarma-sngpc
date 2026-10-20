@@ -53,5 +53,17 @@ Republicar o `regras-firebase.json` anterior (o do commit antes desta
 mudança) pelo console ou pelo `--regras`. Nenhum dado é apagado nem
 convertido.
 
+## Descoberto depois do ok (20/10)
+O README diz que `farmacia/operadores` é **compartilhado com o app ESTOQUE**,
+e o nó `estoque` deixa ler e gravar qualquer conta não anônima — não só as de
+`autorizados`. Aplicar A como está pode tirar a lista de operadores de quem
+usa o ESTOQUE sem estar em `autorizados`, e o código do ESTOQUE não estava
+acessível para conferir o que ele lê (`operadores`, `autorizados`, `agentes`).
+
+Por isso A ficou parado. B continua valendo e fecha a mesma porta para os dois
+apps, inclusive para o nó `estoque`, que tem o mesmo problema. A volta quando
+der para ler o ESTOQUE ou confirmar que todos os usuários dele estão em
+`autorizados`.
+
 ## Fora do escopo
 Login, senha da farmácia, regras dos outros nós.
