@@ -445,11 +445,45 @@ def conferir_firewall_restrito():
     return falhas
 
 
+def conferir_lista_do_atualizar():
+    """O ATUALIZAR_AGENTE.bat le o arquivos.json e aceita o do repositorio.
+
+    O trecho Python do .bat roda aqui de verdade: arquivos.json que ele
+    recusasse pararia a atualizacao manual no servidor, e modulo que ele
+    nao listasse nunca chegaria la por esse caminho."""
+    import subprocess
+    import tempfile
+    falhas = []
+    bruto = open('agente/ATUALIZAR_AGENTE.bat', encoding='cp1252', newline='').read()
+    achado = re.search(r'(?m)^%PY% -c "(import sys,json,re;.*)" arquivos\.json\.novo arquivos_lista\.txt\r?$', bruto)
+    if not achado:
+        falhas.append('o ATUALIZAR_AGENTE.bat nao le mais o arquivos.json')
+    else:
+        esperado = {n: m for n, m in json.load(open('agente/arquivos.json', encoding='utf-8'))['arquivos'].items()
+                    if n != 'agente_auto.py'}
+        with tempfile.TemporaryDirectory() as pasta:
+            saida = os.path.join(pasta, 'lista.txt')
+            r = subprocess.run([sys.executable, '-c', achado.group(1), 'agente/arquivos.json', saida])
+            if r.returncode != 0:
+                falhas.append('o ATUALIZAR_AGENTE.bat recusa o arquivos.json do repositorio')
+            else:
+                linhas = open(saida, encoding='utf-8').read().splitlines()
+                lido = dict(l.split('|', 1) for l in linhas)
+                if lido != esperado:
+                    falhas.append('o ATUALIZAR_AGENTE.bat leu %r, esperava %r' % (lido, esperado))
+    for f in falhas:
+        print('  FALHA arquivos.json: %s' % f)
+    if not falhas:
+        print('  OK    ATUALIZAR_AGENTE.bat le o arquivos.json')
+    return falhas
+
+
 def conferir():
     total = (list(conferir_gitignore()) + list(conferir_url_do_repositorio())
              + list(conferir_protocolo_do_app())
              + list(conferir_menu_do_farmacia())
-             + list(conferir_firewall_restrito()))
+             + list(conferir_firewall_restrito())
+             + list(conferir_lista_do_atualizar()))
     for nome in ALVOS:
         try:
             bruto = open(nome, encoding='cp1252', newline='').read()

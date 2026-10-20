@@ -58,6 +58,8 @@ const estado = {
 const $ = (id) => document.getElementById(id);
 const criar = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
 const esc = (s) => String(s ?? '');
+/* esc so vira texto; o que vai para innerHTML passa por html(), que escapa as tags */
+const html = (s) => esc(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const agora = () => new Date().toISOString();
 
 function avisar(texto, ms = 2800) {
@@ -165,7 +167,7 @@ function confirmar(titulo, texto, textoOk = 'Confirmar', estilo = 'botao-princip
   return new Promise((resolve) => {
     abrirModal({
       titulo,
-      corpo: `<p class="sublinha">${esc(texto)}</p>`,
+      corpo: `<p class="sublinha">${html(texto)}</p>`,
       acoes: [
         { texto: 'Cancelar', aoClicar: () => { fecharModal(); resolve(false); } },
         { texto: textoOk, estilo, aoClicar: () => { fecharModal(); resolve(true); } }
@@ -732,7 +734,7 @@ function pintarConfiancaDoSaldo() {
   }
   if (!frases.length) { barra.hidden = true; return; }
   barra.innerHTML = '<strong>Estes números podem não ser divergência de estoque.</strong><br>'
-    + frases.map(esc).join('<br>');
+    + frases.map(html).join('<br>');
   barra.hidden = false;
 }
 
@@ -1067,7 +1069,7 @@ function pintarConfiancaDoXml() {
   const r = estado.inventario?.conferenciaXmlResumo;
   if (!r || r.conferiu !== false) { barra.hidden = true; return; }
   barra.innerHTML = '<strong>A conferência do XML não aconteceu.</strong><br>'
-    + esc(r.porque || 'o agente não disse por quê')
+    + html(r.porque || 'o agente não disse por quê')
     + '<br>Então a lista vazia abaixo não quer dizer que está tudo certo.';
   barra.hidden = false;
 }
@@ -2186,5 +2188,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, html };
 }

@@ -591,5 +591,12 @@ if (exportado.envioDaApi && exportado.linhaDaApi) {
   });
 }
 
+conferir('texto que vai para innerHTML tem as tags escapadas', () => {
+  if (!exportado.html) throw new Error('app.js não exporta html()');
+  igual(exportado.html('<img src=x onerror="alert(1)">&\''),
+    '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;', 'escape');
+  igual(exportado.html(null), '', 'nulo');
+});
+
 console.log(falhas ? `\n${falhas} falha(s)\n` : '\nTudo passou.\n');
 process.exit(falhas ? 1 : 0);

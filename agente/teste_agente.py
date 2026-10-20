@@ -1412,6 +1412,131 @@ def principal():
         (ag.consultar, ag.executar, ag.conectar_firebird, ag.fechar,
          ag.modo_auto, ag.registrar_ajuste) = guardados
 
+    # --- zerar negativos e ajustar lote: as outras escritas no Digifarma ---
+    # Junto com o desmarcar, são as únicas que mudam o banco da farmácia.
+    # O que se prova: só com a escrita liberada, só na coluna de saldo, só
+    # nos lotes pedidos, e sempre com o antes e o depois registrados.
+    escritos, ajustes = [], []
+    saldo = {'coluna': 'QTD_ESTOQUE', 'modo': 'saldo', 'campos': []}
+    movimento = {'coluna': 'QTD_MOV', 'modo': 'movimento', 'campos': []}
+    negativos = [
+        {'LOTE_ID': 11, 'PRODUTO_ID': 1, 'PRODUTO': 'CLONAZEPAM 2MG',
+         'REGISTRO_MS': '1.0000.0001.001-1', 'NUM_LOTE': 'A1', 'SALDO': -3},
+        {'LOTE_ID': 12, 'PRODUTO_ID': 2, 'PRODUTO': 'AMOXICILINA 500MG',
+         'REGISTRO_MS': '1.0000.0002.001-1', 'NUM_LOTE': 'B2', 'SALDO': -1.5},
+    ]
+    um_lote = [{'LOTE_ID': 21, 'PRODUTO_ID': 3, 'PRODUTO': 'SERTRALINA 50MG',
+                'REGISTRO_MS': '1.0000.0003.001-1', 'NUM_LOTE': 'C3', 'SALDO': 4}]
+    guardados = (ag.consultar, ag.executar, ag.conectar_firebird, ag.fechar,
+                 ag.registrar_ajuste, ag.detectar_coluna_saldo,
+                 ag.linhas_do_lote_para_ajuste, ag.saldo_anvisa_do_ms)
+
+    def recusa(titulo, chamada, trecho=''):
+        try:
+            chamada()
+            conferir(titulo, False)
+        except RuntimeError as e:
+            conferir(titulo, not escritos and trecho in str(e), e)
+
+    try:
+        ag.executar = lambda _c, sql, p=(): escritos.append((sql, p)) or 1
+        ag.conectar_firebird = lambda _config: None
+        ag.fechar = lambda _c: None
+        ag.registrar_ajuste = lambda _db, dados: ajustes.append(dados)
+        ag.consultar = lambda _c, sql, p=(): [dict(l) for l in negativos]
+        ag.detectar_coluna_saldo = lambda _c, _config=None: saldo
+        pedido = {'pedidoPor': 'jefferson'}
+
+        recusa('zerar negativos com a escrita desligada é recusado',
+               lambda: ag.zerar_negativos({}, None, pedido), 'desligada')
+        ag.detectar_coluna_saldo = lambda _c, _config=None: movimento
+        recusa('zerar negativos em coluna de movimento é recusado',
+               lambda: ag.zerar_negativos(ligada, None, pedido), 'movimento')
+        ag.detectar_coluna_saldo = lambda _c, _config=None: saldo
+
+        recado = ag.zerar_negativos(ligada, None, pedido)
+        conferir('zera cada lote negativo, só se ainda estiver negativo',
+                 [p for _s, p in escritos] == [(11,), (12,)]
+                 and all(s == 'UPDATE LOTES SET QTD_ESTOQUE = 0 '
+                              'WHERE LOTE_ID = ? AND QTD_ESTOQUE < 0' for s, _p in escritos),
+                 escritos)
+        conferir('o zerar fica registrado com o antes e o depois de cada lote',
+                 len(ajustes) == 1 and ajustes[0]['tipo'] == 'zerar_negativos'
+                 and [(l['loteId'], l['de'], l['para']) for l in ajustes[0]['lotes']]
+                 == [(11, -3, 0), (12, -1.5, 0)]
+                 and ajustes[0]['unidades'] == -4.5 and ajustes[0]['por'] == 'jefferson',
+                 ajustes)
+        conferir('a resposta avisa que o acerto não vai ao SNGPC',
+                 '2 lote(s)' in recado and 'NÃO pode ser transmitido' in recado, recado)
+
+        escritos.clear()
+        ajustes.clear()
+        ag.zerar_negativos(ligada, None, dict(pedido, texto='amoxi'))
+        conferir('com filtro, zera só o lote do produto pedido',
+                 [p for _s, p in escritos] == [(12,)], escritos)
+
+        escritos.clear()
+        ajustes.clear()
+        ag.executar = lambda _c, sql, p=(): escritos.append((sql, p)) or 0
+        ag.zerar_negativos(ligada, None, pedido)
+        conferir('lote que deixou de ser negativo no meio não entra no registro',
+                 ajustes and ajustes[0]['lotes'] == [] and ajustes[0]['unidades'] == 0,
+                 ajustes)
+        ag.executar = lambda _c, sql, p=(): escritos.append((sql, p)) or 1
+
+        escritos.clear()
+        ajustes.clear()
+        ag.linhas_do_lote_para_ajuste = lambda _c, _i, _ms, _l: [dict(l) for l in um_lote]
+        ag.saldo_anvisa_do_ms = lambda _c, _ms: {}
+        pedido = {'ms': '1000000030011', 'lote': 'C3', 'quantidade': 2,
+                  'pedidoPor': 'jefferson'}
+
+        recusa('ajustar lote com a escrita desligada é recusado',
+               lambda: ag.ajustar_lote({}, None, pedido), 'desligada')
+        recusa('ajustar lote para quantidade negativa é recusado',
+               lambda: ag.ajustar_lote(ligada, None, dict(pedido, quantidade=-1)),
+               'negativa')
+        recusa('ajustar sem dizer o lote é recusado',
+               lambda: ag.ajustar_lote(ligada, None, dict(pedido, lote='')), 'lote')
+
+        ag.linhas_do_lote_para_ajuste = lambda _c, _i, _ms, _l: um_lote * 2
+        recusa('lote com duas linhas em LOTES é recusado, sem chutar qual',
+               lambda: ag.ajustar_lote(ligada, None, pedido), '2 linhas')
+        ag.linhas_do_lote_para_ajuste = lambda _c, _i, _ms, _l: []
+        recusa('lote que não existe é recusado',
+               lambda: ag.ajustar_lote(ligada, None, pedido), 'não encontrado')
+        ag.linhas_do_lote_para_ajuste = lambda _c, _i, _ms, _l: [dict(l) for l in um_lote]
+
+        recado = ag.ajustar_lote(ligada, None, dict(pedido, quantidade=4))
+        conferir('lote já com o valor contado não é alterado',
+                 not escritos and 'Nada a fazer' in recado, recado)
+
+        recado = ag.ajustar_lote(ligada, None, pedido)
+        conferir('ajusta só aquele lote, com o valor contado',
+                 escritos == [('UPDATE LOTES SET QTD_ESTOQUE = ? WHERE LOTE_ID = ?', (2.0, 21))],
+                 escritos)
+        conferir('o ajuste fica registrado com o antes e o depois',
+                 len(ajustes) == 1 and ajustes[0]['tipo'] == 'ajustar_lote'
+                 and [(l['loteId'], l['de'], l['para']) for l in ajustes[0]['lotes']]
+                 == [(21, 4, 2.0)] and ajustes[0]['por'] == 'jefferson', ajustes)
+
+        escritos.clear()
+        ag.saldo_anvisa_do_ms = lambda _c, _ms: {'C3': 2.0}
+        recusa('zerar lote que a ANVISA ainda tem é recusado (o certo é PERDA)',
+               lambda: ag.ajustar_lote(ligada, None, dict(pedido, quantidade=0)),
+               'PERDA')
+
+        def anvisa_ilegivel(_c, _ms):
+            raise RuntimeError('tabela do inventário sumiu')
+        ag.saldo_anvisa_do_ms = anvisa_ilegivel
+        ag.ajustar_lote(ligada, None, dict(pedido, quantidade=0))
+        conferir('inventário da ANVISA ilegível não trava a zeragem do lote',
+                 [p for _s, p in escritos] == [(0.0, 21)], escritos)
+    finally:
+        (ag.consultar, ag.executar, ag.conectar_firebird, ag.fechar,
+         ag.registrar_ajuste, ag.detectar_coluna_saldo,
+         ag.linhas_do_lote_para_ajuste, ag.saldo_anvisa_do_ms) = guardados
+
     # ------------------------------------------------------------
     # investigar um lote: Digifarma igual ao SNGPC e o app acusando
     # ------------------------------------------------------------

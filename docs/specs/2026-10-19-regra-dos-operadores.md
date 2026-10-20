@@ -1,0 +1,57 @@
+# Spec — quem pode ler e gravar a lista de operadores
+Data: 2026-10-19
+
+## Problema
+Em `agente/regras-firebase.json`, `farmacia/operadores` aceita leitura e
+gravação de **qualquer conta logada que não seja anônima**. Todos os outros
+nós que o app grava exigem o UID em `farmacia/autorizados`. O mesmo vale para
+a leitura de `farmacia/autorizados` (a lista de UIDs com acesso).
+
+O app entra com e-mail e senha do Firebase (`signInWithEmailAndPassword`), e a
+chave web do Firebase é pública no `app.js` — é assim que o Firebase funciona.
+Se o cadastro de contas estiver ligado no projeto (o padrão do provedor
+e-mail/senha), qualquer pessoa pode criar uma conta pela API e:
+
+- apagar ou trocar a lista de operadores (o nome que assina cada aceite e
+  cada pedido ao agente);
+- incluir nomes falsos, que passam a aparecer para quem marca um aceite;
+- ler a lista de UIDs autorizados.
+
+Não dá acesso ao inventário, aos aceites nem à fila do agente. [verificar] se o
+cadastro de contas está ligado no console (Authentication > Settings >
+Ações do usuário > "Ativar criação (inscrição)").
+
+## Alternativas
+- **A. Exigir `autorizados` também em `operadores` (recomendada, junto com B).**
+  `.read` e `.write` de `operadores` passam a ser iguais aos de `config`;
+  `autorizados` passa a ser lido só pelo próprio UID
+  (`autorizados/$uid`), já que o app não lê a lista inteira (só o agente, que
+  usa a conta de serviço e não passa pelas regras). Custo: uma pessoa logada
+  mas ainda não autorizada deixa de ver a lista de operadores — hoje ela já
+  não vê nada do resto do app, então nada muda na prática.
+- **B. Desligar o cadastro de contas no console do Firebase.** Sem código.
+  Fecha a porta para contas novas criadas de fora; contas novas da farmácia
+  passam a ser criadas pelo console. Custo: um passo manual seu, uma vez.
+- **C. Deixar como está.** O dano possível é baixo (nomes e a lista de UIDs),
+  mas é o único nó gravável por quem não é da farmácia.
+
+## Recomendação
+A + B. A protege mesmo que o cadastro volte a ser ligado; B tira o atacante
+antes das regras.
+
+## Como fica (A)
+- `regras-firebase.json`: `operadores` com a mesma condição de `config`;
+  `autorizados` com `"$uid": {".read": "auth != null && auth.uid === $uid"}`
+  e `.write: false`.
+- `teste_bat.py` já confere o protocolo app × agente × regras; ganha a
+  conferência de que nenhum nó gravável pelo app fica sem `autorizados`.
+- As regras chegam ao Firebase quando o agente roda `--regras` (o
+  `ATUALIZAR_AGENTE.bat` faz isso no passo 5), ou colando no console.
+
+## Plano de volta
+Republicar o `regras-firebase.json` anterior (o do commit antes desta
+mudança) pelo console ou pelo `--regras`. Nenhum dado é apagado nem
+convertido.
+
+## Fora do escopo
+Login, senha da farmácia, regras dos outros nós.

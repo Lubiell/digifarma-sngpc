@@ -25,7 +25,7 @@ REM  Agente quebrado num servidor onde ninguem esta e pior que
 REM  agente desatualizado.
 REM
 REM  Nao precisa de administrador: nao mexe em tarefa nem em
-REM  instalacao, so no agente_auto.py.
+REM  instalacao, so nos arquivos do agente.
 REM ============================================================
 
 cd /d "%~dp0"
@@ -81,6 +81,38 @@ if exist agente_auto.py (
 REM ---------- 3. Baixar ----------
 echo [2/6] Baixando a versao mais nova do GitHub...
 set "CRU=https://raw.githubusercontent.com/Lubiell/digifarma-sngpc/main/agente"
+
+REM  Quais arquivos formam o agente quem diz e o arquivos.json do
+REM  repositorio, o mesmo que o botao "Atualizar o agente" le. Sem ele
+REM  o agente nao pode ser dividido em modulos: este caminho manual
+REM  instalaria o principal novo sem o modulo que ele importa.
+REM  Lido ANTES de trocar qualquer coisa: lista estranha para tudo.
+REM  Sem conseguir baixar a lista, vale a fixa de sempre. A marca de
+REM  cada arquivo aqui so pode ter caracteres que o CMD nao interpreta
+REM  (sem " %% ! ^ & | < > \ nem acento) - mais estrito que o agente.
+if exist arquivos_lista.txt del arquivos_lista.txt >nul 2>&1
+curl -fsSL -o arquivos.json.novo "%CRU%/arquivos.json"
+if errorlevel 1 goto :LISTA_FIXA
+%PY% -c "import sys,json,re;d=json.load(open(sys.argv[1],encoding='utf-8')).get('arquivos');ok=isinstance(d,dict) and 'agente_auto.py' in d and len(d)<=30 and all(re.match(r'[a-z][a-z0-9_]*[.]py$',n) and isinstance(m,str) and m.strip() and all(31<ord(c)<127 and c not in chr(34)+chr(37)+chr(33)+chr(94)+chr(38)+chr(124)+chr(60)+chr(62)+chr(92) for c in m) for n,m in d.items());ok or sys.exit(1);open(sys.argv[2],'w',encoding='utf-8').write(''.join(n+'|'+m+chr(10) for n,m in d.items() if n not in ('agente_auto.py',)))" arquivos.json.novo arquivos_lista.txt
+if errorlevel 1 (
+  echo.
+  echo  O arquivos.json do repositorio veio estranho. NADA foi trocado:
+  echo  o agente que estava rodando continua no lugar.
+  del arquivos.json.novo >nul 2>&1
+  if exist arquivos_lista.txt del arquivos_lista.txt >nul 2>&1
+  exit /b 1
+)
+del arquivos.json.novo >nul 2>&1
+echo       lista de arquivos: arquivos.json do repositorio
+goto :BAIXAR_PRINCIPAL
+
+:LISTA_FIXA
+if exist arquivos.json.novo del arquivos.json.novo >nul 2>&1
+echo       AVISO: nao baixei o arquivos.json; vale a lista fixa
+> arquivos_lista.txt echo mapa_xml.py^|def comparar^(
+>> arquivos_lista.txt echo teste_agente.py^|def principal^(
+
+:BAIXAR_PRINCIPAL
 set "URL=%CRU%/agente_auto.py"
 curl -fsSL -o agente_auto_novo.py "%URL%"
 if errorlevel 1 (
@@ -91,6 +123,7 @@ if not exist agente_auto_novo.py (
   echo.
   echo  Nao consegui baixar. Verifique a internet e tente de novo.
   echo  Nada foi alterado.
+  del arquivos_lista.txt >nul 2>&1
   exit /b 1
 )
 
@@ -102,14 +135,32 @@ if errorlevel 1 (
   echo  O arquivo baixado esta incompleto ou com erro. NADA foi trocado:
   echo  o agente que estava rodando continua no lugar.
   del agente_auto_novo.py >nul 2>&1
+  del arquivos_lista.txt >nul 2>&1
+  exit /b 1
+)
+echo       agente_auto.py conferido
+
+REM ---------- 4b. Os que acompanham o agente (lista do passo 3) ----------
+REM  Todos baixados e conferidos ANTES de trocar qualquer um: principal
+REM  novo sem o modulo que ele importa e agente parado no servidor.
+set "FALHOU="
+for /f "usebackq tokens=1,* delims=|" %%a in ("arquivos_lista.txt") do call :COMPANHEIRO %%a "%%b"
+if defined FALHOU (
+  echo.
+  echo  Faltou arquivo do agente. NADA foi trocado: o agente que estava
+  echo  rodando continua no lugar. Tente de novo mais tarde.
+  del agente_auto_novo.py >nul 2>&1
+  for /f "usebackq tokens=1 delims=|" %%a in ("arquivos_lista.txt") do del "%%a.novo" >nul 2>&1
+  del arquivos_lista.txt >nul 2>&1
   exit /b 1
 )
 move /y agente_auto_novo.py agente_auto.py >nul
-echo       arquivo conferido e instalado
-
-REM ---------- 4b. Os dois que acompanham o agente ----------
-call :COMPANHEIRO mapa_xml.py "def comparar("
-call :COMPANHEIRO teste_agente.py "def principal("
+echo       agente_auto.py instalado
+for /f "usebackq tokens=1 delims=|" %%a in ("arquivos_lista.txt") do (
+  move /y "%%a.novo" "%%a" >nul
+  echo       %%a instalado
+)
+del arquivos_lista.txt >nul 2>&1
 
 REM ---------- 5. Configuracao ----------
 echo.
@@ -126,7 +177,7 @@ echo.
 set /p "PONTEIRO=  Transmitido ate a venda numero: "
 echo.
 echo  Liberar o app a ZERAR LOTE NEGATIVO e GRAVAR CONTAGEM no Digifarma?
-echo  Sao as unicas operacoes que escrevem no Digifarma, e cada uma fica
+echo  Junto com desmarcar controlado, sao as unicas escritas no Digifarma; cada uma fica
 echo  registrada com o antes, o depois e quem pediu.
 echo  Enter pula e deixa como esta.
 echo.
@@ -193,22 +244,22 @@ exit /b 0
 
 REM ---------- subrotina ----------
 REM  %1 nome do arquivo, %2 trecho que precisa existir dentro dele.
-REM  Baixa, confere e so entao troca. Falha aqui nao derruba o update:
-REM  o agente_auto.py ja esta instalado e o arquivo antigo continua
-REM  servindo, com aviso na tela.
+REM  So baixa e confere, para %1.novo; quem troca e o passo 4b, depois
+REM  que TODOS passaram. Qualquer falha liga FALHOU e nada e trocado.
 :COMPANHEIRO
 curl -fsSL -o "%~1.novo" "%CRU%/%~1"
 if errorlevel 1 (
-  echo       AVISO: nao baixei %~1, mantido o que ja estava
+  echo       FALHA: nao baixei %~1
   if exist "%~1.novo" del "%~1.novo" >nul 2>&1
+  set "FALHOU=1"
   goto :eof
 )
 %PY% -c "import sys;t=open(sys.argv[1],encoding='utf-8').read();sys.exit(0 if sys.argv[2] in t and compile(t,'a','exec') is not None else 1)" "%~1.novo" %2
 if errorlevel 1 (
-  echo       AVISO: %~1 baixado veio quebrado, mantido o que ja estava
+  echo       FALHA: %~1 baixado veio quebrado
   del "%~1.novo" >nul 2>&1
+  set "FALHOU=1"
   goto :eof
 )
-move /y "%~1.novo" "%~1" >nul
-echo       %~1 conferido e instalado
+echo       %~1 conferido
 goto :eof

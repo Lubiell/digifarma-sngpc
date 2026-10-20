@@ -1,10 +1,16 @@
 # PROGRESS — digifarma-sngpc
-Atualizado: 2026-10-16 | Máquina: nuvem (Claude Code)
+Atualizado: 2026-10-19 | Máquina: nuvem (Claude Code)
 
 ## Estado atual
-App no ar em GitHub Pages. Agente parado no servidor desde 10/09 (ver
-"Pendências no servidor"). Novo `agente/ACESSO_REMOTO.bat` para entrar no
-servidor de longe, ainda não executado no Windows.
+App no ar em GitHub Pages. Agente reinstalado no servidor em 10/10 e
+respondendo à fila em 16/10 (testes da API do SNGPC, abaixo); o "parado
+desde 10/09" que estava aqui era de antes da reinstalação. Novo
+`agente/ACESSO_REMOTO.bat` para entrar no servidor de longe, ainda não
+executado no Windows.
+
+Divisão do `agente_auto.py` (agente/PLANO_DIVISAO.md): etapa 2 feita em
+19/10 — o `ATUALIZAR_AGENTE.bat` lê o `arquivos.json`. Falta rodá-lo uma
+vez no servidor antes do primeiro módulo (`consultas.py`).
 
 ## Feito
 - 16/10: Saldo com Digifarma = SNGPC acusado como errado. A diferença é
