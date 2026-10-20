@@ -718,6 +718,9 @@ def usar_ms_do_lote_da_venda(conexao):
     except Exception as e:
         registrar('Não consegui ver as colunas de ITEM_VENDAS_LOTES: %s' % e)
         tem = False
+    if not tem and SQL_MS_DA_VENDA_LOTE not in CONSULTAS['saidas_pendentes']:
+        registrar('ITEM_VENDAS_LOTES sem REGISTRO_MS: a venda conta no M.S. do '
+                  'cadastro do produto, não no da linha de lote.')
     de, para = ((SQL_MS_DA_VENDA, SQL_MS_DA_VENDA_LOTE) if tem
                 else (SQL_MS_DA_VENDA_LOTE, SQL_MS_DA_VENDA))
     for nome in ('saidas_pendentes', 'saidas_periodo'):

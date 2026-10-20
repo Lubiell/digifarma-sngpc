@@ -1950,7 +1950,14 @@ function pintarRetornos() {
     const diaDoRetorno = String(r.em || '').slice(0, 10);
     const daApi = vazio ? (envioDaApi(diaDoRetorno) || envioDaApiPelaData(diaDoRetorno)) : null;
     const corpo = criar('div');
+    const reenvio = reenvioAceito(daApi);
     if (daApi) corpo.appendChild(linhaDaApi(daApi));
+    if (reenvio) {
+      const nota = criar('p', 'sublinha');
+      nota.textContent = 'O período foi reenviado em ' + dataHora(reenvio.transmissao)
+        + ' e aceito pela ANVISA. Esta recusa já está resolvida.';
+      corpo.appendChild(nota);
+    }
     if (vazio && !daApi) {
       const nota = criar('p', 'motivo');
       nota.textContent = 'O Digifarma gravou este arquivo sem a resposta da ANVISA: hash e mensagem '
@@ -1972,9 +1979,11 @@ function pintarRetornos() {
       titulo: 'Resposta de ' + dataHora(r.em),
       meta: [r.arquivo],
       tarja: [temErro ? 'Tem erro — abra para ver'
+        : reenvio ? 'Recusado, mas reenviado e aceito em ' + dataBR(String(reenvio.transmissao).slice(0, 10))
         : (daApi ? TARJA_DA_API[daApi.situacao] || 'Arquivo vazio — veja a resposta da API'
           : (vazio ? 'Vazio — sem resposta da ANVISA' : 'Sem erro aparente')), ''],
       tarjaClasse: temErro ? 'falta'
+        : reenvio ? 'ok'
         : (daApi ? ({ validado: 'ok', com_erro: 'falta' }[daApi.situacao] || 'sobra')
           : (vazio ? 'sobra' : 'ok')),
       detalhe: corpo
@@ -2031,6 +2040,19 @@ const TARJA_DA_API = {
   com_erro: 'Arquivo vazio, mas a API diz: RECUSADO',
   processando: 'Arquivo vazio; a ANVISA ainda não validou'
 };
+
+/* Envio recusado cujo periodo subiu de novo depois e foi aceito: a recusa
+   ja esta resolvida. 20/10: o envio recebido em 14/10 (periodo 13/10) foi
+   recusado e o de 15/10 (13 a 14/10) aceito, e a tela seguia mostrando o
+   14/10 em vermelho como se faltasse fazer algo. */
+function reenvioAceito(e) {
+  if (!e || e.situacao !== 'com_erro' || !e.de) return null;
+  const ate = e.ate || e.de;
+  return comoLista(estado.inventario?.apiSngpc?.envios)
+    .filter((v) => v.situacao === 'validado' && v.de && v.de <= e.de && (v.ate || v.de) >= ate
+      && String(v.transmissao || '') > String(e.transmissao || ''))
+    .sort((x, y) => String(x.transmissao || '').localeCompare(String(y.transmissao || '')))[0] || null;
+}
 
 function linhaDaApi(e) {
   const p = criar('p', 'sublinha');
@@ -2143,6 +2165,13 @@ function pintarAceites() {
       esquerda.appendChild(erro);
     }
     if (daApi) esquerda.appendChild(linhaDaApi(daApi));
+    const reenvio = reenvioAceito(daApi);
+    if (reenvio && estadoAtual === 'recusado') {
+      const r = criar('p', 'sublinha');
+      r.style.margin = '2px 0 0';
+      r.textContent = 'Reenviado em ' + dataHora(reenvio.transmissao) + ' e aceito: recusa já resolvida.';
+      esquerda.appendChild(r);
+    }
     el.appendChild(esquerda);
 
     const direita = criar('div');
@@ -2300,5 +2329,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo };
 }
