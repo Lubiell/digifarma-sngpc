@@ -28,7 +28,7 @@ derrubar o servidor**, que a farmácia mal alcança.
 | Etapa | O quê | Pronto quando |
 |---|---|---|
 | 1 | Atualizador de vários arquivos + `arquivos.json` (feito) | O servidor atualizou pelo botão e a resposta lista os arquivos trocados |
-| 2 | `ATUALIZAR_AGENTE.bat` lê o `arquivos.json` | Rodado uma vez no servidor |
+| 2 | `ATUALIZAR_AGENTE.bat` lê o `arquivos.json` (feito em 19/10; falta rodar no servidor) | Rodado uma vez no servidor |
 | 3 | Um módulo por PR, **movendo funções sem mudar lógica**, e o módulo entra no `arquivos.json` no mesmo PR | Testes e CI verdes; servidor atualizou e a fila continuou rodando |
 
 ## Módulos (pelas seções que o arquivo já tem)

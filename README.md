@@ -11,8 +11,17 @@ O estoque manual do balcão fica no repositório separado **ESTOQUE**.
 
 ## Regra de ouro
 
-**O Digifarma é a verdade.** O app só LÊ o inventário; o agente só faz
-`SELECT`. Nada aqui escreve no Digifarma.
+**O Digifarma é a verdade.** O app só LÊ o inventário, e o agente só faz
+`SELECT` — com três exceções, todas pedidas pelo app:
+
+- zerar lote com saldo negativo;
+- pôr um lote no valor contado na prateleira;
+- desmarcar psicotrópico/antimicrobiano de um produto.
+
+Nenhuma passa sem a escrita liberada na aba Servidor, que vale 60 minutos e
+se fecha sozinha. Cada uma fica registrada com o antes, o depois e quem
+pediu (`farmacia/ajustes` e `agente/ajustes_AAAA-MM-DD.json`). Fora disso,
+nada aqui escreve no Digifarma.
 
 ## Como abrir
 
