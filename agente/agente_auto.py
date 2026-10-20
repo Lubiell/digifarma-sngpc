@@ -2521,7 +2521,13 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
     # o período vem do cabeçalho do XML — é exato, não precisa deduzir
     periodo_de = cabecalho.get('dataInicio') or anterior(ultimo_envio)
     periodo_ate = cabecalho.get('dataFim') or ultimo_envio
-    data_envio = ultimo_envio or periodo_ate
+    # ULTIMO_ENVIO_SNGPC é o FIM do período, não o dia da transmissão: o
+    # período 17 a 18/10, transmitido em 19/10, virava um "Envio de 18/10"
+    # pendente nos Aceites, que nunca existiu. Com XML arquivado, a data do
+    # envio é a do arquivo (a mesma chave dos enviosConhecidos).
+    do_arquivo = re.match(r'sngpc_(\d{4}-\d{2}-\d{2})',
+                          os.path.basename(caminho_xml or ''), re.I)
+    data_envio = (do_arquivo.group(1) if do_arquivo else None) or ultimo_envio or periodo_ate
 
     resultado['envio'] = {
         'data': data_envio,
