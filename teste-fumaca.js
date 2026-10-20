@@ -542,6 +542,14 @@ if (exportado.hashesDoTexto && exportado.envioDaApiPelaData) {
         periodosDeEnvio: { '2026-10-16': { de: '2026-10-15', ate: '2026-10-15' } },
         apiSngpc: { envios: [{ arquivo: '', de: '2026-10-15', ate: '2026-10-15', transmissao: '2026-10-17T08:00:00', situacao: 'validado' }] } };
       igual(JSON.stringify(exportado.datasDeEnvio()), '["2026-10-16"]', 'envio já casado pelo período não vira segunda linha');
+      // 20/10: a recusa de 14/10 (período 13/10) foi resolvida pelo reenvio de 15/10 (13 a 14/10)
+      const recusado = { arquivo: '', de: '2026-10-13', ate: '2026-10-13', transmissao: '2026-10-14T16:26:00', situacao: 'com_erro' };
+      exportado.estado.inventario = { apiSngpc: { envios: [recusado,
+        { arquivo: '', de: '2026-10-13', ate: '2026-10-14', transmissao: '2026-10-15T16:46:00', situacao: 'validado' }] } };
+      igual(exportado.reenvioAceito(recusado)?.transmissao, '2026-10-15T16:46:00', 'reenvio aceito acha a recusa resolvida');
+      exportado.estado.inventario = { apiSngpc: { envios: [recusado,
+        { arquivo: '', de: '2026-10-14', ate: '2026-10-14', transmissao: '2026-10-15T16:46:00', situacao: 'validado' }] } };
+      igual(exportado.reenvioAceito(recusado), null, 'período diferente não resolve a recusa');
       // 20/10: ULTIMO_ENVIO_SNGPC (18/10) é o fim do período, não o dia do envio (19/10)
       exportado.estado.inventario = {
         envio: { data: '2026-10-18', arquivoXml: 'sngpc_2026-10-19.xml' },
