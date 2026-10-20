@@ -721,10 +721,12 @@ const MOTIVO_SALDO = {
   quantidade: ['Quantidade diferente', 'Os dois lados conhecem o lote, com saldos diferentes.'],
   anvisa_zerada_lote: ['Lote zerado na ANVISA', 'O M.S. está no inventário, este lote não. Costuma ser entrada ainda não transmitida.'],
   anvisa_zerada_produto: ['Produto zerado na ANVISA', 'O M.S. inteiro está fora do inventário da ANVISA.'],
+  lote_trocado: ['Lote com número diferente', 'O mesmo M.S. tem a mesma quantidade em outro lote do outro lado. Confira o lote impresso na caixa.'],
+  resto_no_lote: ['Resto na tabela de lotes', 'Produto zerado no balcão e na ANVISA; o saldo está só na tabela de lotes do Digifarma.'],
   sem_ms: ['Produto sem registro M.S.', 'Sem M.S. cadastrado não dá para comparar com a ANVISA.']
 };
-const ORDEM_MOTIVO = ['negativo', 'lote_em_dois_ms', 'so_na_anvisa', 'quantidade',
-                      'anvisa_zerada_lote', 'anvisa_zerada_produto', 'sem_ms'];
+const ORDEM_MOTIVO = ['negativo', 'lote_em_dois_ms', 'lote_trocado', 'so_na_anvisa', 'quantidade',
+                      'anvisa_zerada_lote', 'anvisa_zerada_produto', 'resto_no_lote', 'sem_ms'];
 
 /* Por que a comparacao de saldo pode nao valer. A chave vem do agente;
    a frase e daqui, porque quem escreve frase e a tela. */
@@ -856,9 +858,11 @@ function saldoDoProduto(i) {
 
 function detalheDoSaldo(i, dif) {
   const movimento = Number(i.movimentoDesdeEnvio || 0);
-  const produto = saldoDoProduto(i);
+  const produto = saldoDoProduto(i) ?? (i.saldoProduto !== undefined ? Number(i.saldoProduto) : null);
   const totalLotes = Number(i.saldoDigifarmaMs ?? i.saldoDigifarma ?? 0);
-  const trocado = loteTrocado(i);
+  // o agente ja classifica (lote_trocado/resto_no_lote); a conta daqui vale
+  // enquanto o agente do servidor for antigo
+  const trocado = loteTrocado(i) || (i.loteParceiro ? { lote: i.loteParceiro } : null);
   const pares = [
     ['Código', i.codigo],
     ['Laboratório', i.laboratorio],
@@ -893,7 +897,8 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = i.totaisBatem
       ? 'Os totais do lote batem nos dois lados: a farmácia tem a quantidade certa, repartida entre os cadastros de um jeito diferente. É lançamento no cadastro errado, não falta de mercadoria.'
       : MOTIVO_SALDO.lote_em_dois_ms[1];
-  } else if (produto === 0 && totalLotes > 0 && !Number(i.saldoSngpcMs ?? i.saldoSngpc ?? 0)) {
+  } else if (i.motivo === 'resto_no_lote'
+      || (produto === 0 && totalLotes > 0 && !Number(i.saldoSngpcMs ?? i.saldoSngpc ?? 0))) {
     nota.textContent = 'Na tela do balcão o produto está zerado, e na ANVISA também: os dois batem. '
       + 'O saldo ' + totalLotes + ' é resto na tabela de lotes do Digifarma, que não acompanhou a baixa. '
       + 'Não é divergência com a ANVISA: não mexa na escrituração.';

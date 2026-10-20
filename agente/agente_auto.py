@@ -2419,6 +2419,67 @@ def parear_lote_em_dois_ms(itens):
     return pares
 
 
+def parear_lote_trocado(itens):
+    """O lote que só o Digifarma tem e o que só a ANVISA tem, no mesmo M.S.
+    e com a mesma quantidade, são o mesmo estoque com o número de lote
+    registrado de dois jeitos. Em 20/10, AMOX+CLAVU tinha 3 no DFG3073A no
+    Digifarma e 3 no DFG6142A na ANVISA: o app mandava procurar "entrada não
+    transmitida", e a entrada tinha subido havia mais de um mês.
+
+    Só pareia sem movimento pendente dos dois lados (aí a quantidade é a
+    foto pura) e um a um: dois candidatos com a mesma quantidade não viram
+    par por sorteio."""
+    def livre(i):
+        return not round(numero(i.get('movimentoDesdeEnvio')), 3)
+
+    so_aqui, so_la = {}, {}
+    for item in itens:
+        ms = so_digitos(item.get('ms'))
+        if not ms or not livre(item):
+            continue
+        digi = round(numero(item.get('saldoDigifarma')), 3)
+        sngpc = round(numero(item.get('saldoSngpc')), 3)
+        if item.get('motivo') == 'anvisa_zerada_lote' and digi > 0 and not sngpc:
+            so_aqui.setdefault((ms, digi), []).append(item)
+        elif item.get('motivo') == 'so_na_anvisa' and sngpc > 0 and not digi:
+            so_la.setdefault((ms, sngpc), []).append(item)
+
+    pares = 0
+    for chave, aqui in so_aqui.items():
+        la = so_la.get(chave, [])
+        if len(aqui) != 1 or len(la) != 1:
+            continue
+        a, b = aqui[0], la[0]
+        a['motivo'] = b['motivo'] = 'lote_trocado'
+        a['loteParceiro'], b['loteParceiro'] = b['lote'], a['lote']
+        pares += 1
+    return pares
+
+
+def marcar_resto_no_lote(itens, controlados):
+    """Produto zerado no balcão (PROD_SALDO) e na ANVISA, mas com saldo na
+    tabela de lotes: o resto ficou em LOTES, que não acompanhou a baixa. Em
+    20/10, QUETROS tinha 1 no lote e 0 no balcão e no site. Não é
+    divergência com a ANVISA, e a etiqueta "zerado na ANVISA" mandava mexer
+    na escrituração."""
+    produto = {texto(c.get('codigo')): c.get('saldoProduto')
+               for c in controlados or [] if texto(c.get('codigo'))}
+    marcados = 0
+    for item in itens:
+        if item.get('motivo') not in ('anvisa_zerada_produto', 'anvisa_zerada_lote', 'quantidade'):
+            continue
+        saldo_produto = produto.get(texto(item.get('codigo')))
+        if saldo_produto is None or round(numero(saldo_produto), 3):
+            continue
+        sngpc_ms = item.get('saldoSngpcMs', item.get('saldoSngpc'))
+        if (numero(item.get('saldoDigifarma')) > 0 and not round(numero(sngpc_ms), 3)
+                and not round(numero(item.get('movimentoDesdeEnvio')), 3)):
+            item['motivo'] = 'resto_no_lote'
+            item['saldoProduto'] = 0.0
+            marcados += 1
+    return marcados
+
+
 def classificar_divergencia(registro, saldo_anvisa, ms_no_inventario):
     """Divergência de saldo não é uma coisa só, e cada tipo se resolve num
     lugar diferente. Sem isso o app mistura 'falta transmitir a entrada'
@@ -2886,6 +2947,17 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
         registrar('%d lote(s) aparecem sob dois registros M.S. diferentes. '
                   'Pode ser entrada lançada no cadastro errado — ou dois '
                   'fabricantes com o mesmo número de lote.' % pares_ms)
+
+    trocados = parear_lote_trocado(itens)
+    if trocados:
+        resultado['inventario']['loteTrocado'] = trocados
+        registrar('%d lote(s) com número diferente entre o Digifarma e a ANVISA '
+                  '(mesmo M.S., mesma quantidade).' % trocados)
+    restos = marcar_resto_no_lote(itens, resultado.get('controlados'))
+    if restos:
+        resultado['inventario']['restoNoLote'] = restos
+        registrar('%d lote(s) com saldo em LOTES e produto zerado no balcão e na '
+                  'ANVISA.' % restos)
 
     # o veredito do caso "iguais com movimento", lote a lote: falhar aqui
     # só tira o veredito da tela, nunca a sincronização
@@ -8278,6 +8350,15 @@ def explicar_lote(dados, filtro):
             print('  subiu; veja nos XML abaixo se a entrada aparece.')
         elif i.get('motivo') == 'so_na_anvisa':
             print('  VEREDITO: a ANVISA tem este lote e o Digifarma não o conhece.')
+        elif i.get('motivo') == 'lote_trocado':
+            print('  VEREDITO: provável lote com número diferente. O mesmo M.S. tem a')
+            print('  mesma quantidade no lote %s do outro lado. Confira o lote impresso'
+                  % i.get('loteParceiro'))
+            print('  na caixa antes de mexer.')
+        elif i.get('motivo') == 'resto_no_lote':
+            print('  VEREDITO: o produto está zerado no balcão e na ANVISA. O saldo vem')
+            print('  da tabela de lotes, que não acompanhou a baixa. Não mexa na')
+            print('  escrituração.')
         else:
             print('  VEREDITO: o Digifarma tem %+g em relação ao esperado. Conte a' % dif)
             print('  prateleira: é ela que diz qual lado está errado.')
@@ -9183,7 +9264,8 @@ def modo_tarefas(config):
                 i['descricao'][:42], i['lote'] or '(vazio)', i['saldoDigifarma']))
 
     # ---------- 3 ----------
-    contar = sorted(por_motivo.get('quantidade', []) + por_motivo.get('so_na_anvisa', []),
+    contar = sorted(por_motivo.get('quantidade', []) + por_motivo.get('so_na_anvisa', [])
+                    + por_motivo.get('lote_trocado', []),
                     key=lambda i: -abs(i['diferenca']))
     escrever('')
     escrever('3. CONFERIR NA PRATELEIRA — %d lote(s) com contagem diferente' % len(contar))
@@ -9215,6 +9297,18 @@ def modo_tarefas(config):
                 ', '.join(outros))
         escrever('   %-42s cód. %-10s M.S. %s%s' % (
             '', i['codigo'] or '—', formatar_ms(i["ms"]) or '—', recado))
+
+    restos = por_motivo.get('resto_no_lote', [])
+    if restos:
+        escrever('')
+        escrever('4. RESTO NA TABELA DE LOTES — %d lote(s)' % len(restos))
+        escrever('   Produto zerado no balcão e na ANVISA, com saldo só em LOTES.')
+        escrever('   Não é divergência com a ANVISA: não mexa na escrituração.')
+        escrever('')
+        for i in restos:
+            escrever('   %-42s lote %-14s LOTES %g · cód. %s' % (
+                i['descricao'][:42], i['lote'] or '(vazio)', i['saldoDigifarma'],
+                i['codigo'] or '—'))
 
     escrever('')
     escrever('=' * 78)

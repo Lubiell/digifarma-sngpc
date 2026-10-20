@@ -2172,6 +2172,53 @@ def principal():
     conferir('o M.S. vai so com digitos, como no resto do app',
              psico.get('ms') == '1003301220019', psico)
 
+    # --- 20/10: lote com número diferente e resto na tabela de lotes ---
+    amox = {'ms': '1235202730086', 'lote': 'DFG3073A', 'codigo': '68752',
+            'saldoDigifarma': 3.0, 'saldoSngpc': 0.0, 'diferenca': 3.0,
+            'motivo': 'anvisa_zerada_lote'}
+    amox_la = {'ms': '1235202730086', 'lote': 'DFG6142A', 'codigo': '',
+               'saldoDigifarma': 0.0, 'saldoSngpc': 3.0, 'diferenca': -3.0,
+               'motivo': 'so_na_anvisa'}
+    outro = {'ms': '1235202730086', 'lote': 'X1', 'codigo': '68752',
+             'saldoDigifarma': 2.0, 'saldoSngpc': 0.0, 'diferenca': 2.0,
+             'motivo': 'anvisa_zerada_lote'}
+    conferir('lote trocado: mesmo M.S. e mesma quantidade viram par',
+             ag.parear_lote_trocado([amox, amox_la, outro]) == 1
+             and amox['motivo'] == amox_la['motivo'] == 'lote_trocado'
+             and amox['loteParceiro'] == 'DFG6142A' and amox_la['loteParceiro'] == 'DFG3073A'
+             and outro['motivo'] == 'anvisa_zerada_lote', [amox, amox_la, outro])
+    pendente = dict(amox, motivo='anvisa_zerada_lote', movimentoDesdeEnvio=-1)
+    pendente.pop('loteParceiro', None)
+    la = dict(amox_la, motivo='so_na_anvisa')
+    la.pop('loteParceiro', None)
+    conferir('lote trocado: com movimento pendente não pareia',
+             ag.parear_lote_trocado([pendente, la]) == 0 and la['motivo'] == 'so_na_anvisa')
+    dois = [dict(amox, motivo='anvisa_zerada_lote', lote='A'), dict(amox, motivo='anvisa_zerada_lote', lote='B'),
+            dict(amox_la, motivo='so_na_anvisa')]
+    conferir('lote trocado: dois candidatos iguais não viram par por sorteio',
+             ag.parear_lote_trocado(dois) == 0, dois)
+
+    quetros = {'ms': '1057304040109', 'lote': '2515965', 'codigo': '67751',
+               'saldoDigifarma': 1.0, 'saldoSngpc': 0.0, 'diferenca': 1.0,
+               'motivo': 'anvisa_zerada_produto'}
+    escit = {'ms': '1052500450038', 'lote': 'BQ37M006', 'codigo': '27481',
+             'saldoDigifarma': 1.0, 'saldoSngpc': 0.0, 'diferenca': 1.0,
+             'motivo': 'anvisa_zerada_produto'}
+    na_anvisa = {'ms': '1', 'lote': 'L', 'codigo': '5', 'saldoDigifarma': 2.0,
+                 'saldoSngpc': 1.0, 'diferenca': 1.0, 'motivo': 'quantidade'}
+    controlados_teste = [{'codigo': '67751', 'saldoProduto': 0.0},
+                         {'codigo': '27481', 'saldoProduto': 1.0},
+                         {'codigo': '5', 'saldoProduto': 0.0}]
+    conferir('resto no lote: produto zerado no balcão e na ANVISA',
+             ag.marcar_resto_no_lote([quetros, escit, na_anvisa], controlados_teste) == 1
+             and quetros['motivo'] == 'resto_no_lote'
+             and escit['motivo'] == 'anvisa_zerada_produto'
+             and na_anvisa['motivo'] == 'quantidade', [quetros, escit, na_anvisa])
+    sem_lista = dict(quetros, motivo='anvisa_zerada_produto')
+    conferir('resto no lote: sem a lista de controlados não classifica',
+             ag.marcar_resto_no_lote([sem_lista], None) == 0
+             and sem_lista['motivo'] == 'anvisa_zerada_produto')
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0
