@@ -513,6 +513,14 @@ if (exportado.detalheDoSaldo) {
       const escitalopram = textos({ codigo: '27481', ms: '1052500450038', lote: 'BQ37M006', saldoDigifarma: 1,
         saldoSngpc: 0, diferenca: 1, motivo: 'anvisa_zerada_produto' });
       if (!escitalopram.includes('O M.S. inteiro está fora')) throw new Error('sem dado do balcão, segue o motivo: ' + escitalopram);
+      // motivo já classificado pelo agente, sem lotesDoMs nem lista de Controlados
+      exportado.estado.inventario = {};
+      const doAgente = textos({ codigo: '68752', ms: '1235202730086', lote: 'DFG3073A', saldoDigifarma: 3,
+        saldoSngpc: 0, diferenca: 3, motivo: 'lote_trocado', loteParceiro: 'DFG6142A' });
+      if (!doAgente.includes('o Digifarma tem 3 no lote DFG3073A e a ANVISA tem 3 no lote DFG6142A')) throw new Error('lote_trocado do agente: ' + doAgente);
+      const restoDoAgente = textos({ codigo: '67751', ms: '1057304040109', lote: '2515965', saldoDigifarma: 1,
+        saldoSngpc: 0, diferenca: 1, motivo: 'resto_no_lote', saldoProduto: 0 });
+      if (!restoDoAgente.includes('Na tela do balcão o produto está zerado')) throw new Error('resto_no_lote do agente: ' + restoDoAgente);
     } finally {
       exportado.estado.inventario = inv;
     }
