@@ -220,7 +220,7 @@ CONSULTAS = {
         SELECT C.VENDA_NOTA_ID,
                CAST(C.VENDA_DATA_HORA AS DATE) AS DATA,
                C.VENDA_DATA_HORA AS DATA_HORA,
-               P.PRODUTO, P.REGISTRO_MS, P.COD_BARRAS,
+               P.PRODUTO, {MS_DA_VENDA}, P.COD_BARRAS,
                IVL.NUM_LOTE, IVL.QUANTIDADE
           {DE_VENDA}
           {LOTE_DA_VENDA}
@@ -285,7 +285,7 @@ CONSULTAS = {
     "saidas_periodo": """
         SELECT C.VENDA_NOTA_ID AS VENDA,
                CAST(C.VENDA_DATA_HORA AS DATE) AS DATA,
-               P.PRODUTO, P.REGISTRO_MS,
+               P.PRODUTO, {MS_DA_VENDA},
                IVL.NUM_LOTE, IVL.QUANTIDADE
           {DE_VENDA}
           {LOTE_DA_VENDA}
@@ -598,7 +598,19 @@ CONSULTAS = {
 # A ordem importa: {DE_VENDA} e os JOINs entram antes, e só depois as
 # condições — senão um pedaço trocado poderia trazer outro marcador junto e
 # ficar sem substituir.
+# O M.S. que vai para a ANVISA numa venda é o da LINHA DE LOTE
+# (ITEM_VENDAS_LOTES.REGISTRO_MS, a coluna "Registro MS" da grade de lotes do
+# Verificador SNGPC), não o do cadastro do produto. Em 20/10 a OLANZAPINA do
+# cadastro da Aché saiu com o lote 2508169 no M.S. da Biosintética, e o
+# agente pôs o -2 na Aché: as duas linhas viraram divergência, sendo que
+# depois do envio tudo fecha. Começa no M.S. do produto (o que sempre foi) e
+# passa ao da linha só quando a coluna existe: usar_ms_do_lote_da_venda().
+SQL_MS_DA_VENDA = 'P.REGISTRO_MS AS REGISTRO_MS /* ms da venda */'
+SQL_MS_DA_VENDA_LOTE = ("COALESCE(NULLIF(TRIM(IVL.REGISTRO_MS), ''), P.REGISTRO_MS) "
+                        "AS REGISTRO_MS /* ms da venda */")
+
 PEDACOS_SQL = (
+    ('{MS_DA_VENDA}', SQL_MS_DA_VENDA),
     ('{DE_VENDA}', SQL_DE_VENDA),
     ('{LOTE_DA_VENDA}', SQL_LOTE_DA_VENDA),
     ('{JOIN_RECEITA}', SQL_JOIN_RECEITA),
@@ -687,12 +699,30 @@ def conectar_firebird(config):
         import fdb
     except ImportError:
         raise SystemExit('Falta a biblioteca fdb. Rode: pip install fdb')
-    return fdb.connect(
+    conexao = fdb.connect(
         dsn=config['banco'],
         user=config['usuario'],
         password=config['senha'],
         charset=config['charset'],
     )
+    usar_ms_do_lote_da_venda(conexao)
+    return conexao
+
+
+def usar_ms_do_lote_da_venda(conexao):
+    """Troca o M.S. das vendas que vão para a ANVISA pelo da linha de lote,
+    se ITEM_VENDAS_LOTES tiver REGISTRO_MS. Sem a coluna (ou sem conseguir
+    perguntar), fica o do produto: consulta que quebra apagaria a fila."""
+    try:
+        tem = 'REGISTRO_MS' in colunas_da_tabela(conexao, 'ITEM_VENDAS_LOTES')
+    except Exception as e:
+        registrar('Não consegui ver as colunas de ITEM_VENDAS_LOTES: %s' % e)
+        tem = False
+    de, para = ((SQL_MS_DA_VENDA, SQL_MS_DA_VENDA_LOTE) if tem
+                else (SQL_MS_DA_VENDA_LOTE, SQL_MS_DA_VENDA))
+    for nome in ('saidas_pendentes', 'saidas_periodo'):
+        CONSULTAS[nome] = CONSULTAS[nome].replace(de, para)
+    return tem
 
 
 def conectar_firebase(config):

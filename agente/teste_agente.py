@@ -2219,6 +2219,31 @@ def principal():
              ag.marcar_resto_no_lote([sem_lista], None) == 0
              and sem_lista['motivo'] == 'anvisa_zerada_produto')
 
+    # --- 20/10: a venda vai para a ANVISA com o M.S. da linha de lote ---
+    # a suíte troca ag.consultar por um banco falso: aqui só as colunas importam
+    guardada = ag.colunas_da_tabela
+
+    def ColunasFalsas(colunas):
+        ag.colunas_da_tabela = lambda _conexao, _tabela: list(colunas)
+        return None
+    originais = {n: ag.CONSULTAS[n] for n in ('saidas_pendentes', 'saidas_periodo')}
+    try:
+        conferir('M.S. da venda: com a coluna na linha de lote, usa a da linha',
+                 ag.usar_ms_do_lote_da_venda(ColunasFalsas(['VENDA_NOTA_ID', 'REGISTRO_MS', 'NUM_LOTE']))
+                 and all('NULLIF(TRIM(IVL.REGISTRO_MS)' in ag.CONSULTAS[n] for n in originais)
+                 and all('WHERE C.VENDA_NOTA_ID > ?' in ag.CONSULTAS['saidas_pendentes'] for _ in [0]),
+                 ag.CONSULTAS['saidas_pendentes'][:300])
+        conferir('M.S. da venda: sem a coluna, volta ao M.S. do produto',
+                 not ag.usar_ms_do_lote_da_venda(ColunasFalsas(['VENDA_NOTA_ID', 'NUM_LOTE']))
+                 and all(ag.CONSULTAS[n] == originais[n] for n in originais))
+        ag.usar_ms_do_lote_da_venda(ColunasFalsas(['REGISTRO_MS']))
+        ag.usar_ms_do_lote_da_venda(ColunasFalsas(['REGISTRO_MS']))
+        conferir('M.S. da venda: trocar duas vezes não duplica',
+                 ag.CONSULTAS['saidas_pendentes'].count('ms da venda') == 1)
+    finally:
+        ag.CONSULTAS.update(originais)
+        ag.colunas_da_tabela = guardada
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0
