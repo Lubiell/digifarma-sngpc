@@ -481,6 +481,52 @@ if (exportado.detalheDoSaldo) {
   });
 }
 
+if (exportado.detalheDoSaldo) {
+  conferir('saldo: lote trocado e resto na tabela de lotes aparecem no detalhe (20/10)', () => {
+    const textos = (item) => {
+      const criados = [];
+      const original = documento.createElement;
+      documento.createElement = (t) => { const e = original(t); criados.push(e); return e; };
+      try {
+        exportado.detalheDoSaldo(item, item.diferenca);
+      } finally {
+        documento.createElement = original;
+      }
+      return criados.map((e) => e.textContent).join(' | ');
+    };
+    const inv = exportado.estado.inventario;
+    try {
+      exportado.estado.inventario = { controlados: [{ codigo: '67751', saldo: 1, saldoProduto: 0 }] };
+      const amox = textos({ codigo: '68752', ms: '1235202730086', lote: 'DFG3073A', saldoDigifarma: 3,
+        saldoSngpc: 0, diferenca: 3, motivo: 'anvisa_zerada_lote', saldoSngpcMs: 3,
+        lotesDoMs: [{ lote: 'DFG3073A', digifarma: 3, sngpc: 0 }, { lote: 'DFG6142A', digifarma: 0, sngpc: 3 }] });
+      if (!amox.includes('o Digifarma tem 3 no lote DFG3073A e a ANVISA tem 3 no lote DFG6142A')) throw new Error('lote trocado: ' + amox);
+      if (!amox.includes('Outro lote deste M.S.: DFG6142A')) throw new Error('sem o lote irmão');
+      const anvisa = textos({ codigo: '', ms: '1235202730086', lote: 'DFG6142A', saldoDigifarma: 0,
+        saldoSngpc: 3, diferenca: -3, motivo: 'so_na_anvisa',
+        lotesDoMs: [{ lote: 'DFG3073A', digifarma: 3, sngpc: 0 }, { lote: 'DFG6142A', digifarma: 0, sngpc: 3 }] });
+      if (!anvisa.includes('o Digifarma tem 3 no lote DFG3073A e a ANVISA tem 3 no lote DFG6142A')) throw new Error('do lado da ANVISA: ' + anvisa);
+      const quetros = textos({ codigo: '67751', ms: '1057304040109', lote: '2515965', saldoDigifarma: 1,
+        saldoSngpc: 0, diferenca: 1, motivo: 'anvisa_zerada_produto' });
+      if (!quetros.includes('Na tela do balcão o produto está zerado')) throw new Error('resto no lote: ' + quetros);
+      if (!quetros.includes('Saldo do produto no balcão')) throw new Error('sem o saldo do balcão');
+      const escitalopram = textos({ codigo: '27481', ms: '1052500450038', lote: 'BQ37M006', saldoDigifarma: 1,
+        saldoSngpc: 0, diferenca: 1, motivo: 'anvisa_zerada_produto' });
+      if (!escitalopram.includes('O M.S. inteiro está fora')) throw new Error('sem dado do balcão, segue o motivo: ' + escitalopram);
+      // motivo já classificado pelo agente, sem lotesDoMs nem lista de Controlados
+      exportado.estado.inventario = {};
+      const doAgente = textos({ codigo: '68752', ms: '1235202730086', lote: 'DFG3073A', saldoDigifarma: 3,
+        saldoSngpc: 0, diferenca: 3, motivo: 'lote_trocado', loteParceiro: 'DFG6142A' });
+      if (!doAgente.includes('o Digifarma tem 3 no lote DFG3073A e a ANVISA tem 3 no lote DFG6142A')) throw new Error('lote_trocado do agente: ' + doAgente);
+      const restoDoAgente = textos({ codigo: '67751', ms: '1057304040109', lote: '2515965', saldoDigifarma: 1,
+        saldoSngpc: 0, diferenca: 1, motivo: 'resto_no_lote', saldoProduto: 0 });
+      if (!restoDoAgente.includes('Na tela do balcão o produto está zerado')) throw new Error('resto_no_lote do agente: ' + restoDoAgente);
+    } finally {
+      exportado.estado.inventario = inv;
+    }
+  });
+}
+
 if (exportado.hashesDoTexto && exportado.envioDaApiPelaData) {
   conferir('aceites: tira os hashes do relatório colado e casa o envio pela data de recebimento', () => {
     const h = exportado.hashesDoTexto('CNPJ 44.744.950/0001-04 F191FB8D9B9B4415F7AE3891348B1D48 f191fb8d9b9b4415f7ae3891348b1d48 0123456789ABCDEF0123456789ABCDEF0');
@@ -496,6 +542,19 @@ if (exportado.hashesDoTexto && exportado.envioDaApiPelaData) {
         periodosDeEnvio: { '2026-10-16': { de: '2026-10-15', ate: '2026-10-15' } },
         apiSngpc: { envios: [{ arquivo: '', de: '2026-10-15', ate: '2026-10-15', transmissao: '2026-10-17T08:00:00', situacao: 'validado' }] } };
       igual(JSON.stringify(exportado.datasDeEnvio()), '["2026-10-16"]', 'envio já casado pelo período não vira segunda linha');
+      // 20/10: a recusa de 14/10 (período 13/10) foi resolvida pelo reenvio de 15/10 (13 a 14/10)
+      const recusado = { arquivo: '', de: '2026-10-13', ate: '2026-10-13', transmissao: '2026-10-14T16:26:00', situacao: 'com_erro' };
+      exportado.estado.inventario = { apiSngpc: { envios: [recusado,
+        { arquivo: '', de: '2026-10-13', ate: '2026-10-14', transmissao: '2026-10-15T16:46:00', situacao: 'validado' }] } };
+      igual(exportado.reenvioAceito(recusado)?.transmissao, '2026-10-15T16:46:00', 'reenvio aceito acha a recusa resolvida');
+      exportado.estado.inventario = { apiSngpc: { envios: [recusado,
+        { arquivo: '', de: '2026-10-14', ate: '2026-10-14', transmissao: '2026-10-15T16:46:00', situacao: 'validado' }] } };
+      igual(exportado.reenvioAceito(recusado), null, 'período diferente não resolve a recusa');
+      // 20/10: ULTIMO_ENVIO_SNGPC (18/10) é o fim do período, não o dia do envio (19/10)
+      exportado.estado.inventario = {
+        envio: { data: '2026-10-18', arquivoXml: 'sngpc_2026-10-19.xml' },
+        enviosConhecidos: ['2026-10-17', '2026-10-19'] };
+      igual(JSON.stringify(exportado.datasDeEnvio()), '["2026-10-19","2026-10-17"]', 'fim do período não vira envio fantasma');
       if (typeof document !== 'undefined' && exportado.pintarRetornos && document.getElementById('lista-retornos')) {
         exportado.estado.inventario = {
           retornoArquivos: [{ arquivo: 'retorno_anvisa_2026_10_15_43.txt', em: '2026-10-14T15:54:00',

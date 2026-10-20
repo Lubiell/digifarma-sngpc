@@ -220,7 +220,7 @@ CONSULTAS = {
         SELECT C.VENDA_NOTA_ID,
                CAST(C.VENDA_DATA_HORA AS DATE) AS DATA,
                C.VENDA_DATA_HORA AS DATA_HORA,
-               P.PRODUTO, P.REGISTRO_MS, P.COD_BARRAS,
+               P.PRODUTO, {MS_DA_VENDA}, P.COD_BARRAS,
                IVL.NUM_LOTE, IVL.QUANTIDADE
           {DE_VENDA}
           {LOTE_DA_VENDA}
@@ -285,7 +285,7 @@ CONSULTAS = {
     "saidas_periodo": """
         SELECT C.VENDA_NOTA_ID AS VENDA,
                CAST(C.VENDA_DATA_HORA AS DATE) AS DATA,
-               P.PRODUTO, P.REGISTRO_MS,
+               P.PRODUTO, {MS_DA_VENDA},
                IVL.NUM_LOTE, IVL.QUANTIDADE
           {DE_VENDA}
           {LOTE_DA_VENDA}
@@ -598,7 +598,19 @@ CONSULTAS = {
 # A ordem importa: {DE_VENDA} e os JOINs entram antes, e só depois as
 # condições — senão um pedaço trocado poderia trazer outro marcador junto e
 # ficar sem substituir.
+# O M.S. que vai para a ANVISA numa venda é o da LINHA DE LOTE
+# (ITEM_VENDAS_LOTES.REGISTRO_MS, a coluna "Registro MS" da grade de lotes do
+# Verificador SNGPC), não o do cadastro do produto. Em 20/10 a OLANZAPINA do
+# cadastro da Aché saiu com o lote 2508169 no M.S. da Biosintética, e o
+# agente pôs o -2 na Aché: as duas linhas viraram divergência, sendo que
+# depois do envio tudo fecha. Começa no M.S. do produto (o que sempre foi) e
+# passa ao da linha só quando a coluna existe: usar_ms_do_lote_da_venda().
+SQL_MS_DA_VENDA = 'P.REGISTRO_MS AS REGISTRO_MS /* ms da venda */'
+SQL_MS_DA_VENDA_LOTE = ("COALESCE(NULLIF(TRIM(IVL.REGISTRO_MS), ''), P.REGISTRO_MS) "
+                        "AS REGISTRO_MS /* ms da venda */")
+
 PEDACOS_SQL = (
+    ('{MS_DA_VENDA}', SQL_MS_DA_VENDA),
     ('{DE_VENDA}', SQL_DE_VENDA),
     ('{LOTE_DA_VENDA}', SQL_LOTE_DA_VENDA),
     ('{JOIN_RECEITA}', SQL_JOIN_RECEITA),
@@ -687,12 +699,33 @@ def conectar_firebird(config):
         import fdb
     except ImportError:
         raise SystemExit('Falta a biblioteca fdb. Rode: pip install fdb')
-    return fdb.connect(
+    conexao = fdb.connect(
         dsn=config['banco'],
         user=config['usuario'],
         password=config['senha'],
         charset=config['charset'],
     )
+    usar_ms_do_lote_da_venda(conexao)
+    return conexao
+
+
+def usar_ms_do_lote_da_venda(conexao):
+    """Troca o M.S. das vendas que vão para a ANVISA pelo da linha de lote,
+    se ITEM_VENDAS_LOTES tiver REGISTRO_MS. Sem a coluna (ou sem conseguir
+    perguntar), fica o do produto: consulta que quebra apagaria a fila."""
+    try:
+        tem = 'REGISTRO_MS' in colunas_da_tabela(conexao, 'ITEM_VENDAS_LOTES')
+    except Exception as e:
+        registrar('Não consegui ver as colunas de ITEM_VENDAS_LOTES: %s' % e)
+        tem = False
+    if not tem and SQL_MS_DA_VENDA_LOTE not in CONSULTAS['saidas_pendentes']:
+        registrar('ITEM_VENDAS_LOTES sem REGISTRO_MS: a venda conta no M.S. do '
+                  'cadastro do produto, não no da linha de lote.')
+    de, para = ((SQL_MS_DA_VENDA, SQL_MS_DA_VENDA_LOTE) if tem
+                else (SQL_MS_DA_VENDA_LOTE, SQL_MS_DA_VENDA))
+    for nome in ('saidas_pendentes', 'saidas_periodo'):
+        CONSULTAS[nome] = CONSULTAS[nome].replace(de, para)
+    return tem
 
 
 def conectar_firebase(config):
@@ -2419,6 +2452,67 @@ def parear_lote_em_dois_ms(itens):
     return pares
 
 
+def parear_lote_trocado(itens):
+    """O lote que só o Digifarma tem e o que só a ANVISA tem, no mesmo M.S.
+    e com a mesma quantidade, são o mesmo estoque com o número de lote
+    registrado de dois jeitos. Em 20/10, AMOX+CLAVU tinha 3 no DFG3073A no
+    Digifarma e 3 no DFG6142A na ANVISA: o app mandava procurar "entrada não
+    transmitida", e a entrada tinha subido havia mais de um mês.
+
+    Só pareia sem movimento pendente dos dois lados (aí a quantidade é a
+    foto pura) e um a um: dois candidatos com a mesma quantidade não viram
+    par por sorteio."""
+    def livre(i):
+        return not round(numero(i.get('movimentoDesdeEnvio')), 3)
+
+    so_aqui, so_la = {}, {}
+    for item in itens:
+        ms = so_digitos(item.get('ms'))
+        if not ms or not livre(item):
+            continue
+        digi = round(numero(item.get('saldoDigifarma')), 3)
+        sngpc = round(numero(item.get('saldoSngpc')), 3)
+        if item.get('motivo') == 'anvisa_zerada_lote' and digi > 0 and not sngpc:
+            so_aqui.setdefault((ms, digi), []).append(item)
+        elif item.get('motivo') == 'so_na_anvisa' and sngpc > 0 and not digi:
+            so_la.setdefault((ms, sngpc), []).append(item)
+
+    pares = 0
+    for chave, aqui in so_aqui.items():
+        la = so_la.get(chave, [])
+        if len(aqui) != 1 or len(la) != 1:
+            continue
+        a, b = aqui[0], la[0]
+        a['motivo'] = b['motivo'] = 'lote_trocado'
+        a['loteParceiro'], b['loteParceiro'] = b['lote'], a['lote']
+        pares += 1
+    return pares
+
+
+def marcar_resto_no_lote(itens, controlados):
+    """Produto zerado no balcão (PROD_SALDO) e na ANVISA, mas com saldo na
+    tabela de lotes: o resto ficou em LOTES, que não acompanhou a baixa. Em
+    20/10, QUETROS tinha 1 no lote e 0 no balcão e no site. Não é
+    divergência com a ANVISA, e a etiqueta "zerado na ANVISA" mandava mexer
+    na escrituração."""
+    produto = {texto(c.get('codigo')): c.get('saldoProduto')
+               for c in controlados or [] if texto(c.get('codigo'))}
+    marcados = 0
+    for item in itens:
+        if item.get('motivo') not in ('anvisa_zerada_produto', 'anvisa_zerada_lote', 'quantidade'):
+            continue
+        saldo_produto = produto.get(texto(item.get('codigo')))
+        if saldo_produto is None or round(numero(saldo_produto), 3):
+            continue
+        sngpc_ms = item.get('saldoSngpcMs', item.get('saldoSngpc'))
+        if (numero(item.get('saldoDigifarma')) > 0 and not round(numero(sngpc_ms), 3)
+                and not round(numero(item.get('movimentoDesdeEnvio')), 3)):
+            item['motivo'] = 'resto_no_lote'
+            item['saldoProduto'] = 0.0
+            marcados += 1
+    return marcados
+
+
 def classificar_divergencia(registro, saldo_anvisa, ms_no_inventario):
     """Divergência de saldo não é uma coisa só, e cada tipo se resolve num
     lugar diferente. Sem isso o app mistura 'falta transmitir a entrada'
@@ -2521,7 +2615,13 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
     # o período vem do cabeçalho do XML — é exato, não precisa deduzir
     periodo_de = cabecalho.get('dataInicio') or anterior(ultimo_envio)
     periodo_ate = cabecalho.get('dataFim') or ultimo_envio
-    data_envio = ultimo_envio or periodo_ate
+    # ULTIMO_ENVIO_SNGPC é o FIM do período, não o dia da transmissão: o
+    # período 17 a 18/10, transmitido em 19/10, virava um "Envio de 18/10"
+    # pendente nos Aceites, que nunca existiu. Com XML arquivado, a data do
+    # envio é a do arquivo (a mesma chave dos enviosConhecidos).
+    do_arquivo = re.match(r'sngpc_(\d{4}-\d{2}-\d{2})',
+                          os.path.basename(caminho_xml or ''), re.I)
+    data_envio = (do_arquivo.group(1) if do_arquivo else None) or ultimo_envio or periodo_ate
 
     resultado['envio'] = {
         'data': data_envio,
@@ -2880,6 +2980,17 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
         registrar('%d lote(s) aparecem sob dois registros M.S. diferentes. '
                   'Pode ser entrada lançada no cadastro errado — ou dois '
                   'fabricantes com o mesmo número de lote.' % pares_ms)
+
+    trocados = parear_lote_trocado(itens)
+    if trocados:
+        resultado['inventario']['loteTrocado'] = trocados
+        registrar('%d lote(s) com número diferente entre o Digifarma e a ANVISA '
+                  '(mesmo M.S., mesma quantidade).' % trocados)
+    restos = marcar_resto_no_lote(itens, resultado.get('controlados'))
+    if restos:
+        resultado['inventario']['restoNoLote'] = restos
+        registrar('%d lote(s) com saldo em LOTES e produto zerado no balcão e na '
+                  'ANVISA.' % restos)
 
     # o veredito do caso "iguais com movimento", lote a lote: falhar aqui
     # só tira o veredito da tela, nunca a sincronização
@@ -8272,6 +8383,15 @@ def explicar_lote(dados, filtro):
             print('  subiu; veja nos XML abaixo se a entrada aparece.')
         elif i.get('motivo') == 'so_na_anvisa':
             print('  VEREDITO: a ANVISA tem este lote e o Digifarma não o conhece.')
+        elif i.get('motivo') == 'lote_trocado':
+            print('  VEREDITO: provável lote com número diferente. O mesmo M.S. tem a')
+            print('  mesma quantidade no lote %s do outro lado. Confira o lote impresso'
+                  % i.get('loteParceiro'))
+            print('  na caixa antes de mexer.')
+        elif i.get('motivo') == 'resto_no_lote':
+            print('  VEREDITO: o produto está zerado no balcão e na ANVISA. O saldo vem')
+            print('  da tabela de lotes, que não acompanhou a baixa. Não mexa na')
+            print('  escrituração.')
         else:
             print('  VEREDITO: o Digifarma tem %+g em relação ao esperado. Conte a' % dif)
             print('  prateleira: é ela que diz qual lado está errado.')
@@ -9177,7 +9297,8 @@ def modo_tarefas(config):
                 i['descricao'][:42], i['lote'] or '(vazio)', i['saldoDigifarma']))
 
     # ---------- 3 ----------
-    contar = sorted(por_motivo.get('quantidade', []) + por_motivo.get('so_na_anvisa', []),
+    contar = sorted(por_motivo.get('quantidade', []) + por_motivo.get('so_na_anvisa', [])
+                    + por_motivo.get('lote_trocado', []),
                     key=lambda i: -abs(i['diferenca']))
     escrever('')
     escrever('3. CONFERIR NA PRATELEIRA — %d lote(s) com contagem diferente' % len(contar))
@@ -9209,6 +9330,18 @@ def modo_tarefas(config):
                 ', '.join(outros))
         escrever('   %-42s cód. %-10s M.S. %s%s' % (
             '', i['codigo'] or '—', formatar_ms(i["ms"]) or '—', recado))
+
+    restos = por_motivo.get('resto_no_lote', [])
+    if restos:
+        escrever('')
+        escrever('4. RESTO NA TABELA DE LOTES — %d lote(s)' % len(restos))
+        escrever('   Produto zerado no balcão e na ANVISA, com saldo só em LOTES.')
+        escrever('   Não é divergência com a ANVISA: não mexa na escrituração.')
+        escrever('')
+        for i in restos:
+            escrever('   %-42s lote %-14s LOTES %g · cód. %s' % (
+                i['descricao'][:42], i['lote'] or '(vazio)', i['saldoDigifarma'],
+                i['codigo'] or '—'))
 
     escrever('')
     escrever('=' * 78)

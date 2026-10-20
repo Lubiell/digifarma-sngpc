@@ -723,10 +723,12 @@ const MOTIVO_SALDO = {
   quantidade: ['Quantidade diferente', 'Os dois lados conhecem o lote, com saldos diferentes.'],
   anvisa_zerada_lote: ['Lote zerado na ANVISA', 'O M.S. está no inventário, este lote não. Costuma ser entrada ainda não transmitida.'],
   anvisa_zerada_produto: ['Produto zerado na ANVISA', 'O M.S. inteiro está fora do inventário da ANVISA.'],
+  lote_trocado: ['Lote com número diferente', 'O mesmo M.S. tem a mesma quantidade em outro lote do outro lado. Confira o lote impresso na caixa.'],
+  resto_no_lote: ['Resto na tabela de lotes', 'Produto zerado no balcão e na ANVISA; o saldo está só na tabela de lotes do Digifarma.'],
   sem_ms: ['Produto sem registro M.S.', 'Sem M.S. cadastrado não dá para comparar com a ANVISA.']
 };
-const ORDEM_MOTIVO = ['negativo', 'lote_em_dois_ms', 'so_na_anvisa', 'quantidade',
-                      'anvisa_zerada_lote', 'anvisa_zerada_produto', 'sem_ms'];
+const ORDEM_MOTIVO = ['negativo', 'lote_em_dois_ms', 'lote_trocado', 'so_na_anvisa', 'quantidade',
+                      'anvisa_zerada_lote', 'anvisa_zerada_produto', 'resto_no_lote', 'sem_ms'];
 
 /* Por que a comparacao de saldo pode nao valer. A chave vem do agente;
    a frase e daqui, porque quem escreve frase e a tela. */
@@ -826,12 +828,48 @@ const VEREDITO_SALDO = {
     + '. Conte a prateleira.']
 };
 
+/* O lote que so o Digifarma tem e o que so a ANVISA tem, no mesmo M.S. e
+   com a mesma quantidade: e o mesmo estoque com numero de lote diferente
+   (20/10: AMOX+CLAVU com 3 no DFG3073A no Digifarma e 3 no DFG6142A na
+   ANVISA). O app dizia "entrada ainda nao transmitida", e a entrada tinha
+   subido havia mais de um mes. */
+function loteTrocado(i) {
+  const lotes = comoLista(i.lotesDoMs);
+  const digi = Number(i.saldoDigifarma || 0);
+  const sngpc = Number(i.saldoSngpc || 0);
+  if (digi > 0 && !sngpc) {
+    return lotes.find((l) => l.lote !== i.lote && !Number(l.digifarma || 0)
+      && Number(l.sngpc || 0) === digi) || null;
+  }
+  if (sngpc > 0 && !digi) {
+    return lotes.find((l) => l.lote !== i.lote && !Number(l.sngpc || 0)
+      && Number(l.digifarma || 0) === sngpc) || null;
+  }
+  return null;
+}
+
+/* PROD_SALDO, o saldo que a tela do balcao mostra, vem na lista de
+   Controlados; a comparacao usa a soma dos lotes. 20/10: QUETROS com 1 no
+   lote, zerado no balcao e na ANVISA. */
+function saldoDoProduto(i) {
+  if (!i.codigo) return null;
+  const c = listaControlados().find((x) => String(x.codigo) === String(i.codigo));
+  return c && c.saldoProduto !== undefined && c.saldoProduto !== null
+    ? Number(c.saldoProduto) : null;
+}
+
 function detalheDoSaldo(i, dif) {
   const movimento = Number(i.movimentoDesdeEnvio || 0);
+  const produto = saldoDoProduto(i) ?? (i.saldoProduto !== undefined ? Number(i.saldoProduto) : null);
+  const totalLotes = Number(i.saldoDigifarmaMs ?? i.saldoDigifarma ?? 0);
+  // o agente ja classifica (lote_trocado/resto_no_lote); a conta daqui vale
+  // enquanto o agente do servidor for antigo
+  const trocado = loteTrocado(i) || (i.loteParceiro ? { lote: i.loteParceiro } : null);
   const pares = [
     ['Código', i.codigo],
     ['Laboratório', i.laboratorio],
     ['Saldo Digifarma', i.saldoDigifarma],
+    ['Saldo do produto no balcão (Digifarma)', produto !== null && produto !== totalLotes ? produto : ''],
     ['Saldo do inventário SNGPC (foto)', i.saldoSngpc],
     ['Movimento desde a foto', movimento ? (movimento > 0 ? '+' : '') + movimento : ''],
     ['SNGPC esperado hoje (foto + movimento)', movimento ? i.esperadoSngpc : ''],
@@ -842,6 +880,12 @@ function detalheDoSaldo(i, dif) {
     ['Validade', i.validade],
     ['Classe', i.classe]
   ];
+  comoLista(i.lotesDoMs).forEach((l) => {
+    if (l.lote !== i.lote) {
+      pares.push(['Outro lote deste M.S.: ' + l.lote, 'Digifarma ' + Number(l.digifarma || 0)
+        + ' · SNGPC ' + Number(l.sngpc || 0)]);
+    }
+  });
   if (i.motivo === 'lote_em_dois_ms') {
     pares.push(['Outro M.S. com este lote', i.outroMs]);
     pares.push(['Total do lote no Digifarma', i.totalDigifarmaLote]);
@@ -855,6 +899,17 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = i.totaisBatem
       ? 'Os totais do lote batem nos dois lados: a farmácia tem a quantidade certa, repartida entre os cadastros de um jeito diferente. É lançamento no cadastro errado, não falta de mercadoria.'
       : MOTIVO_SALDO.lote_em_dois_ms[1];
+  } else if (i.motivo === 'resto_no_lote'
+      || (produto === 0 && totalLotes > 0 && !Number(i.saldoSngpcMs ?? i.saldoSngpc ?? 0))) {
+    nota.textContent = 'Na tela do balcão o produto está zerado, e na ANVISA também: os dois batem. '
+      + 'O saldo ' + totalLotes + ' é resto na tabela de lotes do Digifarma, que não acompanhou a baixa. '
+      + 'Não é divergência com a ANVISA: não mexa na escrituração.';
+  } else if (trocado) {
+    const q = Number(i.saldoDigifarma || 0) || Number(i.saldoSngpc || 0);
+    const [noDigi, naAnvisa] = Number(i.saldoDigifarma || 0) ? [i.lote, trocado.lote] : [trocado.lote, i.lote];
+    nota.textContent = 'Provável número de lote diferente: o Digifarma tem ' + q + ' no lote ' + noDigi
+      + ' e a ANVISA tem ' + q + ' no lote ' + naAnvisa + ', do mesmo M.S. É o mesmo estoque com o lote '
+      + 'registrado de outro jeito. Confira o lote impresso na caixa antes de mexer.';
   } else if (VEREDITO_SALDO[i.veredito]) {   // lote_em_dois_ms vem antes: e cadastro
     nota.textContent = VEREDITO_SALDO[i.veredito][1](i);
   } else if (bateSoSemMovimento(i)) {
@@ -1842,8 +1897,14 @@ function pintarServidor() {
    ============================================================ */
 function datasDeEnvio() {
   const datas = new Set(Object.keys(estado.aceites || {}));
-  const envio = estado.inventario?.envio?.data;
-  if (envio) datas.add(String(envio).slice(0, 10));
+  // envio.data e o ULTIMO_ENVIO_SNGPC do Digifarma, que e o FIM do periodo,
+  // nao o dia da transmissao (20/10: periodo 17 a 18/10 transmitido em 19/10
+  // virou uma linha "Envio de 18/10" que nunca existiu). Com XML arquivado,
+  // a data do envio e a do arquivo, que ja entra pelos enviosConhecidos.
+  const envio = estado.inventario?.envio;
+  const doXml = String(envio?.arquivoXml || '').match(/^sngpc_(\d{4}-\d{2}-\d{2})/i);
+  if (doXml) datas.add(doXml[1]);
+  else if (envio?.data) datas.add(String(envio.data).slice(0, 10));
   lista('enviosConhecidos').forEach((d) => datas.add(String(d).slice(0, 10)));
   // envio que so a API conhece (feito em outro computador, ou antes do
   // agente arquivar): entra pela data em que a ANVISA recebeu
@@ -1891,7 +1952,14 @@ function pintarRetornos() {
     const diaDoRetorno = String(r.em || '').slice(0, 10);
     const daApi = vazio ? (envioDaApi(diaDoRetorno) || envioDaApiPelaData(diaDoRetorno)) : null;
     const corpo = criar('div');
+    const reenvio = reenvioAceito(daApi);
     if (daApi) corpo.appendChild(linhaDaApi(daApi));
+    if (reenvio) {
+      const nota = criar('p', 'sublinha');
+      nota.textContent = 'O período foi reenviado em ' + dataHora(reenvio.transmissao)
+        + ' e aceito pela ANVISA. Esta recusa já está resolvida.';
+      corpo.appendChild(nota);
+    }
     if (vazio && !daApi) {
       const nota = criar('p', 'motivo');
       nota.textContent = 'O Digifarma gravou este arquivo sem a resposta da ANVISA: hash e mensagem '
@@ -1913,9 +1981,11 @@ function pintarRetornos() {
       titulo: 'Resposta de ' + dataHora(r.em),
       meta: [r.arquivo],
       tarja: [temErro ? 'Tem erro — abra para ver'
+        : reenvio ? 'Recusado, mas reenviado e aceito em ' + dataBR(String(reenvio.transmissao).slice(0, 10))
         : (daApi ? TARJA_DA_API[daApi.situacao] || 'Arquivo vazio — veja a resposta da API'
           : (vazio ? 'Vazio — sem resposta da ANVISA' : 'Sem erro aparente')), ''],
       tarjaClasse: temErro ? 'falta'
+        : reenvio ? 'ok'
         : (daApi ? ({ validado: 'ok', com_erro: 'falta' }[daApi.situacao] || 'sobra')
           : (vazio ? 'sobra' : 'ok')),
       detalhe: corpo
@@ -1972,6 +2042,19 @@ const TARJA_DA_API = {
   com_erro: 'Arquivo vazio, mas a API diz: RECUSADO',
   processando: 'Arquivo vazio; a ANVISA ainda não validou'
 };
+
+/* Envio recusado cujo periodo subiu de novo depois e foi aceito: a recusa
+   ja esta resolvida. 20/10: o envio recebido em 14/10 (periodo 13/10) foi
+   recusado e o de 15/10 (13 a 14/10) aceito, e a tela seguia mostrando o
+   14/10 em vermelho como se faltasse fazer algo. */
+function reenvioAceito(e) {
+  if (!e || e.situacao !== 'com_erro' || !e.de) return null;
+  const ate = e.ate || e.de;
+  return comoLista(estado.inventario?.apiSngpc?.envios)
+    .filter((v) => v.situacao === 'validado' && v.de && v.de <= e.de && (v.ate || v.de) >= ate
+      && String(v.transmissao || '') > String(e.transmissao || ''))
+    .sort((x, y) => String(x.transmissao || '').localeCompare(String(y.transmissao || '')))[0] || null;
+}
 
 function linhaDaApi(e) {
   const p = criar('p', 'sublinha');
@@ -2084,6 +2167,13 @@ function pintarAceites() {
       esquerda.appendChild(erro);
     }
     if (daApi) esquerda.appendChild(linhaDaApi(daApi));
+    const reenvio = reenvioAceito(daApi);
+    if (reenvio && estadoAtual === 'recusado') {
+      const r = criar('p', 'sublinha');
+      r.style.margin = '2px 0 0';
+      r.textContent = 'Reenviado em ' + dataHora(reenvio.transmissao) + ' e aceito: recusa já resolvida.';
+      esquerda.appendChild(r);
+    }
     el.appendChild(esquerda);
 
     const direita = criar('div');
@@ -2241,5 +2331,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo, html };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo, html };
 }
