@@ -481,6 +481,44 @@ if (exportado.detalheDoSaldo) {
   });
 }
 
+if (exportado.detalheDoSaldo) {
+  conferir('saldo: lote trocado e resto na tabela de lotes aparecem no detalhe (20/10)', () => {
+    const textos = (item) => {
+      const criados = [];
+      const original = documento.createElement;
+      documento.createElement = (t) => { const e = original(t); criados.push(e); return e; };
+      try {
+        exportado.detalheDoSaldo(item, item.diferenca);
+      } finally {
+        documento.createElement = original;
+      }
+      return criados.map((e) => e.textContent).join(' | ');
+    };
+    const inv = exportado.estado.inventario;
+    try {
+      exportado.estado.inventario = { controlados: [{ codigo: '67751', saldo: 1, saldoProduto: 0 }] };
+      const amox = textos({ codigo: '68752', ms: '1235202730086', lote: 'DFG3073A', saldoDigifarma: 3,
+        saldoSngpc: 0, diferenca: 3, motivo: 'anvisa_zerada_lote', saldoSngpcMs: 3,
+        lotesDoMs: [{ lote: 'DFG3073A', digifarma: 3, sngpc: 0 }, { lote: 'DFG6142A', digifarma: 0, sngpc: 3 }] });
+      if (!amox.includes('o Digifarma tem 3 no lote DFG3073A e a ANVISA tem 3 no lote DFG6142A')) throw new Error('lote trocado: ' + amox);
+      if (!amox.includes('Outro lote deste M.S.: DFG6142A')) throw new Error('sem o lote irmão');
+      const anvisa = textos({ codigo: '', ms: '1235202730086', lote: 'DFG6142A', saldoDigifarma: 0,
+        saldoSngpc: 3, diferenca: -3, motivo: 'so_na_anvisa',
+        lotesDoMs: [{ lote: 'DFG3073A', digifarma: 3, sngpc: 0 }, { lote: 'DFG6142A', digifarma: 0, sngpc: 3 }] });
+      if (!anvisa.includes('o Digifarma tem 3 no lote DFG3073A e a ANVISA tem 3 no lote DFG6142A')) throw new Error('do lado da ANVISA: ' + anvisa);
+      const quetros = textos({ codigo: '67751', ms: '1057304040109', lote: '2515965', saldoDigifarma: 1,
+        saldoSngpc: 0, diferenca: 1, motivo: 'anvisa_zerada_produto' });
+      if (!quetros.includes('Na tela do balcão o produto está zerado')) throw new Error('resto no lote: ' + quetros);
+      if (!quetros.includes('Saldo do produto no balcão')) throw new Error('sem o saldo do balcão');
+      const escitalopram = textos({ codigo: '27481', ms: '1052500450038', lote: 'BQ37M006', saldoDigifarma: 1,
+        saldoSngpc: 0, diferenca: 1, motivo: 'anvisa_zerada_produto' });
+      if (!escitalopram.includes('O M.S. inteiro está fora')) throw new Error('sem dado do balcão, segue o motivo: ' + escitalopram);
+    } finally {
+      exportado.estado.inventario = inv;
+    }
+  });
+}
+
 if (exportado.hashesDoTexto && exportado.envioDaApiPelaData) {
   conferir('aceites: tira os hashes do relatório colado e casa o envio pela data de recebimento', () => {
     const h = exportado.hashesDoTexto('CNPJ 44.744.950/0001-04 F191FB8D9B9B4415F7AE3891348B1D48 f191fb8d9b9b4415f7ae3891348b1d48 0123456789ABCDEF0123456789ABCDEF0');

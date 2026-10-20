@@ -824,12 +824,46 @@ const VEREDITO_SALDO = {
     + '. Conte a prateleira.']
 };
 
+/* O lote que so o Digifarma tem e o que so a ANVISA tem, no mesmo M.S. e
+   com a mesma quantidade: e o mesmo estoque com numero de lote diferente
+   (20/10: AMOX+CLAVU com 3 no DFG3073A no Digifarma e 3 no DFG6142A na
+   ANVISA). O app dizia "entrada ainda nao transmitida", e a entrada tinha
+   subido havia mais de um mes. */
+function loteTrocado(i) {
+  const lotes = comoLista(i.lotesDoMs);
+  const digi = Number(i.saldoDigifarma || 0);
+  const sngpc = Number(i.saldoSngpc || 0);
+  if (digi > 0 && !sngpc) {
+    return lotes.find((l) => l.lote !== i.lote && !Number(l.digifarma || 0)
+      && Number(l.sngpc || 0) === digi) || null;
+  }
+  if (sngpc > 0 && !digi) {
+    return lotes.find((l) => l.lote !== i.lote && !Number(l.sngpc || 0)
+      && Number(l.digifarma || 0) === sngpc) || null;
+  }
+  return null;
+}
+
+/* PROD_SALDO, o saldo que a tela do balcao mostra, vem na lista de
+   Controlados; a comparacao usa a soma dos lotes. 20/10: QUETROS com 1 no
+   lote, zerado no balcao e na ANVISA. */
+function saldoDoProduto(i) {
+  if (!i.codigo) return null;
+  const c = listaControlados().find((x) => String(x.codigo) === String(i.codigo));
+  return c && c.saldoProduto !== undefined && c.saldoProduto !== null
+    ? Number(c.saldoProduto) : null;
+}
+
 function detalheDoSaldo(i, dif) {
   const movimento = Number(i.movimentoDesdeEnvio || 0);
+  const produto = saldoDoProduto(i);
+  const totalLotes = Number(i.saldoDigifarmaMs ?? i.saldoDigifarma ?? 0);
+  const trocado = loteTrocado(i);
   const pares = [
     ['Código', i.codigo],
     ['Laboratório', i.laboratorio],
     ['Saldo Digifarma', i.saldoDigifarma],
+    ['Saldo do produto no balcão (Digifarma)', produto !== null && produto !== totalLotes ? produto : ''],
     ['Saldo do inventário SNGPC (foto)', i.saldoSngpc],
     ['Movimento desde a foto', movimento ? (movimento > 0 ? '+' : '') + movimento : ''],
     ['SNGPC esperado hoje (foto + movimento)', movimento ? i.esperadoSngpc : ''],
@@ -840,6 +874,12 @@ function detalheDoSaldo(i, dif) {
     ['Validade', i.validade],
     ['Classe', i.classe]
   ];
+  comoLista(i.lotesDoMs).forEach((l) => {
+    if (l.lote !== i.lote) {
+      pares.push(['Outro lote deste M.S.: ' + l.lote, 'Digifarma ' + Number(l.digifarma || 0)
+        + ' · SNGPC ' + Number(l.sngpc || 0)]);
+    }
+  });
   if (i.motivo === 'lote_em_dois_ms') {
     pares.push(['Outro M.S. com este lote', i.outroMs]);
     pares.push(['Total do lote no Digifarma', i.totalDigifarmaLote]);
@@ -853,6 +893,16 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = i.totaisBatem
       ? 'Os totais do lote batem nos dois lados: a farmácia tem a quantidade certa, repartida entre os cadastros de um jeito diferente. É lançamento no cadastro errado, não falta de mercadoria.'
       : MOTIVO_SALDO.lote_em_dois_ms[1];
+  } else if (produto === 0 && totalLotes > 0 && !Number(i.saldoSngpcMs ?? i.saldoSngpc ?? 0)) {
+    nota.textContent = 'Na tela do balcão o produto está zerado, e na ANVISA também: os dois batem. '
+      + 'O saldo ' + totalLotes + ' é resto na tabela de lotes do Digifarma, que não acompanhou a baixa. '
+      + 'Não é divergência com a ANVISA: não mexa na escrituração.';
+  } else if (trocado) {
+    const q = Number(i.saldoDigifarma || 0) || Number(i.saldoSngpc || 0);
+    const [noDigi, naAnvisa] = Number(i.saldoDigifarma || 0) ? [i.lote, trocado.lote] : [trocado.lote, i.lote];
+    nota.textContent = 'Provável número de lote diferente: o Digifarma tem ' + q + ' no lote ' + noDigi
+      + ' e a ANVISA tem ' + q + ' no lote ' + naAnvisa + ', do mesmo M.S. É o mesmo estoque com o lote '
+      + 'registrado de outro jeito. Confira o lote impresso na caixa antes de mexer.';
   } else if (VEREDITO_SALDO[i.veredito]) {   // lote_em_dois_ms vem antes: e cadastro
     nota.textContent = VEREDITO_SALDO[i.veredito][1](i);
   } else if (bateSoSemMovimento(i)) {
