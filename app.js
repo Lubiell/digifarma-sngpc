@@ -1840,8 +1840,14 @@ function pintarServidor() {
    ============================================================ */
 function datasDeEnvio() {
   const datas = new Set(Object.keys(estado.aceites || {}));
-  const envio = estado.inventario?.envio?.data;
-  if (envio) datas.add(String(envio).slice(0, 10));
+  // envio.data e o ULTIMO_ENVIO_SNGPC do Digifarma, que e o FIM do periodo,
+  // nao o dia da transmissao (20/10: periodo 17 a 18/10 transmitido em 19/10
+  // virou uma linha "Envio de 18/10" que nunca existiu). Com XML arquivado,
+  // a data do envio e a do arquivo, que ja entra pelos enviosConhecidos.
+  const envio = estado.inventario?.envio;
+  const doXml = String(envio?.arquivoXml || '').match(/^sngpc_(\d{4}-\d{2}-\d{2})/i);
+  if (doXml) datas.add(doXml[1]);
+  else if (envio?.data) datas.add(String(envio.data).slice(0, 10));
   lista('enviosConhecidos').forEach((d) => datas.add(String(d).slice(0, 10)));
   // envio que so a API conhece (feito em outro computador, ou antes do
   // agente arquivar): entra pela data em que a ANVISA recebeu

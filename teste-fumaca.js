@@ -496,6 +496,11 @@ if (exportado.hashesDoTexto && exportado.envioDaApiPelaData) {
         periodosDeEnvio: { '2026-10-16': { de: '2026-10-15', ate: '2026-10-15' } },
         apiSngpc: { envios: [{ arquivo: '', de: '2026-10-15', ate: '2026-10-15', transmissao: '2026-10-17T08:00:00', situacao: 'validado' }] } };
       igual(JSON.stringify(exportado.datasDeEnvio()), '["2026-10-16"]', 'envio já casado pelo período não vira segunda linha');
+      // 20/10: ULTIMO_ENVIO_SNGPC (18/10) é o fim do período, não o dia do envio (19/10)
+      exportado.estado.inventario = {
+        envio: { data: '2026-10-18', arquivoXml: 'sngpc_2026-10-19.xml' },
+        enviosConhecidos: ['2026-10-17', '2026-10-19'] };
+      igual(JSON.stringify(exportado.datasDeEnvio()), '["2026-10-19","2026-10-17"]', 'fim do período não vira envio fantasma');
       if (typeof document !== 'undefined' && exportado.pintarRetornos && document.getElementById('lista-retornos')) {
         exportado.estado.inventario = {
           retornoArquivos: [{ arquivo: 'retorno_anvisa_2026_10_15_43.txt', em: '2026-10-14T15:54:00',
