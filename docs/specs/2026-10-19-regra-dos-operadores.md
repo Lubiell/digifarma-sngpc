@@ -65,5 +65,12 @@ apps, inclusive para o nó `estoque`, que tem o mesmo problema. A volta quando
 der para ler o ESTOQUE ou confirmar que todos os usuários dele estão em
 `autorizados`.
 
+## Aplicado (20/10)
+A farmácia confirmou que todos os usuários do ESTOQUE estão em
+`autorizados`, e A foi aplicado. `teste_bat.py` passou a recusar qualquer
+`.read`/`.write` em `farmacia/` que não exija `autorizados`, `agentes` ou o
+próprio UID. Ficou de fora, como exceção explícita no teste, a leitura de
+`farmacia/agentes`, aberta do mesmo jeito: não estava nesta spec.
+
 ## Fora do escopo
 Login, senha da farmácia, regras dos outros nós.

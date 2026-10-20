@@ -478,12 +478,47 @@ def conferir_lista_do_atualizar():
     return falhas
 
 
+def conferir_regras_da_farmacia():
+    """Nenhum no de farmacia/ aberto para qualquer conta logada.
+
+    farmacia/operadores ficou assim: bastava ter conta no projeto para
+    apagar ou trocar a lista de quem assina aceites e pedidos. Cada .read
+    e .write dentro de farmacia/ tem de exigir autorizados, agentes ou o
+    proprio UID. Excecoes: a leitura de farmacia/publico, e a de
+    farmacia/agentes, que ficou fora da spec de 2026-10-19 e espera
+    decisao propria."""
+    falhas = []
+    regras = json.load(open('agente/regras-firebase.json', encoding='utf-8'))
+    exige = re.compile(r"farmacia/autorizados|farmacia/agentes|auth\.uid === \$uid")
+
+    def varrer(no, caminho):
+        for chave, valor in no.items():
+            onde = '%s/%s' % (caminho, chave)
+            if isinstance(valor, dict):
+                varrer(valor, onde)
+            elif chave in ('.read', '.write'):
+                if valor is False or (onde == 'farmacia/publico/.read' and valor is True):
+                    continue
+                if onde == 'farmacia/agentes/.read':
+                    continue
+                if not isinstance(valor, str) or not exige.search(valor):
+                    falhas.append('%s aberto demais: %r' % (onde, valor))
+
+    varrer(regras['rules']['farmacia'], 'farmacia')
+    for f in falhas:
+        print('  FALHA regras: %s' % f)
+    if not falhas:
+        print('  OK    regras de farmacia/ exigem autorizados, agentes ou o proprio UID')
+    return falhas
+
+
 def conferir():
     total = (list(conferir_gitignore()) + list(conferir_url_do_repositorio())
              + list(conferir_protocolo_do_app())
              + list(conferir_menu_do_farmacia())
              + list(conferir_firewall_restrito())
-             + list(conferir_lista_do_atualizar()))
+             + list(conferir_lista_do_atualizar())
+             + list(conferir_regras_da_farmacia()))
     for nome in ALVOS:
         try:
             bruto = open(nome, encoding='cp1252', newline='').read()

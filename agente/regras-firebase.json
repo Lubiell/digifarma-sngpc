@@ -37,8 +37,8 @@
         }
       },
       "operadores": {
-        ".read": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
-        ".write": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
+        ".read": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
+        ".write": "auth != null && root.child('farmacia/autorizados').child(auth.uid).val() === true",
         "$i": {
           ".validate": "newData.isString() && newData.val().length <= 60"
         }
@@ -81,7 +81,9 @@
         ".write": "auth != null && root.child('farmacia/agentes').child(auth.uid).val() === true"
       },
       "autorizados": {
-        ".read": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid"
+        },
         ".write": false
       },
       "agentes": {
