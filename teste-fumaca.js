@@ -547,6 +547,27 @@ if (exportado.comoLista) {
   });
 }
 
+if (exportado.temSaldo) {
+  conferir('controlados: só entra quem tem saldo em um dos dois saldos', () => {
+    igual(exportado.temSaldo({ saldo: 3, saldoProduto: 0 }), true, 'só nos lotes');
+    igual(exportado.temSaldo({ saldo: 0, saldoProduto: 2 }), true, 'só no PROD_SALDO');
+    igual(exportado.temSaldo({ saldo: 0, saldoProduto: 0 }), false, 'zerado');
+    igual(exportado.temSaldo({}), false, 'sem saldo informado');
+    igual(exportado.temSaldo({ saldo: -1 }), false, 'negativo');
+  });
+}
+
+if (exportado.doGrupo) {
+  conferir('controlados: psicotrópico e antimicrobiano em listas separadas', () => {
+    const ambos = { psicotropico: true, antimicrobiano: true };
+    igual(exportado.doGrupo({ psicotropico: true }, 'psicotropico'), true, 'psico na lista de controlados');
+    igual(exportado.doGrupo({ psicotropico: true }, 'antimicrobiano'), false, 'psico fora dos antimicrobianos');
+    igual(exportado.doGrupo({ antimicrobiano: true }, 'psicotropico'), false, 'atb fora dos controlados');
+    igual(exportado.doGrupo({ antimicrobiano: true }, 'antimicrobiano'), true, 'atb nos antimicrobianos');
+    igual(exportado.doGrupo(ambos, 'psicotropico') && exportado.doGrupo(ambos, 'antimicrobiano'), true, 'as duas marcas nas duas listas');
+  });
+}
+
 if (exportado.textoXmlRede) {
   conferir('servidor: mostra a situação do XML de cada computador, sem senha', () => {
     if (!exportado.textoXmlRede(undefined).includes('só o servidor')) throw new Error('vazio');

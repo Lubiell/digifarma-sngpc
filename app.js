@@ -46,6 +46,7 @@ const estado = {
   buscaSaldo: '',
   buscaXml: '',
   buscaControlados: '',
+  grupoControlados: 'psicotropico',   // ou 'antimicrobiano'
   relatorios: {},       // farmacia/relatorios
   historico: {},        // farmacia/historico (ultimos 30 dias)
   relatorioPedido: null,
@@ -489,10 +490,41 @@ function irPara(vista) {
   // a pessoa no meio da aba Servidor, sem ver a resposta
   window.scrollTo(0, 0);
 }
-document.querySelectorAll('.nav-item').forEach((b) => { b.onclick = () => irPara(b.dataset.vista); });
+document.querySelectorAll('.nav-item').forEach((b) => { b.onclick = () => { irPara(b.dataset.vista); fecharMenu(); }; });
+
+/* Menu das abas: abre pelo botao do topo, fecha ao escolher, tocar fora
+   ou Esc. O foco volta para o botao, para quem navega pelo teclado. */
+function abrirMenu() {
+  $('menu-abas').classList.add('aberta');
+  $('fundo-menu').hidden = false;
+  $('btn-menu').setAttribute('aria-expanded', 'true');
+  document.querySelector('.nav-item.nav-ativo')?.focus?.();
+}
+function fecharMenu() {
+  if (!$('menu-abas').classList.contains('aberta')) return;
+  $('menu-abas').classList.remove('aberta');
+  $('fundo-menu').hidden = true;
+  $('btn-menu').setAttribute('aria-expanded', 'false');
+  $('btn-menu').focus?.();
+}
+$('btn-menu').onclick = () => ($('menu-abas').classList.contains('aberta') ? fecharMenu() : abrirMenu());
+$('fundo-menu').onclick = fecharMenu;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharMenu(); });
+
+/* Com o menu fechado os selos das abas somem da vista: o botao mostra "!"
+   quando alguma aba tem pendencia. */
+function pintarSeloMenu() {
+  $('selo-menu').hidden = ![...document.querySelectorAll('.navegacao .selo')].some((s) => !s.hidden);
+}
+if (typeof MutationObserver !== 'undefined') {
+  new MutationObserver(pintarSeloMenu).observe($('menu-abas'), { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+}
 document.querySelectorAll('[data-ir]').forEach((b) => { b.onclick = () => irPara(b.dataset.ir); });
 $('busca-saldo').oninput = (e) => { estado.buscaSaldo = e.target.value; pintarSaldo(); };
 $('busca-controlados').oninput = (e) => { estado.buscaControlados = e.target.value; pintarControlados(); };
+['psicotropico', 'antimicrobiano'].forEach((g) => {
+  $('grupo-' + g).onclick = () => { estado.grupoControlados = g; pintarControlados(); };
+});
 $('busca-xml').oninput = (e) => { estado.buscaXml = e.target.value; pintarXml(); };
 
 /* ============================================================
@@ -867,7 +899,7 @@ function investigarLote(i) {
 /* Desmarcar psicotropico/antimicrobiano de UM produto, pelo agente. E a
    caixa do cadastro do Digifarma, feita do celular: o produto sai do SNGPC.
    So com a escrita liberada (aba Servidor), que se fecha sozinha. */
-function pedirDesmarcar(i) {
+function pedirDesmarcar(i, sugerido) {
   if (!estado.inventario?.escrita?.ligada) {
     abrirModal({
       titulo: 'Escrita no Digifarma desligada',
@@ -896,6 +928,8 @@ function pedirDesmarcar(i) {
    ['antimicrobiano', 'Só antimicrobiano']].forEach(([v, t]) => {
     const o = criar('option'); o.value = v; o.textContent = t; sel.appendChild(o);
   });
+  // Vindo da lista de um grupo, ja sugere desmarcar so aquela marca.
+  if (sugerido) sel.value = sugerido;
   rotulo.append(span, sel);
   corpo.append(p, rotulo);
   abrirModal({
@@ -920,15 +954,27 @@ function pedirDesmarcar(i) {
    ============================================================
    Espelha a aba Saldo na forma: mesma linha expansivel, mesma busca,
    mesmo detalhe. Muda o que lista — ali e quem DIVERGE da ANVISA,
-   aqui e o cadastro inteiro.
+   aqui e todo controlado do cadastro que tem saldo no Digifarma,
+   divergindo ou nao. Os de saldo zero ficam de fora (temSaldo).
 
-   A diferenca importa: produto marcado por engano e sem movimento
-   nenhum nao diverge de nada, entao nunca aparece no Saldo. E
-   justamente ele que se quer achar para desmarcar. */
+   Duas listas separadas, escolhidas pelos botoes: Controlados
+   (PSICOTROPICO='S') e Antimicrobianos (ANTIMICROBIANO='S'). Produto
+   com as duas marcas aparece nas duas. */
 function listaControlados() {
   const v = estado.inventario?.controlados;
   if (!v) return [];
   return Array.isArray(v) ? v.filter(Boolean) : Object.values(v);
+}
+
+/* So entra quem tem saldo no Digifarma. Vale qualquer um dos dois saldos:
+   a soma dos lotes (a do SNGPC) ou o PROD_SALDO (o da tela do balcao).
+   Quando discordam, o produto fica — e justamente o caso a conferir. */
+function temSaldo(c) {
+  return Number(c.saldo || 0) > 0 || Number(c.saldoProduto || 0) > 0;
+}
+
+function doGrupo(c, grupo) {
+  return grupo === 'antimicrobiano' ? !!c.antimicrobiano : !!c.psicotropico;
 }
 
 function classeDoControlado(c) {
@@ -944,7 +990,14 @@ function pintarControlados() {
   alvo.innerHTML = '';
 
   const aviso = $('controlados-aviso');
-  const todos = listaControlados();
+  const comSaldo = listaControlados().filter(temSaldo);
+  const grupo = estado.grupoControlados;
+  const todos = comSaldo.filter((c) => doGrupo(c, grupo));
+  [['psicotropico', 'Controlados'], ['antimicrobiano', 'Antimicrobianos']].forEach(([g, nome]) => {
+    const b = $('grupo-' + g);
+    b.textContent = nome + ' (' + comSaldo.filter((c) => doGrupo(c, g)).length + ')';
+    b.setAttribute('aria-pressed', String(g === grupo));
+  });
   if (!estado.inventario?.controlados) {
     // Lista ausente nao e lista vazia: o agente pode ser antigo ou a
     // consulta pode ter falhado. Dizer "nenhum controlado" aqui seria
@@ -964,7 +1017,7 @@ function pintarControlados() {
     || !estado.inventario?.controlados;
 
   const selo = $('selo-controlados');
-  if (selo) { selo.textContent = todos.length; selo.hidden = todos.length === 0; }
+  if (selo) { selo.textContent = comSaldo.length; selo.hidden = comSaldo.length === 0; }
 
   itens.forEach((c, n) => {
     const saldo = Number(c.saldo || 0);
@@ -1013,7 +1066,7 @@ function detalheDoControlado(c, saldo, outro) {
 
   const b = criar('button', 'botao botao-perigo');
   b.textContent = 'Desmarcar controlado/antibiótico no Digifarma';
-  b.onclick = () => pedirDesmarcar(c);
+  b.onclick = () => pedirDesmarcar(c, estado.grupoControlados);
   d.appendChild(b);
   return d;
 }
@@ -2188,5 +2241,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, html };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo, html };
 }

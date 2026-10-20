@@ -86,6 +86,8 @@ h3{font-size:16px;text-transform:uppercase;letter-spacing:.08em}
 .botao-perigo{background:var(--vermelho);color:#fff}
 .botao:disabled{opacity:.5;cursor:not-allowed}
 .chip{border:1px solid var(--linha);background:#fff;border-radius:999px;padding:8px 14px;cursor:pointer;min-height:40px}
+.chip[aria-pressed="true"]{background:var(--tarja);border-color:var(--tarja);color:#fff}
+.grupo-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
 
 /* ---------- topo e navegação ---------- */
 .topo{
@@ -96,25 +98,38 @@ h3{font-size:16px;text-transform:uppercase;letter-spacing:.08em}
 }
 .operador-atual{margin:2px 0 0;font-size:13px;color:var(--tinta-fraca)}
 .topo-acoes{display:flex;gap:8px;flex-shrink:0}
+.topo-esquerda{display:flex;align-items:center;gap:12px;min-width:0}
+.botao-menu{
+  position:relative;flex-shrink:0;width:44px;height:44px;border:1px solid var(--linha);
+  border-radius:6px;background:#fff;font-size:22px;line-height:1;cursor:pointer;color:var(--tinta);
+}
+.botao-menu .selo{top:-6px;right:-6px;transform:none}
 .topo-acoes .botao{padding:8px 10px;font-size:13px;min-height:44px}
 
-main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
+main{padding:16px 16px 32px;max-width:900px;margin:0 auto}
 .cabeca-vista{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .cabeca-acoes{display:flex;gap:8px;flex-wrap:wrap}
 
 .navegacao{
-  position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;
-  background:var(--cartao);border-top:1px solid var(--linha);
-  padding-bottom:env(safe-area-inset-bottom);
+  /* Menu lateral que abre pelo botao do topo e fecha ao escolher a aba,
+     tocar fora ou apertar Esc. Fechado, sai da tela e do Tab (visibility). */
+  position:fixed;top:0;bottom:0;left:0;z-index:40;width:min(260px,82vw);
+  display:flex;flex-direction:column;overflow-y:auto;
+  background:var(--cartao);border-right:1px solid var(--linha);box-shadow:var(--sombra);
+  padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);
+  padding-left:env(safe-area-inset-left);
+  transform:translateX(-100%);visibility:hidden;transition:transform .2s ease, visibility 0s .2s;
 }
+.navegacao.aberta{transform:none;visibility:visible;transition:transform .2s ease}
+.fundo-menu{position:fixed;inset:0;z-index:35;background:rgba(22,22,22,.45)}
 .nav-item{
-  flex:1;border:0;background:transparent;padding:12px 4px;
-  font-size:12px;font-weight:650;color:var(--tinta-fraca);
-  cursor:pointer;position:relative;min-height:56px;
+  flex:0 0 auto;border:0;background:transparent;padding:14px 18px;text-align:left;
+  font-size:15px;font-weight:650;color:var(--tinta-fraca);
+  cursor:pointer;position:relative;min-height:56px;border-bottom:1px solid var(--linha);
 }
-.nav-ativo{color:var(--tinta);box-shadow:inset 0 3px 0 var(--tarja)}
+.nav-ativo{color:var(--tinta);background:var(--papel);box-shadow:inset 4px 0 0 var(--tarja)}
 .selo{
-  position:absolute;top:8px;left:50%;margin-left:12px;
+  position:absolute;top:50%;right:14px;transform:translateY(-50%);
   background:var(--vermelho);color:#fff;font-size:10px;line-height:1;
   padding:3px 5px;border-radius:999px;
 }
@@ -206,7 +221,7 @@ main{padding:16px 16px 96px;max-width:900px;margin:0 auto}
 
 .aviso{
   position:fixed;left:50%;transform:translateX(-50%);
-  bottom:calc(76px + env(safe-area-inset-bottom));z-index:60;
+  bottom:calc(16px + env(safe-area-inset-bottom));z-index:60;
   background:var(--tarja);color:#fff;padding:12px 18px;border-radius:999px;
   font-size:14px;font-weight:600;box-shadow:var(--sombra);max-width:92vw;text-align:center;
 }
