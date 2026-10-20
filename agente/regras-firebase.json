@@ -87,7 +87,9 @@
         ".write": false
       },
       "agentes": {
-        ".read": "auth != null && auth.token.firebase.sign_in_provider != 'anonymous'",
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid"
+        },
         ".write": false
       }
     },

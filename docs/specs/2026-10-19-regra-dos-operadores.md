@@ -72,5 +72,9 @@ A farmácia confirmou que todos os usuários do ESTOQUE estão em
 próprio UID. Ficou de fora, como exceção explícita no teste, a leitura de
 `farmacia/agentes`, aberta do mesmo jeito: não estava nesta spec.
 
+Depois, a pedido da farmácia, `farmacia/agentes` foi fechado do mesmo
+jeito que `autorizados` (cada conta lê só o próprio UID). Nem o app nem o
+agente leem essa lista, e o teste deixou de ter a exceção.
+
 ## Fora do escopo
 Login, senha da farmácia, regras dos outros nós.

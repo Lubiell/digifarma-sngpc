@@ -484,9 +484,7 @@ def conferir_regras_da_farmacia():
     farmacia/operadores ficou assim: bastava ter conta no projeto para
     apagar ou trocar a lista de quem assina aceites e pedidos. Cada .read
     e .write dentro de farmacia/ tem de exigir autorizados, agentes ou o
-    proprio UID. Excecoes: a leitura de farmacia/publico, e a de
-    farmacia/agentes, que ficou fora da spec de 2026-10-19 e espera
-    decisao propria."""
+    proprio UID. A unica excecao e a leitura de farmacia/publico."""
     falhas = []
     regras = json.load(open('agente/regras-firebase.json', encoding='utf-8'))
     exige = re.compile(r"farmacia/autorizados|farmacia/agentes|auth\.uid === \$uid")
@@ -498,8 +496,6 @@ def conferir_regras_da_farmacia():
                 varrer(valor, onde)
             elif chave in ('.read', '.write'):
                 if valor is False or (onde == 'farmacia/publico/.read' and valor is True):
-                    continue
-                if onde == 'farmacia/agentes/.read':
                     continue
                 if not isinstance(valor, str) or not exige.search(valor):
                     falhas.append('%s aberto demais: %r' % (onde, valor))
