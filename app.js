@@ -749,7 +749,9 @@ function pintarConfiancaDoSaldo() {
   foto.hidden = !inv.data;
   if (inv.data) {
     foto.textContent = 'O inventário da ANVISA é uma foto, de '
-      + dataBR(inv.data) + '. A conta é: essa foto mais o que ainda não subiu.';
+      + dataBR(inv.data) + '. A conta é: essa foto mais o que ainda não subiu.'
+      + (inv.ponteiroNaFoto?.em ? ' O envio saiu depois da foto: o que subiu desde '
+        + dataHora(inv.ponteiroNaFoto.em) + ' continua na conta até a ANVISA aparecer atualizada.' : '');
   }
 
   const frases = (c && !c.confiavel ? c.motivos || [] : []).map((m) => MOTIVO_CONFIANCA[m] || m);

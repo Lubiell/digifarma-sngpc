@@ -124,6 +124,9 @@ def numero_ok(item):
 
 def principal():
     print('\nagente SNGPC\n------------')
+    # o histórico de ponteiros é estado do servidor: nos testes, fora do repositório
+    pasta_ponteiros = tempfile.mkdtemp()
+    ag.ARQUIVO_PONTEIROS = os.path.join(pasta_ponteiros, 'ponteiros_historico.json')
 
     conferir('a transmissão leva o movimento do dia anterior',
              ag.anterior('2026-08-10') == '2026-08-09')
@@ -2368,6 +2371,48 @@ def principal():
     finally:
         ag.CONSULTAS.update(originais)
         ag.colunas_da_tabela = guardada
+
+    # --- 21/10: a fila da conta começa no ponteiro da hora da foto ---
+    if os.path.exists(ag.ARQUIVO_PONTEIROS):
+        os.remove(ag.ARQUIVO_PONTEIROS)
+    t = datetime.datetime
+    ag.guardar_ponteiros(48600, 900, t(2026, 10, 21, 7, 0))
+    conferir('histórico: ponteiro igual não grava de novo',
+             not ag.guardar_ponteiros(48600, 900, t(2026, 10, 21, 8, 0)))
+    ag.guardar_ponteiros(48720, 900, t(2026, 10, 21, 9, 0))
+    na_foto = ag.ponteiros_na_hora(t(2026, 10, 21, 8, 30))
+    conferir('histórico: o ponteiro da hora da foto é o último antes dela',
+             na_foto and na_foto['venda'] == 48600, na_foto)
+    conferir('histórico: foto anterior a todo registro não chuta',
+             ag.ponteiros_na_hora(t(2026, 10, 20, 8, 0)) is None
+             and ag.ponteiros_na_hora(None) is None)
+
+    guardado_consultar = ag.consultar
+    pedidos = []
+
+    def banco_da_foto(_conexao, sql, parametros=()):
+        pedidos.append(parametros)
+        if 'VENDA_NOTA_ID > ?' in sql:
+            return [{'VENDA_NOTA_ID': 48702, 'PRODUTO': 'OLANZAPINA', 'REGISTRO_MS': '1.1213.0443.003-4',
+                     'NUM_LOTE': '2508169', 'QUANTIDADE': 2}]
+        return []
+    ag.consultar = banco_da_foto
+    try:
+        atuais = {'vendas': [], 'entradas': [], 'perdas': [{'ms': '1', 'lote': 'P', 'quantidade': 1}],
+                  'transferencias': []}
+        da_foto = ag.fila_desde_a_foto(None, na_foto, 48720, 900, atuais)
+        movimento, _ = ag.movimento_por_lote(da_foto)
+        conferir('venda transmitida depois da foto volta para a conta, no M.S. da linha',
+                 movimento.get(('1121304430034', '2508169')) == -2.0
+                 and movimento.get(('1', 'P')) == -1.0
+                 and (48600,) in pedidos, (movimento, pedidos))
+        conferir('ponteiro parado desde a foto: nada muda',
+                 ag.fila_desde_a_foto(None, {'venda': 48720, 'entrada': 900}, 48720, 900, atuais) is None)
+        conferir('sem registro da hora da foto: nada muda',
+                 ag.fila_desde_a_foto(None, None, 48720, 900, atuais) is None)
+    finally:
+        ag.consultar = guardado_consultar
+    shutil.rmtree(pasta_ponteiros, ignore_errors=True)
 
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
