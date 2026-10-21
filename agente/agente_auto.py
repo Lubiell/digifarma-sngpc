@@ -2261,6 +2261,86 @@ def foto_sem_o_ultimo_envio(inventario_em, foto_hora, depois_da_foto):
     return (min(inicios) - datetime.timedelta(days=1)).isoformat()
 
 
+# Quando o ponteiro do Digifarma andou, de minuto em minuto (a fila lê os
+# ponteiros a cada volta). Só o histórico responde "o que já tinha subido
+# quando a foto foi tirada?".
+ARQUIVO_PONTEIROS = 'ponteiros_historico.json'
+PONTEIROS_GUARDADOS = 300
+
+
+def guardar_ponteiros(venda, entrada, agora=None):
+    """Anota o ponteiro de venda e de entrada quando um deles muda."""
+    agora = agora or datetime.datetime.now()
+    estado = ler_json_local(ARQUIVO_PONTEIROS)
+    lista = [r for r in estado.get('lista') or [] if isinstance(r, dict)]
+    if lista and lista[-1].get('venda') == venda and lista[-1].get('entrada') == entrada:
+        return False
+    lista.append({'em': agora.isoformat(timespec='seconds'),
+                  'venda': int(venda), 'entrada': int(entrada)})
+    gravar_json_local(ARQUIVO_PONTEIROS, {'lista': lista[-PONTEIROS_GUARDADOS:]})
+    return True
+
+
+def ponteiros_na_hora(hora):
+    """Os ponteiros que valiam em `hora`: o último registro até ela. None
+    sem hora, ou sem registro tão antigo (aí não se sabe, e não se chuta)."""
+    if not hora:
+        return None
+    achado = None
+    for r in ler_json_local(ARQUIVO_PONTEIROS).get('lista') or []:
+        try:
+            if datetime.datetime.fromisoformat(r['em']) <= hora:
+                achado = r
+        except (KeyError, TypeError, ValueError):
+            continue
+    return achado
+
+
+def formatar_pendentes(pendentes):
+    """As linhas do banco no formato de resultado['pendentes']."""
+    return {
+        tipo: [{
+            'id': l.get('VENDA_NOTA_ID') or l.get('CAB_NOTA_ID') or l.get('PERDA_ID'),
+            'data': texto(l.get('DATA') or l.get('DATA_RECEBIMENTO') or l.get('DATA_EMISSAO')),
+            # a hora só existe na venda, e é ela que deixa a folha de
+            # conferência conversar com o cupom: mesma venda, mesma hora
+            'hora': texto_hora(l.get('DATA_HORA'))[11:16],
+            'descricao': texto(l.get('PRODUTO')),
+            'ms': texto(l.get('REGISTRO_MS')),
+            'lote': texto(l.get('NUM_LOTE')),
+            'quantidade': numero(l.get('QUANTIDADE')),
+        } for l in linhas_tipo]
+        for tipo, linhas_tipo in pendentes.items()
+    }
+
+
+def fila_desde_a_foto(conexao, na_foto, ptr_venda, ptr_entrada, pendentes_atuais):
+    """O que NÃO estava na ANVISA quando a foto foi tirada: o movimento
+    depois dos ponteiros daquela hora, e não dos de agora.
+
+    Em 21/10 a foto saiu de manhã, o envio das vendas de 20/10 andou o
+    ponteiro logo depois, e a sincronização das 09:05 já não as contava como
+    "falta transmitir". Fora da foto e fora da fila, elas viraram -6 na
+    QUETIAPINA, -2 na OLANZAPINA e outras, todas falsas, até a ANVISA validar
+    e o Anvisa.exe baixar a foto de novo.
+
+    Devolve os pendentes (formato de resultado['pendentes']) ou None quando
+    os ponteiros não andaram desde a foto."""
+    if not na_foto:
+        return None
+    venda = min(int(numero(na_foto.get('venda'))), ptr_venda)
+    entrada = min(int(numero(na_foto.get('entrada'))), ptr_entrada)
+    if venda >= ptr_venda and entrada >= ptr_entrada:
+        return None
+    pendentes = dict(pendentes_atuais or {})
+    novos = formatar_pendentes({
+        'vendas': consultar(conexao, CONSULTAS['saidas_pendentes'], (venda,)),
+        'entradas': consultar(conexao, CONSULTAS['entradas_pendentes'], (entrada,)),
+    })
+    pendentes.update(novos)
+    return pendentes
+
+
 def correcao_do_saldo(conexao, inventario_em, na_fila, ultimo_envio=None,
                       sem_envio_desde=None):
     """A correção que a comparação de saldo usa, e de onde ela veio.
@@ -2691,20 +2771,7 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
     except Exception as e:
         registrar('Falha ao levantar pendentes: %s' % e)
 
-    resultado['pendentes'] = {
-        tipo: [{
-            'id': l.get('VENDA_NOTA_ID') or l.get('CAB_NOTA_ID') or l.get('PERDA_ID'),
-            'data': texto(l.get('DATA') or l.get('DATA_RECEBIMENTO') or l.get('DATA_EMISSAO')),
-            # a hora só existe na venda, e é ela que deixa a folha de
-            # conferência conversar com o cupom: mesma venda, mesma hora
-            'hora': texto_hora(l.get('DATA_HORA'))[11:16],
-            'descricao': texto(l.get('PRODUTO')),
-            'ms': texto(l.get('REGISTRO_MS')),
-            'lote': texto(l.get('NUM_LOTE')),
-            'quantidade': numero(l.get('QUANTIDADE')),
-        } for l in linhas_tipo]
-        for tipo, linhas_tipo in pendentes.items()
-    }
+    resultado['pendentes'] = formatar_pendentes(pendentes)
     resultado['resumoPendentes'] = {t: len(v) for t, v in resultado['pendentes'].items()}
 
     # de qual nota fiscal veio cada lote que entrou
@@ -2830,6 +2897,23 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
                 sem_envio_desde = sem_validacao
     except Exception as e:
         registrar('Falha ao ler o resultado da API do SNGPC: %s' % e)
+    # o ponteiro andou depois da foto: a fila da conta começa no ponteiro
+    # daquela hora. Com o ponteiro remendado no config, fica a conta antiga.
+    if not ponteiro_forcado:
+        try:
+            na_foto = ponteiros_na_hora(foto_hora)
+            da_foto = fila_desde_a_foto(conexao, na_foto, ptr_venda, ptr_entrada,
+                                        resultado['pendentes'])
+            if da_foto is not None:
+                movimento_pendente, _ = movimento_por_lote(da_foto)
+                resultado['inventario']['ponteiroNaFoto'] = {
+                    'em': na_foto.get('em'), 'venda': na_foto.get('venda'),
+                    'entrada': na_foto.get('entrada')}
+                registrar('O ponteiro andou depois da foto (venda %s -> %s, entrada %s -> %s): '
+                          'a conta do saldo conta o movimento desde o ponteiro da foto.'
+                          % (na_foto.get('venda'), ptr_venda, na_foto.get('entrada'), ptr_entrada))
+        except Exception as e:
+            registrar('Falha ao contar o movimento desde o ponteiro da foto: %s' % e)
     movimento_pendente, resultado['baseDaCorrecao'] = correcao_do_saldo(
         conexao, inventario_em, movimento_pendente, ultimo_envio, sem_envio_desde)
 
@@ -9420,6 +9504,7 @@ def snapshot_diagnostico(conexao):
     ponteiros = linhas[0] if linhas else {}
     ptr_venda = int(numero(ponteiros.get('ULT_SAIDA_VENDA_NOTA_ID')))
     ptr_entrada = int(numero(ponteiros.get('ULT_ENTRADA_CAB_NOTA_ID')))
+    guardar_ponteiros(ptr_venda, ptr_entrada)
 
     pendentes = {}
     try:
