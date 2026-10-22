@@ -111,6 +111,7 @@ while ($true) {
     Write-Host '   9 - Instalar o agente nesta maquina'
     Write-Host '   R - Acesso remoto: testar e ligar SSH/RDP (administrador)'
     Write-Host '   F - Ligar o firewall com a rede local e a VPN liberadas (administrador)'
+    Write-Host '   K - Instalar a chave SSH do celular neste servidor (administrador)'
     Write-Host '   L - Apagar os .bat que sobraram na pasta do agente'
     Write-Host '   A - Criar atalho na area de trabalho'
     Write-Host '   0 - Sair'
@@ -146,6 +147,7 @@ while ($true) {
         '9' { Rodar-Bat 'INSTALAR_AGENTE.bat'     'agente' $pasta }
         'R' { Rodar-Bat 'ACESSO_REMOTO.bat'       'agente' $pasta }
         'F' { Rodar-Bat 'LIGAR_FIREWALL.bat'      'agente' $pasta }
+        'K' { Rodar-Bat 'INSTALAR_CHAVE_SSH.bat' 'agente' $pasta }
         'L' { Limpar-Bats $pasta }
         'A' { Criar-Atalho }
         '0' { break }
