@@ -366,6 +366,10 @@ $codigos = @{
     '2147942402' = 'arquivo nao encontrado'
     '2147942405' = 'acesso negado: costuma ser a tarefa apontando para uma PASTA'
 }
+# Quem sabe onde o agente mora e a tarefa agendada: ela aponta para o
+# agente_auto.py de verdade. A pasta de onde este .bat roda nao serve,
+# porque o menu baixa as ferramentas para uma pasta so delas.
+$pastaAgente = ''
 foreach ($nome in 'AgenteSNGPC', 'AgenteSNGPC_Fila', 'AnvisaSNGPC_Login') {
     $t = Get-ScheduledTask -TaskName $nome -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $t) {
@@ -390,7 +394,9 @@ foreach ($nome in 'AgenteSNGPC', 'AgenteSNGPC_Fila', 'AnvisaSNGPC_Login') {
             $problema = 'o programa nao existe'
         }
         foreach ($m in [regex]::Matches("$($a.Arguments)", '"([^"]+\.(?:py|exe|bat|cmd))"')) {
-            if (-not (Test-Path -LiteralPath $m.Groups[1].Value)) { $problema = "nao existe $($m.Groups[1].Value)" }
+            $alvo = $m.Groups[1].Value
+            if (-not (Test-Path -LiteralPath $alvo)) { $problema = "nao existe $alvo" }
+            if (-not $pastaAgente -and $alvo -match '(?i)\\agente_auto\.py$') { $pastaAgente = Split-Path -Parent $alvo }
         }
         if ("$exe $($a.Arguments)" -match '\\Desktop\\|\\Area de Trabalho\\') {
             Dizer '    aviso: roda de dentro da Area de Trabalho, que ja sumiu duas vezes; o lugar certo e C:\FARMACIA-SNGPC'
@@ -413,22 +419,33 @@ Dizer '  (so testo as tarefas; quem conserta e o INSTALAR_AGENTE.bat)'
 # que fazer. Quem move e o MOVER_PARA_C.bat, que para as tarefas,
 # confere a copia e recria o caminho. Nao movo nada sozinho.
 Secao '9. onde a pasta do agente mora'
-$aqui = "$env:FARM_PASTA".TrimEnd('\')
 $certo = 'C:\FARMACIA-SNGPC'
-Dizer "  esta pasta: $aqui"
-if ($aqui -ieq $certo -or $aqui -like "$certo\*") {
-    Dizer '  OK: ja esta no lugar certo.'
-    Resumo 'pasta do agente' 'ok, em C:\FARMACIA-SNGPC'
-} elseif ($aqui -match '(?i)\\(Desktop|Area de Trabalho|Downloads|OneDrive[^\\]*)(\\|$)') {
-    Dizer '  LUGAR RUIM: Area de Trabalho, Downloads ou OneDrive. Daqui a'
-    Dizer '  pasta ja sumiu duas vezes, levando a chave do Firebase junto.'
-    Dizer "  O lugar certo e $certo."
-    Dizer '  Conserto, nesta ordem: MOVER_PARA_C.bat como administrador e'
-    Dizer '  depois INSTALAR_AGENTE.bat, que recria as tarefas no caminho novo.'
-    Resumo 'pasta do agente' 'LUGAR RUIM - mover para C:\FARMACIA-SNGPC'
+$daqui = "$env:FARM_PASTA".TrimEnd('\')
+Dizer "  rodei de: $daqui"
+# Ultimo recurso: o agente pode estar na pasta de onde eu rodei, se
+# alguem rodou este .bat de dentro dela.
+if (-not $pastaAgente -and (Test-Path -LiteralPath (Join-Path $daqui 'agente_auto.py'))) { $pastaAgente = $daqui }
+if (-not $pastaAgente) {
+    Dizer '  NAO SEI onde o agente mora: nenhuma tarefa aponta para um'
+    Dizer '  agente_auto.py, e ele nao esta na pasta de onde eu rodei.'
+    Resumo 'pasta do agente' 'nao sei - nenhuma tarefa aponta para o agente_auto.py'
 } else {
-    Dizer "  fora de $certo, mas nao na Area de Trabalho, Downloads nem OneDrive."
-    Resumo 'pasta do agente' "fora de $certo"
+    Dizer "  pasta do agente: $pastaAgente"
+    if ($pastaAgente -ieq $certo -or $pastaAgente -like "$certo\*") {
+        Dizer '  OK: ja esta no lugar certo.'
+        Resumo 'pasta do agente' 'ok, em C:\FARMACIA-SNGPC'
+    } elseif ($pastaAgente -match '(?i)\\(Desktop|Area de Trabalho|Downloads|OneDrive[^\\]*)(\\|$)') {
+        Dizer '  LUGAR RUIM: Area de Trabalho, Downloads ou OneDrive. Daqui a'
+        Dizer '  pasta ja sumiu duas vezes, levando a chave do Firebase junto.'
+        Dizer "  O lugar certo e $certo."
+        Dizer '  Conserto, nesta ordem: MOVER_PARA_C.bat como administrador e'
+        Dizer '  depois INSTALAR_AGENTE.bat, que recria as tarefas no caminho novo.'
+        Resumo 'pasta do agente' 'LUGAR RUIM - mover para C:\FARMACIA-SNGPC'
+    } else {
+        Dizer "  fora de $certo, mas nao na Area de Trabalho, Downloads nem OneDrive."
+        Dizer '  A chave do Firebase mora aqui: vale mover um dia, sem pressa.'
+        Resumo 'pasta do agente' "fora de $certo, em lugar estavel"
+    }
 }
 
 # ------------------------------------------------------------------
@@ -519,10 +536,14 @@ if (-not $admin) {
 Secao 'como entrar pelo celular'
 $usuario = $env:USERNAME
 $conta = Get-LocalUser -Name $usuario -ErrorAction SilentlyContinue
+$semSenha = $false
 if ($conta) {
     if ("$($conta.PrincipalSource)" -eq 'MicrosoftAccount') { $quando = 'conta Microsoft: a senha e a da conta Microsoft' }
     elseif ($conta.PasswordLastSet) { $quando = "senha trocada pela ultima vez em $($conta.PasswordLastSet)" }
-    else { $quando = 'nao achei data de senha; conta sem senha o Windows recusa no SSH e no RDP' }
+    else {
+        $quando = 'nao achei data de senha; conta sem senha o Windows recusa no SSH e no RDP'
+        $semSenha = $true
+    }
     Dizer "  conta: $usuario ($($conta.PrincipalSource)), $quando"
 }
 if (-not $sshOk) {
@@ -560,9 +581,25 @@ if (-not $admin) {
     $vias = @()
     if ($sshOk) { $vias += 'SSH (porta 22)' }
     if ($rdpOk) { $vias += 'RDP (porta 3389)' }
-    Dizer "  OK: o caminho nativo esta de pe -> $($vias -join ' e ')."
-    Dizer '  Preso a rede local e a VPN; nada exposto na internet.'
-    Resumo 'veredito' ($vias -join ' e ')
+    Dizer "  a porta esta de pe e presa a rede local e a VPN -> $($vias -join ' e ')."
+    Dizer '  Nada exposto na internet.'
+    # De pe nao e o mesmo que dentro: eu abro a porta, nao entro por
+    # ela. Quem prova a entrada e um ssh do celular. Conta sem senha o
+    # Windows recusa na rede mesmo com tudo acima certo, e dizer 'esta
+    # de pe' ali seria afirmar o que eu nao medi.
+    if ($semSenha) {
+        Dizer ''
+        Dizer "  SO QUE A ENTRADA NAO ESTA PROVADA: a conta $usuario nao tem"
+        Dizer '  data de senha. Conta sem senha o Windows recusa no SSH e no'
+        Dizer '  RDP, mesmo com a porta e o firewall certos.'
+        Dizer '  Teste pelo celular, na rede da farmacia. Se recusar a senha,'
+        Dizer '  ponha uma senha nesta conta do Windows: eu nao mexo em senha.'
+        Dizer '  Por uma senha nao abre porta nenhuma a mais.'
+        Resumo 'veredito' "$($vias -join ' e ') de pe; ENTRADA NAO PROVADA - conta sem senha"
+    } else {
+        Dizer '  Nao testei a entrada: prove com um ssh do celular.'
+        Resumo 'veredito' "$($vias -join ' e ') de pe; entrada a provar"
+    }
 } elseif ($terceiros.Count -gt 0) {
     Dizer '  NADA DEU CERTO pelo caminho nativo: nem SSH nem RDP ficaram de pe.'
     Dizer '  O motivo esta nas secoes acima.'
