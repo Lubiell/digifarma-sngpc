@@ -1764,7 +1764,9 @@ def formatar_ms(valor):
     return '%s.%s.%s.%s-%s' % (d[0], d[1:5], d[5:9], d[9:12], d[12])
 
 
-DIAS_VENDAS_RECENTES = 7
+# Hoje e ontem: é o que o balcão confere contra o relatório do Digifarma.
+# Eram 7 dias, e a farmácia pediu só os dois (22/10).
+DIAS_VENDAS_RECENTES = 1
 
 
 TIPOS_DE_ERRO = (

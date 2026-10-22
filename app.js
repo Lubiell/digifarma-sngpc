@@ -1246,12 +1246,13 @@ function pintarXml() {
   }
 }
 
-/* As vendas de controlado dos ultimos dias, separadas por dia, com a
-   receita lancada ou nao. O agente publica 7 dias (vendasRecentes, uma
-   linha por lote), mas a tela so mostrava as de hoje: em 22/10 as vendas
-   de 21/10 tinham sumido, e quem conferia com o relatorio do Digifarma
-   achava que o app nao tinha puxado. Dentro do dia, ordem alfabetica, que
-   e como se procura um item no relatorio impresso. */
+/* As vendas de controlado de hoje e de ontem, separadas por dia, com a
+   receita lancada ou nao. A tela so mostrava as de hoje: em 22/10 as
+   vendas de 21/10 tinham sumido, e quem conferia com o relatorio do
+   Digifarma achava que o app nao tinha puxado. A farmacia quer so os dois
+   dias (o agente publica so eles; o filtro aqui cobre agente antigo, que
+   publicava 7). Dentro do dia, ordem alfabetica, que e como se procura um
+   item no relatorio impresso. */
 function hojeLocal() {
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
@@ -1264,23 +1265,26 @@ function porNome(a, b) {
     || String(a.lote || '').localeCompare(String(b.lote || ''));
 }
 
+function ontemLocal() {
+  const d = new Date(hojeLocal() + 'T12:00:00');
+  d.setDate(d.getDate() - 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 function vendasPorDia() {
   const dias = {};
+  const valem = [hojeLocal(), ontemLocal()];
   lista('vendasRecentes').forEach((v) => {
     const dia = String(v.quando || '').slice(0, 10);
-    if (dia) (dias[dia] = dias[dia] || []).push(v);
+    if (valem.includes(dia)) (dias[dia] = dias[dia] || []).push(v);
   });
   return Object.keys(dias).sort().reverse()
     .map((dia) => ({ dia, itens: dias[dia].sort(porNome) }));
 }
 
 function nomeDoDia(dia) {
-  const hoje = hojeLocal();
-  const d = new Date(hoje + 'T12:00:00');
-  d.setDate(d.getDate() - 1);
-  const ontem = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
-    + '-' + String(d.getDate()).padStart(2, '0');
-  return (dia === hoje ? 'Hoje, ' : dia === ontem ? 'Ontem, ' : '') + dataBR(dia);
+  return (dia === hojeLocal() ? 'Hoje, ' : dia === ontemLocal() ? 'Ontem, ' : '') + dataBR(dia);
 }
 
 function pintarVendasDeHoje() {
@@ -1290,7 +1294,7 @@ function pintarVendasDeHoje() {
   const em = estado.inventario?.vendasRecentesEm;
   $('vendas-hoje-quando').textContent = !publicado
     ? 'O agente ainda não publicou as vendas recentes.'
-    : 'Últimos 7 dias, uma linha por lote vendido, em ordem alfabética dentro do dia.'
+    : 'Hoje e ontem, uma linha por lote vendido, em ordem alfabética dentro do dia.'
       + (em ? ' Lista atualizada em ' + dataHora(em) + '.' : '');
   const dias = vendasPorDia();
   $('vendas-hoje-vazio').hidden = dias.length > 0 || !publicado;
