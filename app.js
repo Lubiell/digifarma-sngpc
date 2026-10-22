@@ -1246,22 +1246,41 @@ function pintarXml() {
   }
 }
 
-/* As vendas de controlado de hoje, com a receita lancada ou nao. O agente
-   publica isto a cada passagem da fila (vendasRecentes, 7 dias, uma linha
-   por lote), mas a tela so mostrava as vendas com problema: venda certa,
-   com receita ja lancada, nao aparecia em lugar nenhum, e quem conferia o
-   dia nao tinha como ver que ela tinha entrado. */
+/* As vendas de controlado dos ultimos dias, separadas por dia, com a
+   receita lancada ou nao. O agente publica 7 dias (vendasRecentes, uma
+   linha por lote), mas a tela so mostrava as de hoje: em 22/10 as vendas
+   de 21/10 tinham sumido, e quem conferia com o relatorio do Digifarma
+   achava que o app nao tinha puxado. Dentro do dia, ordem alfabetica, que
+   e como se procura um item no relatorio impresso. */
 function hojeLocal() {
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
     + '-' + String(d.getDate()).padStart(2, '0');
 }
 
-function vendasDeHoje() {
+function porNome(a, b) {
+  return String(a.descricao || '').localeCompare(String(b.descricao || ''), 'pt-BR')
+    || Number(a.venda || 0) - Number(b.venda || 0)
+    || String(a.lote || '').localeCompare(String(b.lote || ''));
+}
+
+function vendasPorDia() {
+  const dias = {};
+  lista('vendasRecentes').forEach((v) => {
+    const dia = String(v.quando || '').slice(0, 10);
+    if (dia) (dias[dia] = dias[dia] || []).push(v);
+  });
+  return Object.keys(dias).sort().reverse()
+    .map((dia) => ({ dia, itens: dias[dia].sort(porNome) }));
+}
+
+function nomeDoDia(dia) {
   const hoje = hojeLocal();
-  return lista('vendasRecentes')
-    .filter((v) => String(v.quando || '').slice(0, 10) === hoje)
-    .sort((a, b) => String(b.quando || '').localeCompare(String(a.quando || '')));
+  const d = new Date(hoje + 'T12:00:00');
+  d.setDate(d.getDate() - 1);
+  const ontem = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    + '-' + String(d.getDate()).padStart(2, '0');
+  return (dia === hoje ? 'Hoje, ' : dia === ontem ? 'Ontem, ' : '') + dataBR(dia);
 }
 
 function pintarVendasDeHoje() {
@@ -1271,31 +1290,39 @@ function pintarVendasDeHoje() {
   const em = estado.inventario?.vendasRecentesEm;
   $('vendas-hoje-quando').textContent = !publicado
     ? 'O agente ainda não publicou as vendas recentes.'
-    : 'Uma linha por lote vendido.' + (em ? ' Lista atualizada em ' + dataHora(em) + '.' : '');
-  const itens = vendasDeHoje();
-  $('vendas-hoje-vazio').hidden = itens.length > 0 || !publicado;
+    : 'Últimos 7 dias, uma linha por lote vendido, em ordem alfabética dentro do dia.'
+      + (em ? ' Lista atualizada em ' + dataHora(em) + '.' : '');
+  const dias = vendasPorDia();
+  $('vendas-hoje-vazio').hidden = dias.length > 0 || !publicado;
 
-  itens.forEach((v, n) => {
-    const hora = String(v.quando || '').slice(11, 16);
-    alvo.appendChild(linha({
-      chave: 'hoje:' + (v.venda ?? n) + ':' + (v.lote || n),
-      titulo: v.descricao || ('Venda ' + (v.venda ?? '?')),
-      meta: [hora, v.venda && 'Venda ' + v.venda, v.laboratorio && 'Lab. ' + v.laboratorio,
-             v.lote ? 'Lote ' + v.lote : 'Sem lote', v.vendedor],
-      tarja: [v.receita ? 'Receita lançada' : 'Falta lançar a receita', 'Qtd ' + (v.quantidade ?? '—')],
-      tarjaClasse: v.receita ? 'ok' : 'sobra',
-      detalhe: definicoes([
-        ['Venda', v.venda],
-        ['Hora', hora],
-        ['Produto', v.descricao],
-        ['Laboratório', v.laboratorio],
-        ['Registro M.S.', v.ms],
-        ['Lote', v.lote],
-        ['Quantidade', v.quantidade],
-        ['Atendeu', v.vendedor],
-        ['Receita', v.receita ? 'lançada no Digifarma' : 'ainda não lançada']
-      ])
-    }));
+  dias.forEach(({ dia, itens }) => {
+    const titulo = criar('h4', 'dia-vendas');
+    const vendas = new Set(itens.map((v) => v.venda)).size;
+    titulo.textContent = nomeDoDia(dia) + ' — ' + vendas + ' venda(s), ' + itens.length + ' item(ns)';
+    alvo.appendChild(titulo);
+    itens.forEach((v, n) => {
+      const hora = String(v.quando || '').slice(11, 16);
+      alvo.appendChild(linha({
+        chave: 'dia:' + dia + ':' + (v.venda ?? n) + ':' + (v.lote || n),
+        titulo: v.descricao || ('Venda ' + (v.venda ?? '?')),
+        meta: [hora, v.venda && 'Venda ' + v.venda, v.laboratorio && 'Lab. ' + v.laboratorio,
+               v.lote ? 'Lote ' + v.lote : 'Sem lote', v.vendedor],
+        tarja: [v.receita ? 'Receita lançada' : 'Falta lançar a receita', 'Qtd ' + (v.quantidade ?? '—')],
+        tarjaClasse: v.receita ? 'ok' : 'sobra',
+        detalhe: definicoes([
+          ['Venda', v.venda],
+          ['Data', dataBR(dia)],
+          ['Hora', hora],
+          ['Produto', v.descricao],
+          ['Laboratório', v.laboratorio],
+          ['Registro M.S.', v.ms],
+          ['Lote', v.lote],
+          ['Quantidade', v.quantidade],
+          ['Atendeu', v.vendedor],
+          ['Receita', v.receita ? 'lançada no Digifarma' : 'ainda não lançada']
+        ])
+      }));
+    });
   });
 }
 
@@ -1303,7 +1330,9 @@ function pintarVendas() {
   pintarVendasDeHoje();
   const alvo = $('lista-vendas');
   alvo.innerHTML = '';
-  const itens = vendasProblema();
+  // o dia mais recente primeiro e, dentro dele, ordem alfabetica
+  const itens = [...vendasProblema()].sort((a, b) =>
+    String(b.data || '').slice(0, 10).localeCompare(String(a.data || '').slice(0, 10)) || porNome(a, b));
   $('vendas-vazio').hidden = itens.length > 0;
 
   const MOTIVO = {
@@ -2332,6 +2361,6 @@ if (location.protocol === 'file:') {
 
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasDeHoje,
+  module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasPorDia,
     pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo, html };
 }
