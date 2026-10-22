@@ -2372,6 +2372,23 @@ def principal():
         ag.CONSULTAS.update(originais)
         ag.colunas_da_tabela = guardada
 
+    # --- 22/10: vendas recentes só de hoje e de ontem ---
+    guardadas_v = (ag.consultar, ag.campos_por_tabela, ag.descobrir_quem,
+                   ag.chaves_estrangeiras, ag.laboratorios_por_medicamento)
+    cortes = []
+    try:
+        ag.campos_por_tabela = lambda _c: {}
+        ag.descobrir_quem = lambda *_a: (None, None, None, None)
+        ag.chaves_estrangeiras = lambda _c: {}
+        ag.laboratorios_por_medicamento = lambda _c: ({}, {})
+        ag.consultar = lambda _c, _sql, parametros=(): cortes.append(parametros) or []
+        ag.vendas_recentes(None)
+    finally:
+        (ag.consultar, ag.campos_por_tabela, ag.descobrir_quem,
+         ag.chaves_estrangeiras, ag.laboratorios_por_medicamento) = guardadas_v
+    ontem = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    conferir('vendas recentes: só de ontem para cá', cortes == [(ontem,)], cortes)
+
     # --- 21/10: a fila da conta começa no ponteiro da hora da foto ---
     if os.path.exists(ag.ARQUIVO_PONTEIROS):
         os.remove(ag.ARQUIVO_PONTEIROS)

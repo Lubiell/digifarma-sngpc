@@ -317,18 +317,26 @@ if (exportado.pintarPonteiroSugerido) {
 }
 
 if (exportado.vendasPorDia) {
-  conferir('vendas por dia: o dia mais novo primeiro, itens em ordem alfabética', () => {
+  conferir('vendas por dia: só hoje e ontem, o mais novo primeiro, itens em ordem alfabética', () => {
+    const dia = (atras) => {
+      const d = new Date();
+      d.setDate(d.getDate() - atras);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+        + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    const [hoje, ontem, antes] = [dia(0), dia(1), dia(2)];
     exportado.estado.inventario = { vendasRecentes: [
-      { venda: 48746, quando: '2026-10-21T14:33:50', descricao: 'VENLAFAXINA 37,5MG', lote: 'CLV4N003' },
-      { venda: 48718, quando: '2026-10-21T07:56:50', descricao: 'NORFLOXACINO 400 MG C/ 14 CPR', lote: 'A06A00426' },
-      { venda: 48746, quando: '2026-10-21T14:33:50', descricao: 'ESCITALOPRAM OXALATO 20 MG', lote: '2605210' },
-      { venda: 48769, quando: '2026-10-22T10:11:00', descricao: 'PARAC+CODEINA 30MG + 500MG', lote: 'B26C2630' },
-      { venda: 48720, quando: '2026-10-21T08:27:16', descricao: 'CELECOXIBE 200MG 30CPS', lote: '47880040' },
+      { venda: 48746, quando: ontem + 'T14:33:50', descricao: 'VENLAFAXINA 37,5MG', lote: 'CLV4N003' },
+      { venda: 48718, quando: ontem + 'T07:56:50', descricao: 'NORFLOXACINO 400 MG C/ 14 CPR', lote: 'A06A00426' },
+      { venda: 48746, quando: ontem + 'T14:33:50', descricao: 'ESCITALOPRAM OXALATO 20 MG', lote: '2605210' },
+      { venda: 48769, quando: hoje + 'T10:11:00', descricao: 'PARAC+CODEINA 30MG + 500MG', lote: 'B26C2630' },
+      { venda: 48720, quando: ontem + 'T08:27:16', descricao: 'CELECOXIBE 200MG 30CPS', lote: '47880040' },
+      { venda: 48700, quando: antes + 'T09:00:00', descricao: 'ANTERIOR A ONTEM' },
       { venda: 1, quando: '', descricao: 'SEM DATA' }
     ] };
     try {
       const dias = exportado.vendasPorDia();
-      igual(dias.map((d) => d.dia).join(','), '2026-10-22,2026-10-21', 'dias');
+      igual(dias.map((d) => d.dia).join(','), hoje + ',' + ontem, 'só hoje e ontem');
       igual(dias[1].itens.map((v) => v.descricao.split(' ')[0]).join(','),
         'CELECOXIBE,ESCITALOPRAM,NORFLOXACINO,VENLAFAXINA', 'ordem alfabética');
     } finally {
