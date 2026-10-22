@@ -316,19 +316,21 @@ if (exportado.pintarPonteiroSugerido) {
   });
 }
 
-if (exportado.vendasDeHoje) {
-  conferir('vendas de hoje: so as de hoje, com e sem receita, a mais nova primeiro', () => {
-    const d = new Date();
-    const hoje = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
-      + '-' + String(d.getDate()).padStart(2, '0');
+if (exportado.vendasPorDia) {
+  conferir('vendas por dia: o dia mais novo primeiro, itens em ordem alfabética', () => {
     exportado.estado.inventario = { vendasRecentes: [
-      { venda: 1, quando: '2000-01-01T10:00:00', receita: true },
-      { venda: 2, quando: hoje + 'T09:00:00', receita: true },
-      { venda: 3, quando: hoje + 'T11:30:00', receita: false }
+      { venda: 48746, quando: '2026-10-21T14:33:50', descricao: 'VENLAFAXINA 37,5MG', lote: 'CLV4N003' },
+      { venda: 48718, quando: '2026-10-21T07:56:50', descricao: 'NORFLOXACINO 400 MG C/ 14 CPR', lote: 'A06A00426' },
+      { venda: 48746, quando: '2026-10-21T14:33:50', descricao: 'ESCITALOPRAM OXALATO 20 MG', lote: '2605210' },
+      { venda: 48769, quando: '2026-10-22T10:11:00', descricao: 'PARAC+CODEINA 30MG + 500MG', lote: 'B26C2630' },
+      { venda: 48720, quando: '2026-10-21T08:27:16', descricao: 'CELECOXIBE 200MG 30CPS', lote: '47880040' },
+      { venda: 1, quando: '', descricao: 'SEM DATA' }
     ] };
     try {
-      const v = exportado.vendasDeHoje();
-      igual(v.map((x) => x.venda).join(','), '3,2', 'vendas de hoje');
+      const dias = exportado.vendasPorDia();
+      igual(dias.map((d) => d.dia).join(','), '2026-10-22,2026-10-21', 'dias');
+      igual(dias[1].itens.map((v) => v.descricao.split(' ')[0]).join(','),
+        'CELECOXIBE,ESCITALOPRAM,NORFLOXACINO,VENLAFAXINA', 'ordem alfabética');
     } finally {
       exportado.estado.inventario = {};
     }
