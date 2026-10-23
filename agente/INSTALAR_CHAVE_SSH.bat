@@ -13,8 +13,8 @@ REM  Chave resolve os dois lados: nao manda senha nenhuma e nao mexe na
 REM  entrada automatica.
 REM
 REM  O que NUNCA faz: criar usuario, trocar senha, abrir porta, mexer em
-REM  regra de firewall ou em politica do Windows. So grava a chave no
-REM  arquivo certo, acerta a permissao dele e reinicia o sshd.
+REM  regra de firewall ou em politica do Windows. So grava a chave nos
+REM  arquivos que o sshd pode ler, acerta a permissao e reinicia o sshd.
 REM
 REM  A logica fica no bloco PowerShell no fim deste arquivo. Continua
 REM  sendo um .bat so: o bloco e lido deste proprio arquivo, nada e
@@ -110,36 +110,56 @@ Write-Host ''
 Write-Host '  CONFIRA no celular, com: ssh-keygen -lf ~/.ssh/id_ed25519.pub'
 Write-Host '  Se as duas nao baterem, a chave chegou errada e nao vai entrar.'
 
-# Conta no grupo de administradores nao le o authorized_keys da propria
-# pasta: o sshd do Windows manda ela para o arquivo comum, e so esse
-# vale. Gravar no lugar errado falha calado.
+# Em qual arquivo o sshd le a chave depende da versao e do sshd_config.
+# A documentacao manda conta administradora para o arquivo comum em
+# ProgramData, mas o OpenSSH 7.7 deste servidor lia o .ssh\authorized_keys
+# da propria conta, e a chave gravada so no comum nunca foi achada - sem
+# erro nenhum na tela, que e o pior jeito de falhar. Entao gravo nos DOIS
+# quando a conta e administradora, cada um com a permissao que lhe cabe,
+# e no fim pergunto ao proprio sshd onde ele procura.
 $grupo = (Get-LocalGroup -SID 'S-1-5-32-544').Name
 $souAdmin = [bool](Get-LocalGroupMember -Group $grupo -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -ieq "$env:COMPUTERNAME\$env:USERNAME" })
-if ($souAdmin) {
-    $arq = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
-} else {
-    $arq = Join-Path $env:USERPROFILE '.ssh\authorized_keys'
-}
-New-Item -ItemType Directory -Force -Path (Split-Path $arq) -ErrorAction SilentlyContinue | Out-Null
+$alvos = @(Join-Path $env:USERPROFILE '.ssh\authorized_keys')
+if ($souAdmin) { $alvos += (Join-Path $env:ProgramData 'ssh\administrators_authorized_keys') }
 
 Write-Host ''
-if ((Test-Path -LiteralPath $arq) -and (Select-String -Path $arq -SimpleMatch $b64 -Quiet)) {
-    Write-Host "  esta chave ja estava instalada em: $arq"
-} else {
-    try {
-        Add-Content -Path $arq -Value $chave -Encoding ascii -ErrorAction Stop
-        Write-Host "  chave gravada em: $arq"
-    } catch {
-        Parar "NAO consegui gravar em $arq : $($_.Exception.Message)"
+$gravou = 0
+foreach ($arq in $alvos) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $arq) -ErrorAction SilentlyContinue | Out-Null
+    if ((Test-Path -LiteralPath $arq) -and (Select-String -Path $arq -SimpleMatch $b64 -Quiet)) {
+        Write-Host "  ja estava em: $arq"
+        $gravou++
+    } else {
+        try {
+            Add-Content -Path $arq -Value $chave -Encoding ascii -ErrorAction Stop
+            Write-Host "  gravada em:   $arq"
+            $gravou++
+        } catch {
+            Write-Host "  NAO consegui gravar em $arq : $($_.Exception.Message)"
+            continue
+        }
     }
+    # Arquivo que qualquer um pode escrever o sshd ignora, sem dizer nada.
+    # O da conta precisa do dono junto; o comum fica so com SYSTEM e admins.
+    if ($arq -like "$env:ProgramData*") {
+        & icacls $arq /inheritance:r /grant '*S-1-5-18:F' /grant '*S-1-5-32-544:F' | Out-Null
+    } else {
+        & icacls $arq /inheritance:r /grant "$($env:USERNAME):F" /grant '*S-1-5-18:F' /grant '*S-1-5-32-544:F' | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) { Write-Host '    ATENCAO: nao acertei a permissao deste arquivo; o sshd pode ignora-lo.' }
 }
+if ($gravou -eq 0) { Parar 'Nao consegui gravar a chave em lugar nenhum. Nada mudou.' }
 
-# Arquivo que qualquer um pode escrever o sshd ignora, sem dizer nada.
-if ($souAdmin) {
-    & icacls $arq /inheritance:r /grant '*S-1-5-18:F' /grant '*S-1-5-32-544:F' | Out-Null
-    if ($LASTEXITCODE -eq 0) { Write-Host '  permissao acertada: so SYSTEM e administradores.' }
-    else { Write-Host '  ATENCAO: nao consegui acertar a permissao do arquivo; o sshd pode ignorar a chave.' }
+# Em vez de supor, pergunto ao sshd qual arquivo ele le para esta conta.
+$exe = Join-Path $env:SystemRoot 'System32\OpenSSH\sshd.exe'
+if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $env:ProgramFiles 'OpenSSH\sshd.exe' }
+if (Test-Path -LiteralPath $exe) {
+    try {
+        $onde = @(& $exe -T -C "user=$env:USERNAME,host=localhost,addr=127.0.0.1" 2>$null |
+            Where-Object { $_ -match '^authorizedkeysfile' })
+        foreach ($l in $onde) { Write-Host "  o sshd procura em: $l" }
+    } catch { }
 }
 
 $cfg = Join-Path $env:ProgramData 'ssh\sshd_config'
