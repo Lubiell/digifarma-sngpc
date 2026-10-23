@@ -2372,6 +2372,46 @@ def principal():
         ag.CONSULTAS.update(originais)
         ag.colunas_da_tabela = guardada
 
+    # --- 23/10: a fórmula do hash sai dos hashes colados e do sngpc.zip ---
+    import hashlib
+    pasta_zip = tempfile.mkdtemp()
+    enviados_zip = os.path.join(pasta_zip, 'enviados')
+    os.makedirs(enviados_zip)
+    for nome, corpo in (('sngpc_2026-10-19.xml', b'<xml>17-18</xml>'), ('sngpc_2026-10-19.zip', b'PK zip 19'),
+                        ('sngpc_2026-10-22.xml', b'<xml>21</xml>'), ('sngpc_2026-10-22.zip', b'PK zip 22')):
+        with open(os.path.join(enviados_zip, nome), 'wb') as f:
+            f.write(corpo)
+    arquivados_zip = ag.xml_arquivados(pasta_zip)
+    conferir('hash: o zip arquivado entra na lista junto com o XML',
+             [os.path.basename(c) for _, c in arquivados_zip]
+             == ['sngpc_2026-10-19.xml', 'sngpc_2026-10-19.zip', 'sngpc_2026-10-22.xml', 'sngpc_2026-10-22.zip']
+             and arquivados_zip[1][0] == '2026-10-19', arquivados_zip)
+    colado_zip = hashlib.md5(b'PK zip 19').hexdigest().upper()
+    formula, achado = ag.descobrir_formula_do_hash(['', 'HASHVELHODE0810', colado_zip], arquivados_zip)
+    conferir('hash: o hash colado do site acha a fórmula no sngpc.zip',
+             formula == 'zip_md5' and achado.endswith('sngpc_2026-10-19.zip'), (formula, achado))
+    colado_xml = hashlib.md5(b'<xml>17-18</xml>').hexdigest().upper()
+    formula, achado = ag.descobrir_formula_do_hash([colado_xml], arquivados_zip)
+    conferir('hash: o hash colado do site acha a fórmula no XML',
+             formula == 'md5' and achado.endswith('sngpc_2026-10-19.xml'), (formula, achado))
+    conferir('hash: sem hash conhecido não chuta fórmula',
+             ag.descobrir_formula_do_hash([], arquivados_zip) == (None, None)
+             and ag.descobrir_formula_do_hash(['NAOBATE'], arquivados_zip) == (None, None))
+
+    origem_zip = tempfile.mkdtemp()
+    with open(os.path.join(origem_zip, 'SNGPC.XML'), 'wb') as f:
+        f.write(b'<xml>novo</xml>')
+    with open(os.path.join(origem_zip, 'sngpc.zip'), 'wb') as f:
+        f.write(b'PK novo')
+    destino_zip = os.path.join(origem_zip, 'enviados')
+    ag.arquivar_de(origem_zip, destino_zip)
+    guardados_zip = sorted(n for n in os.listdir(destino_zip) if n.endswith('.zip'))
+    conferir('hash: o sngpc.zip do envio fica guardado ao lado do XML',
+             len(guardados_zip) == 1 and open(os.path.join(destino_zip, guardados_zip[0]), 'rb').read() == b'PK novo',
+             guardados_zip)
+    shutil.rmtree(pasta_zip, ignore_errors=True)
+    shutil.rmtree(origem_zip, ignore_errors=True)
+
     # --- 22/10: vendas recentes só de hoje e de ontem ---
     guardadas_v = (ag.consultar, ag.campos_por_tabela, ag.descobrir_quem,
                    ag.chaves_estrangeiras, ag.laboratorios_por_medicamento)

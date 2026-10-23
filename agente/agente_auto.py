@@ -890,7 +890,29 @@ def arquivar_de(pasta, destino_pasta, sufixo=''):
         registrar('XML de envio arquivado: %s (gerado em %s).' % (
             os.path.basename(destino),
             datetime.datetime.fromtimestamp(hora).strftime('%d/%m/%Y %H:%M')))
+    arquivar_zip(pasta, destino_pasta, sufixo)
     return destino
+
+
+def arquivar_zip(pasta, destino_pasta, sufixo=''):
+    """Guarda o sngpc.zip do envio como enviados\\sngpc_AAAA-MM-DD<sufixo>.zip.
+
+    É o arquivo que vai para a API da ANVISA, e o hash de identificação pode
+    ser dele e não do XML: sem guardar os bytes do zip, essa conta nunca
+    poderia ser testada. Só copia; falhar aqui não atrapalha o XML."""
+    origem = os.path.join(pasta, 'sngpc.zip')
+    try:
+        if not os.path.exists(origem):
+            return None
+        hora = os.path.getmtime(origem)
+        data = datetime.datetime.fromtimestamp(hora).strftime('%Y-%m-%d')
+        destino = os.path.join(destino_pasta, 'sngpc_%s%s.zip' % (data, sufixo))
+        if not os.path.exists(destino) or hora > os.path.getmtime(destino):
+            shutil.copy2(origem, destino)
+        return destino
+    except OSError as e:
+        registrar('Não consegui guardar o sngpc.zip: %s' % e)
+        return None
 
 
 # ------------------------------------------------------------
@@ -6657,14 +6679,17 @@ def testar_api_sngpc(conexao, chamar=None):
                 print('  ' + campo_da_api(chave, reg[chave], segredos))
     print('')
     hash_envio = dict(cred.get('hashes', [])).get(coluna_hash_do_envio(colunas_hash))
-    formula, arquivo = descobrir_formula_do_hash(hash_envio, xml_arquivados(PASTA_XML_ATUAL[0]))
+    formula, arquivo = descobrir_formula_do_hash(
+        [hash_envio] + list(ler_cache_api().get('_informados') or []),
+        xml_arquivados(PASTA_XML_ATUAL[0]))
     if formula:
         print('fórmula do hash: %s (bateu com %s). Com ela o agente consulta' % (
             NOME_FORMULA.get(formula, formula), os.path.basename(arquivo)))
         print('sozinho todos os envios arquivados, não só o último que o Digifarma guardou.')
     else:
-        print('fórmula do hash: nenhuma das contas (MD5, SHA-1, SHA-256 do XML) bateu')
-        print('com o hash do último envio. Só esse envio pode ser consultado.')
+        print('fórmula do hash: nenhuma das contas (MD5, SHA-1, SHA-256 do XML e do')
+        print('sngpc.zip) bateu com os hashes conhecidos. Só esses envios podem ser')
+        print('consultados.')
     print('')
     try:
         procurar_hashes_no_banco(conexao, hash_envio)
@@ -6785,7 +6810,9 @@ SITUACOES_FINAIS = ('validado', 'com_erro')
 NOME_FORMULA = {'md5': 'MD5 do XML', 'sha1': 'SHA-1 do XML', 'sha256': 'SHA-256 do XML',
                 'md5_limpo': 'MD5 do XML sem BOM e espaços nas pontas',
                 'sha1_limpo': 'SHA-1 do XML sem BOM e espaços nas pontas',
-                'sha256_limpo': 'SHA-256 do XML sem BOM e espaços nas pontas'}
+                'sha256_limpo': 'SHA-256 do XML sem BOM e espaços nas pontas',
+                'zip_md5': 'MD5 do sngpc.zip', 'zip_sha1': 'SHA-1 do sngpc.zip',
+                'zip_sha256': 'SHA-256 do sngpc.zip'}
 # a pasta do XML vem do config; o relatório Login SNGPC não recebe config,
 # então quem o chama deixa a pasta aqui (lista para poder trocar sem global)
 PASTA_XML_ATUAL = [CONFIG_PADRAO['pasta_xml']]
@@ -6803,10 +6830,14 @@ def coluna_hash_do_envio(colunas_hash):
 
 
 def hashes_do_arquivo(caminho):
-    """As contas que o Digifarma pode ter usado para o hash do XML."""
+    """As contas que o Digifarma pode ter usado para o hash: do XML (cru e
+    limpo) ou, no .zip, dos bytes do zip que foi para a API."""
     import hashlib
     with open(caminho, 'rb') as f:
         bruto = f.read()
+    if caminho.lower().endswith('.zip'):
+        return {'zip_' + nome: hashlib.new(nome, bruto).hexdigest().upper()
+                for nome in ('md5', 'sha1', 'sha256')}
     limpo = bruto[3:] if bruto.startswith(b'\xef\xbb\xbf') else bruto
     limpo = limpo.strip()
     saida = {}
@@ -6817,20 +6848,29 @@ def hashes_do_arquivo(caminho):
 
 
 def xml_arquivados(pasta_xml):
-    """[(chave do aceite AAAA-MM-DD, caminho)] dos XML em enviados\\, os 20 mais novos."""
+    """[(chave do aceite AAAA-MM-DD, caminho)] dos XML e dos zip em
+    enviados\\, os 20 mais novos de cada."""
     pasta = os.path.join(pasta_xml or '', 'enviados')
     if not os.path.isdir(pasta):
         return []
-    nomes = sorted(n for n in os.listdir(pasta)
-                   if n.lower().startswith('sngpc_') and n.lower().endswith('.xml'))[-20:]
-    return [(n[6:16], os.path.join(pasta, n)) for n in nomes]
+    saida = []
+    for extensao in ('.xml', '.zip'):
+        nomes = sorted(n for n in os.listdir(pasta)
+                       if n.lower().startswith('sngpc_') and n.lower().endswith(extensao))[-20:]
+        saida += [(n[6:16], os.path.join(pasta, n)) for n in nomes]
+    return sorted(saida)
 
 
-def descobrir_formula_do_hash(hash_conhecido, arquivados):
-    """Qual conta sobre qual XML arquivado dá o hash que o Digifarma guardou.
-    Devolve (fórmula, caminho) ou (None, None). Nada é impresso aqui."""
-    alvo = texto(hash_conhecido).strip().upper()
-    if not alvo:
+def descobrir_formula_do_hash(hashes_conhecidos, arquivados):
+    """Qual conta sobre qual arquivo arquivado dá algum dos hashes que se
+    conhecem: o que o Digifarma guardou e os colados do relatório do site.
+    Só o do Digifarma não bastava: ele parou no envio de 08/10 e o XML
+    daquele dia pode já não estar igual. Devolve (fórmula, caminho) ou
+    (None, None). Nada é impresso aqui."""
+    if isinstance(hashes_conhecidos, str):
+        hashes_conhecidos = [hashes_conhecidos]
+    alvos = {texto(h).strip().upper() for h in hashes_conhecidos or [] if texto(h).strip()}
+    if not alvos:
         return None, None
     for _, caminho in reversed(arquivados or []):
         try:
@@ -6838,7 +6878,7 @@ def descobrir_formula_do_hash(hash_conhecido, arquivados):
         except OSError:
             continue
         for formula, valor in contas.items():
-            if valor == alvo:
+            if valor in alvos:
                 return formula, caminho
     return None, None
 
@@ -6951,9 +6991,14 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
 
     arquivados = xml_arquivados(config.get('pasta_xml'))
     formula = cache.get('_formula')
-    if not formula and hash_envio:
-        formula, _ = descobrir_formula_do_hash(hash_envio, arquivados)
+    conhecidos = ([hash_envio] if hash_envio else []) + list(cache.get('_informados') or [])
+    if not formula and conhecidos:
+        formula, achado = descobrir_formula_do_hash(conhecidos, arquivados)
         cache['_formula'] = formula or ''
+        if formula:
+            registrar('Fórmula do hash da ANVISA achada: %s (%s). Os envios '
+                      'arquivados passam a ser consultados sozinhos.'
+                      % (NOME_FORMULA.get(formula, formula), os.path.basename(achado)))
     alvos = {}
     if hash_envio:
         alvos[hash_envio.upper()] = ''
