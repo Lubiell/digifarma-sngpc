@@ -183,7 +183,9 @@ Write-Host '  Se ainda pedir "password:", a chave nao foi aceita: confira a'
 Write-Host '  impressao digital acima e veja o log em:'
 Write-Host "    $env:ProgramData\ssh\logs\sshd.log"
 Write-Host ''
-Write-Host '  Para desfazer: apague a linha desta chave em'
-Write-Host "    $arq"
-Write-Host '  e rode Restart-Service sshd. Nada mais foi alterado.'
+Write-Host '  Para desfazer: apague a linha desta chave nos arquivos'
+Write-Host '  abaixo - ela foi gravada em todos eles, e deixar em um so'
+Write-Host '  ja basta para a entrada continuar funcionando:'
+foreach ($a in $alvos) { Write-Host "    $a" }
+Write-Host '  depois rode Restart-Service sshd. Nada mais foi alterado.'
 exit 0
