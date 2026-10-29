@@ -378,6 +378,35 @@ if (exportado.pintarComando && exportado.pintarRelatorio) {
   });
 }
 
+if (exportado.pintarRelatorio) {
+  conferir('comparação: botão abre a folha numa aba, para imprimir ou salvar em PDF', () => {
+    const botao = documento.getElementById('folha-relatorio');
+    const abertos = [];
+    const originais = [contexto.URL, contexto.Blob, contexto.open];
+    contexto.Blob = function (partes, opcoes) { this.partes = partes; this.type = opcoes.type; };
+    contexto.URL = { createObjectURL: (b) => { abertos.push(b); return 'blob:folha'; }, revokeObjectURL() {} };
+    contexto.open = (url) => { abertos.push(url); return {}; };
+    try {
+      exportado.estado.relatorioPedido = 'comparacao';
+      exportado.estado.relatorios = { comparacao: { texto: '12 lote(s) na folha', em: '2026-10-29T10:00:00',
+        html: '<html><button onclick="window.print()">Imprimir</button></html>' } };
+      exportado.pintarRelatorio();
+      if (botao.hidden) throw new Error('botão da folha escondido com a folha pronta');
+      botao.onclick();
+      if (!abertos[0] || !String(abertos[0].partes[0]).includes('window.print()')) throw new Error('folha não foi aberta');
+      igual(abertos[1], 'blob:folha', 'aba aberta com a folha');
+
+      exportado.estado.relatorios = { comparacao: { texto: 'resumo', em: '2026-10-29T10:00:00' } };
+      exportado.pintarRelatorio();
+      if (!botao.hidden) throw new Error('sem folha, o botão devia sumir');
+    } finally {
+      [contexto.URL, contexto.Blob, contexto.open] = originais;
+      exportado.estado.relatorioPedido = null;
+      exportado.estado.relatorios = {};
+    }
+  });
+}
+
 if (exportado.retornoSemResposta) {
   conferir('retorno vazio do Digifarma (datas 30/12/1899) é reconhecido', () => {
     const vazio = 'HASH: \nDATA TRANSMISSÃO: 30/12/1899\nDATA VALIDAÇÃO: 30/12/1899\n'
