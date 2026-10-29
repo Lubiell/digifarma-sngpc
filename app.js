@@ -1101,7 +1101,8 @@ function pintarControlados() {
         c.ean && 'EAN ' + c.ean
       ],
       tarja: [classeDoControlado(c),
-        'saldo ' + saldo + (vendidoSemSaldo(c, vendidos) ? ' · vendido, sem saldo' : '')],
+        'saldo ' + saldo + (vendidoSemSaldo(c, vendidos) ? ' · vendido, sem saldo' : '')
+          + (c.inativo ? ' · cadastro inativo' : '')],
       tarjaClasse: saldo > 0 ? 'sobra' : 'falta',
       detalhe: detalheDoControlado(c, saldo, outro)
     }));
@@ -1121,6 +1122,7 @@ function detalheDoControlado(c, saldo, outro) {
     ['Código de barras', c.ean],
     ['Psicotrópico', c.psicotropico ? 'SIM' : 'não'],
     ['Antimicrobiano', c.antimicrobiano ? 'SIM' : 'não'],
+    ['Cadastro', c.inativo ? 'INATIVO no Digifarma' : 'ativo'],
     ['Saldo pela soma dos lotes', saldo],
     ['Saldo do produto (PROD_SALDO)', outro]
   ]);

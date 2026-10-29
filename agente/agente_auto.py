@@ -437,12 +437,11 @@ CONSULTAS = {
     # os dois evita decidir desmarcar olhando o número errado.
     "controlados_em_estoque": """
         SELECT P.PRODUTO_ID, P.PRODUTO, P.REGISTRO_MS, P.COD_BARRAS,
-               P.PSICOTROPICO, P.ANTIMICROBIANO, P.PROD_SALDO,
+               P.PSICOTROPICO, P.ANTIMICROBIANO, P.PROD_SALDO, P.PROD_ATIVO,
                (SELECT SUM({EXPRESSAO}) FROM LOTES L
                  WHERE L.PRODUTO_ID = P.PRODUTO_ID) AS SOMA_LOTES
           FROM PRODUTOS P
          WHERE {CONTROLADO}
-           AND ((P.PROD_ATIVO = 'S') OR (P.PROD_ATIVO IS NULL))
          ORDER BY P.PRODUTO
     """,
 
@@ -2693,6 +2692,10 @@ def listar_controlados(conexao, info):
             'antimicrobiano': anti,
             'saldo': round(numero(linha.get('SOMA_LOTES')), 3),
             'saldoProduto': round(numero(linha.get('PROD_SALDO')), 3),
+            # Cadastro inativo entrava nas vendas e não nesta lista: o
+            # Somalium vendido em 29/10 não aparecia aqui. Fica na lista,
+            # marcado, porque a venda dele vai para o SNGPC do mesmo jeito.
+            'inativo': texto(linha.get('PROD_ATIVO')).strip().upper() not in ('', 'S'),
         })
     return itens
 
