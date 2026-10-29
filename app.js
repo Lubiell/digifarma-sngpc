@@ -1012,8 +1012,8 @@ function pedirDesmarcar(i, sugerido) {
    Espelha a aba Saldo na forma: mesma linha expansivel, mesma busca,
    mesmo detalhe. Muda o que lista — ali e quem DIVERGE da ANVISA,
    aqui e todo controlado do cadastro que tem saldo no Digifarma,
-   divergindo ou nao. Os de saldo zero ficam de fora (temSaldo), menos
-   o que foi vendido hoje ou ontem (vendidoSemSaldo).
+   divergindo ou nao. Os de saldo zero ficam de fora (temSaldo): a
+   farmacia pediu assim em 29/10, mesmo o vendido hoje que zerou.
 
    Duas listas separadas, escolhidas pelos botoes: Controlados
    (PSICOTROPICO='S') e Antimicrobianos (ANTIMICROBIANO='S'). Produto
@@ -1029,24 +1029,6 @@ function listaControlados() {
    Quando discordam, o produto fica — e justamente o caso a conferir. */
 function temSaldo(c) {
   return Number(c.saldo || 0) > 0 || Number(c.saldoProduto || 0) > 0;
-}
-
-/* Vendido hoje ou ontem e sem saldo: a venda levou a ultima caixa, ou o
-   saldo esta errado. Some da lista era o pior dos dois - o remedio estava
-   na aba Vendas e nao aqui (Somalium, 29/10). Casa pelo M.S. e, com o
-   M.S. em branco no cadastro, pelo nome: 3 dos 5 cadastros de Somalium
-   estavam sem M.S., e a venda deles nao casava com nada. */
-function chavesDaVenda(v) {
-  return [v.ms && 'ms:' + v.ms, v.descricao && 'nome:' + normalizar(v.descricao).trim()];
-}
-
-function vendidoSemSaldo(c, vendidos) {
-  if (temSaldo(c)) return false;
-  return chavesDaVenda(c).some((k) => k && vendidos.has(k));
-}
-
-function msVendidos() {
-  return new Set(lista('vendasRecentes').flatMap(chavesDaVenda).filter(Boolean));
 }
 
 function doGrupo(c, grupo) {
@@ -1066,8 +1048,7 @@ function pintarControlados() {
   alvo.innerHTML = '';
 
   const aviso = $('controlados-aviso');
-  const vendidos = msVendidos();
-  const comSaldo = listaControlados().filter((c) => temSaldo(c) || vendidoSemSaldo(c, vendidos));
+  const comSaldo = listaControlados().filter(temSaldo);
   const grupo = estado.grupoControlados;
   const todos = comSaldo.filter((c) => doGrupo(c, grupo));
   [['psicotropico', 'Controlados'], ['antimicrobiano', 'Antimicrobianos']].forEach(([g, nome]) => {
@@ -1108,8 +1089,7 @@ function pintarControlados() {
         c.ean && 'EAN ' + c.ean
       ],
       tarja: [classeDoControlado(c),
-        'saldo ' + saldo + (vendidoSemSaldo(c, vendidos) ? ' · vendido, sem saldo' : '')
-          + (c.inativo ? ' · cadastro inativo' : '')
+        'saldo ' + saldo + (c.inativo ? ' · cadastro inativo' : '')
           + (c.ms ? '' : ' · SEM M.S.: não vai ao SNGPC')],
       tarjaClasse: saldo > 0 ? 'sobra' : 'falta',
       detalhe: detalheDoControlado(c, saldo, outro)
@@ -2411,5 +2391,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasPorDia,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, vendidoSemSaldo, msVendidos, doGrupo, html };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo, pintarControlados, html };
 }

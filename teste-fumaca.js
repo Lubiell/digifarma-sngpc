@@ -655,20 +655,21 @@ if (exportado.temSaldo) {
   });
 }
 
-if (exportado.vendidoSemSaldo) {
-  conferir('controlado vendido e sem saldo continua na lista (Somalium, 29/10)', () => {
-    const vendidos = new Set(['ms:1234567890123']);
-    igual(exportado.vendidoSemSaldo({ ms: '1234567890123', saldo: 0, saldoProduto: 0 }, vendidos), true, 'vendido e zerado');
-    igual(exportado.vendidoSemSaldo({ ms: '1234567890123', saldo: -1 }, vendidos), true, 'vendido e negativo');
-    igual(exportado.vendidoSemSaldo({ ms: '1234567890123', saldo: 2 }, vendidos), false, 'com saldo já aparece por si');
-    igual(exportado.vendidoSemSaldo({ ms: '9999999999999', saldo: 0 }, vendidos), false, 'zerado sem venda fica fora');
-    igual(exportado.vendidoSemSaldo({ ms: '', descricao: '', saldo: 0 }, new Set(['', 'ms:', 'nome:'])), false, 'sem M.S. nem nome não casa');
-    // cadastro sem M.S. (3 dos 5 Somalium): casa pela descrição da venda
+if (exportado.pintarControlados) {
+  conferir('aba Controlados não mostra estoque zerado, nem o vendido hoje (pedido de 29/10)', () => {
+    const selo = documento.getElementById('selo-controlados');
     try {
-      exportado.estado.inventario = { vendasRecentes: [{ ms: '', descricao: 'SOMALIUM 3 MG C/ 20 CPR (B1)' }] };
-      const pelaVenda = exportado.msVendidos();
-      igual(exportado.vendidoSemSaldo({ ms: '', descricao: 'SOMALIUM 3 MG C/ 20 CPR (B1) ', saldo: 0 }, pelaVenda), true, 'sem M.S., casa pelo nome');
-      igual(exportado.vendidoSemSaldo({ ms: '', descricao: 'SOMALIUM 6 MG C/ 20 CPR (B1)', saldo: 0 }, pelaVenda), false, 'outro nome não casa');
+      exportado.estado.grupoControlados = 'psicotropico';
+      exportado.estado.buscaControlados = '';
+      exportado.estado.inventario = {
+        controlados: [
+          { codigo: '8181', descricao: 'ALPRAZOLAM 1 MG GERMED', ms: '1058308540082', psicotropico: true, saldo: 0, saldoProduto: 0 },
+          { codigo: '6925', descricao: 'ALPRAZOLAM 1MG', ms: '1181902900089', psicotropico: true, saldo: 31, saldoProduto: 31 }
+        ],
+        vendasRecentes: [{ ms: '1058308540082', descricao: 'ALPRAZOLAM 1 MG GERMED' }]
+      };
+      exportado.pintarControlados();
+      igual(selo.textContent, 1, 'só o que tem saldo entra na conta');
     } finally {
       exportado.estado.inventario = {};
     }
