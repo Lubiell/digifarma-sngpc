@@ -2515,6 +2515,48 @@ def principal():
                  and 'CLONAZEPAM' in saida, saida[-300:])
     finally:
         ag.consultar = guardado_consultar
+
+    # --- folha de comparação: vendas de hoje na conta e botão de PDF (29/10) ---
+    hoje_iso = datetime.date.today().isoformat()
+    dados_folha = {
+        'inventario': {'data': hoje_iso, 'colunaSaldo': 'SALDO'},
+        'envio': {'data': hoje_iso},
+        'itens': [{'ms': '1057305510176', 'descricao': 'ALPRAZOLAM 2MG', 'lote': 'A1',
+                   'validade': '', 'classe': 'psicotropico', 'saldoDigifarma': 5,
+                   'saldoSngpc': 7, 'movimentoDesdeEnvio': -2, 'esperadoSngpc': 5,
+                   'diferenca': 0, 'motivo': ''},
+                  {'ms': '1057305510176', 'descricao': 'ALPRAZOLAM 2MG', 'lote': 'A2',
+                   'validade': '', 'classe': 'psicotropico', 'saldoDigifarma': 3,
+                   'saldoSngpc': 4, 'diferenca': -1, 'motivo': 'quantidade'}],
+        'pendentes': {'vendas': [
+            {'id': 9001, 'data': hoje_iso, 'hora': '10:15', 'descricao': 'ALPRAZOLAM 2MG',
+             'ms': '1057305510176', 'lote': 'A1', 'quantidade': 2},
+            {'id': 8999, 'data': '2026-01-02', 'hora': '18:00', 'descricao': 'ALPRAZOLAM 2MG',
+             'ms': '1057305510176', 'lote': 'A1', 'quantidade': 1}]},
+    }
+    pasta_folha = tempfile.mkdtemp()
+    guardados_f = (ag.conectar_firebird, ag.fechar, ag.montar_inventario, ag.PASTA)
+    ag.conectar_firebird, ag.fechar = (lambda _cfg: None), (lambda _c: None)
+    ag.montar_inventario = lambda _c, _cfg: dados_folha
+    ag.PASTA = pasta_folha
+    try:
+        ag.texto_do_modo(ag.modo_comparacao, {})
+        with open(os.path.join(pasta_folha, 'comparacao_%s.html' % hoje_iso),
+                  encoding='utf-8') as f:
+            folha = f.read()
+    finally:
+        ag.conectar_firebird, ag.fechar, ag.montar_inventario, ag.PASTA = guardados_f
+        shutil.rmtree(pasta_folha, ignore_errors=True)
+    conferir('folha: diz quantas vendas de hoje já estão descontadas no Esperado',
+             '2 lançamento(s) desde o último envio, 1 de hoje (2 unidade(s) hoje)' in folha,
+             folha[:600])
+    conferir('folha: tem o botão de imprimir/salvar PDF, que some na impressão',
+             'onclick="window.print()"' in folha and 'class="naoimprime"' in folha
+             and '.naoimprime { display: none; }' in folha)
+    conferir('folha: a venda de hoje aparece no movimento, com hora',
+             '9001' in folha and '10:15' in folha)
+    conferir('folha: sem venda pendente, diz que a foto vale como está',
+             ag.resumo_vendas_do_dia([]).startswith('Nenhuma venda'))
     shutil.rmtree(pasta_ponteiros, ignore_errors=True)
 
     shutil.rmtree(pasta, ignore_errors=True)

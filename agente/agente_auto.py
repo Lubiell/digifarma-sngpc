@@ -8624,6 +8624,21 @@ FOLHA_ESTILO = """
 """
 
 
+def resumo_vendas_do_dia(movimentos):
+    """Uma linha no topo da folha: as vendas de hoje já estão na conta.
+    Quem confere de manhã precisa ver isso antes de marcar falta na
+    prateleira por uma caixa que saiu no balcão há uma hora."""
+    hoje = datetime.date.today().isoformat()
+    vendas = [m for m in movimentos if m.get('tipo') == 'vendas']
+    de_hoje = [m for m in vendas if texto(m.get('data'))[:10] == hoje]
+    if not vendas:
+        return 'Nenhuma venda desde o último envio: a foto do SNGPC vale como está.'
+    return ('Vendas já descontadas no Esperado: %d lançamento(s) desde o último '
+            'envio, %d de hoje (%g unidade(s) hoje).' % (
+                len(vendas), len(de_hoje),
+                sum(numero(m.get('quantidade')) for m in de_hoje)))
+
+
 def escapar_html(valor):
     return (texto(valor).replace('&', '&amp;').replace('<', '&lt;')
             .replace('>', '&gt;').replace('"', '&quot;'))
@@ -8932,9 +8947,13 @@ def modo_comparacao(config, filtro=''):
 <html lang="pt-BR"><head><meta charset="utf-8">
 <title>Conferência Digifarma × SNGPC</title>
 <style>%s</style></head><body>
+<p class="naoimprime"><button type="button" onclick="window.print()"
+style="font-size:15px;padding:10px 16px">Imprimir ou salvar em PDF</button>
+<span class="sub">No celular: Imprimir &rarr; Salvar como PDF.</span></p>
 <h1>Conferência Digifarma &times; SNGPC</h1>
 <p class="sub">Inventário do SNGPC de %s &middot; último envio em %s &middot;
 saldo por LOTES.%s &middot; gerado em %s</p>
+<p class="sub"><strong>%s</strong></p>
 %s
 %s
 <p class="aviso"><strong>Medicamento com lote negativo &mdash; o que fazer com a
@@ -8966,6 +8985,7 @@ de conferir a prateleira.</p>
         br(envio.get('data')) if envio.get('data') else '(sem data)',
         escapar_html(inventario.get('colunaSaldo', '?')),
         datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
+        escapar_html(resumo_vendas_do_dia(movimentos)),
         ('<p class="aviso"><strong>Fora desta folha:</strong> %s. '
          'Não são divergência de estoque e nenhuma contagem os resolve — '
          'são acerto no cadastro do Digifarma. Use --negativos e --tarefas.</p>'

@@ -1591,6 +1591,7 @@ const ACOES_SERVIDOR = [
 ];
 
 const RELATORIOS_SERVIDOR = [
+  ['comparacao', 'Comparação (folha e PDF)'],
   ['resumo', 'Resumo'], ['pendentes', 'Pendentes'], ['ponteiro', 'Ponteiro'],
   ['tarefas', 'Tarefas'], ['negativos', 'Negativos'], ['inventario', 'Inventario'],
   ['login_sngpc', 'Login SNGPC'], ['retorno_anvisa', 'Retorno ANVISA'],
@@ -1791,7 +1792,27 @@ function pintarRelatorio() {
   $('relatorio').textContent = r.texto;
   const copiar = $('copiar-relatorio');
   if (copiar) copiar.onclick = () => copiarTexto(r.texto);
+  pintarFolha(r);
   bloco.hidden = false;
+}
+
+/* A folha de conferencia chega pronta do agente, em HTML. Abre numa aba
+   propria, onde o botao do topo dela chama a impressao do aparelho - e e
+   ali que o celular oferece "Salvar como PDF". */
+function pintarFolha(r) {
+  const botao = $('folha-relatorio');
+  if (!botao) return;
+  botao.hidden = !(r.html || r.htmlGrande);
+  botao.onclick = () => {
+    if (!r.html) {
+      avisar('A folha ficou grande demais para o app. Filtre por um medicamento ou abra o arquivo comparacao_*.html no servidor.', 6000);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([r.html], { type: 'text/html;charset=utf-8' }));
+    const aba = window.open(url, '_blank');
+    if (!aba) avisar('O navegador bloqueou a nova aba. Permita pop-ups para este site e toque de novo.', 6000);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
 }
 
 /* No celular a caixa do relatorio corta o texto e rolar dentro dela para
