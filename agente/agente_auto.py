@@ -1530,19 +1530,41 @@ def escolher_campo(campos, regras):
 def classes_dos_produtos(conexao):
     """Quem é controlado, pelo mesmo critério das vendas.
 
-    Devolve (controlados, conhecidos). O segundo conjunto existe para separar
-    "produto marcado como não controlado" de "produto que não está no
-    cadastro" — descartar os dois é diferente, e só o primeiro é seguro."""
-    controlados, conhecidos = set(), set()
+    Devolve (controlados, conhecidos, por_ms). O segundo conjunto existe para
+    separar "produto marcado como não controlado" de "produto que não está no
+    cadastro" — descartar os dois é diferente, e só o primeiro é seguro. O
+    terceiro acha o produto pelo M.S. quando o inventário vem sem PRODUTO_ID."""
+    controlados, conhecidos, nomes, por_ms = set(), set(), {}, {}
     for linha in consultar(conexao, CONSULTAS['produtos_controlados']):
         produto = texto(linha.get('PRODUTO_ID'))
         if not produto:
             continue
         conhecidos.add(produto)
-        if (texto(linha.get('PSICOTROPICO')).upper() == 'S'
-                or texto(linha.get('ANTIMICROBIANO')).upper() == 'S'):
+        nomes[produto] = texto(linha.get('PRODUTO'))
+        controlado = (texto(linha.get('PSICOTROPICO')).upper() == 'S'
+                      or texto(linha.get('ANTIMICROBIANO')).upper() == 'S')
+        if controlado:
             controlados.add(produto)
-    return controlados, conhecidos
+        # pelo M.S. inteiro e pelos 9 primeiros dígitos (empresa + produto,
+        # sem a apresentação): o cadastro guarda uma caixa e o SNGPC traz
+        # outra do mesmo remédio. Havendo dois, vale o controlado.
+        ms = so_digitos(linha.get('REGISTRO_MS'))
+        for chave in {ms, ms[:9]} if len(ms) >= 9 else ():
+            if controlado or chave not in por_ms:
+                por_ms[chave] = produto
+    return controlados, conhecidos, por_ms, nomes
+
+
+def produto_da_linha(linha, campo_produto, campo_ms, por_ms):
+    """PRODUTO_ID da linha do inventário; vindo vazio, o do cadastro pelo M.S.
+    O Anvisa.exe regrava a INVENTARIO_SNGPC e pode deixar o PRODUTO_ID em
+    branco — em 29/10 as 372 linhas vieram sem, e todas caíam em "sem
+    produto no cadastro", inclusive os controlados que o cadastro tem."""
+    produto = texto(linha.get(campo_produto)) if campo_produto else ''
+    if produto or not campo_ms:
+        return produto
+    ms = so_digitos(linha.get(campo_ms))
+    return (por_ms.get(ms) or por_ms.get(ms[:9]) or '') if ms else ''
 
 
 CLASSES = ('psicotropico', 'antimicrobiano')
@@ -1716,17 +1738,19 @@ def ler_inventario_anvisa(conexao):
     # fica: pode ser produto que o SNGPC tem e a farmácia não, que é
     # divergência de verdade e precisa aparecer.
     campo_produto = next((c for c in campos if c.strip().upper() == 'PRODUTO_ID'), None)
+    usados = {chave: escolher_campo(campos, regras)
+              for chave, regras in CAMPOS_INVENTARIO.items()}
     descartados = 0
     if campo_produto:
         try:
-            controlados, conhecidos = classes_dos_produtos(conexao)
+            controlados, conhecidos, por_ms, _ = classes_dos_produtos(conexao)
         except Exception as e:
             registrar('Não consegui ler as marcações de controlado: %s' % e)
-            controlados, conhecidos = set(), set()
+            controlados, conhecidos, por_ms = set(), set(), {}
         if conhecidos:
             mantidas = []
             for linha in linhas:
-                produto = texto(linha.get(campo_produto))
+                produto = produto_da_linha(linha, campo_produto, usados['ms'], por_ms)
                 if produto in conhecidos and produto not in controlados:
                     descartados += 1
                     continue
@@ -1738,8 +1762,6 @@ def ler_inventario_anvisa(conexao):
     else:
         registrar('INVENTARIO_SNGPC não tem PRODUTO_ID: não dá para filtrar por '
                   'controlado, o inventário entra inteiro.')
-    usados = {chave: escolher_campo(campos, regras)
-              for chave, regras in CAMPOS_INVENTARIO.items()}
     campo_ms, campo_lote = usados['ms'], usados['lote']
     campo_qtd, campo_desc, campo_data = usados['quantidade'], usados['descricao'], usados['data']
 
@@ -9502,21 +9524,13 @@ def classificar_inventario_anvisa(conexao):
               for chave, regras in CAMPOS_INVENTARIO.items()}
     campo_produto = next((c for c in campos if c.strip().upper() == 'PRODUTO_ID'), None)
 
-    nomes, controlados, conhecidos = {}, set(), set()
+    nomes, controlados, conhecidos, por_ms = {}, set(), set(), {}
     if campo_produto:
-        for linha in consultar(conexao, CONSULTAS['produtos_controlados']):
-            produto = texto(linha.get('PRODUTO_ID'))
-            if not produto:
-                continue
-            conhecidos.add(produto)
-            nomes[produto] = texto(linha.get('PRODUTO'))
-            if (texto(linha.get('PSICOTROPICO')).upper() == 'S'
-                    or texto(linha.get('ANTIMICROBIANO')).upper() == 'S'):
-                controlados.add(produto)
+        controlados, conhecidos, por_ms, nomes = classes_dos_produtos(conexao)
 
     grupos = {'entram': [], 'fora': [], 'semCadastro': []}
     for linha in linhas:
-        produto = texto(linha.get(campo_produto)) if campo_produto else ''
+        produto = produto_da_linha(linha, campo_produto, usados['ms'], por_ms)
         if not campo_produto:
             nome = 'entram'
         elif produto in controlados:
@@ -9674,15 +9688,13 @@ def modo_inventario(config):
     def mostrar(titulo, grupo, explicacao):
         print('%s: %d' % (titulo, len(grupo)))
         print('  %s' % explicacao)
-        for produto, linha in grupo[:40]:
+        for produto, linha in grupo:
             print('     cód %-8s %-38s M.S. %-18s lote %-14s %g' % (
                 produto or '—',
                 (nomes.get(produto) or texto(linha.get(usados['descricao'])) or '—')[:38],
                 formatar_ms(linha.get(usados['ms'])),
                 texto(linha.get(usados['lote'])) or '—',
                 numero(linha.get(usados['quantidade']))))
-        if len(grupo) > 40:
-            print('     ... e mais %d' % (len(grupo) - 40))
         print('')
 
     mostrar('ENTRAM na comparação (controlados)', entram,

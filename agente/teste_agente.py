@@ -2469,6 +2469,52 @@ def principal():
                  ag.fila_desde_a_foto(None, None, 48720, 900, atuais) is None)
     finally:
         ag.consultar = guardado_consultar
+
+    # --- inventário com PRODUTO_ID em branco: casa pelo M.S. (29/10) ---
+    guardado_consultar = ag.consultar
+    inv_sem_id = [
+        # mesmo M.S. do cadastro
+        {'PRODUTO_ID': None, 'REGISTRO_MS': '1.0573.0551.017-6', 'NUM_LOTE': 'A',
+         'SALDO_LOTE': 7, 'DATA_INVENTARIO': '2026-10-29'},
+        # outra apresentação do mesmo remédio: casa pelos 9 primeiros dígitos
+        {'PRODUTO_ID': '', 'REGISTRO_MS': '1057305510999', 'NUM_LOTE': 'B',
+         'SALDO_LOTE': 1, 'DATA_INVENTARIO': '2026-10-29'},
+        {'PRODUTO_ID': None, 'REGISTRO_MS': '1023506630034', 'NUM_LOTE': 'C',
+         'SALDO_LOTE': 10, 'DATA_INVENTARIO': '2026-10-29'},
+        {'PRODUTO_ID': None, 'REGISTRO_MS': '1999999990001', 'NUM_LOTE': 'D',
+         'SALDO_LOTE': 2, 'DATA_INVENTARIO': '2026-10-29'},
+    ] + [{'PRODUTO_ID': None, 'REGISTRO_MS': '1888888880001', 'NUM_LOTE': 'L%d' % i,
+          'SALDO_LOTE': 1, 'DATA_INVENTARIO': '2026-10-29'} for i in range(50)]
+    cadastro = [
+        {'PRODUTO_ID': 10, 'PRODUTO': 'CLONAZEPAM', 'REGISTRO_MS': '1057305510176',
+         'PSICOTROPICO': 'S', 'ANTIMICROBIANO': 'N'},
+        {'PRODUTO_ID': 20, 'PRODUTO': 'DIPIRONA', 'REGISTRO_MS': '1023506630034',
+         'PSICOTROPICO': 'N', 'ANTIMICROBIANO': 'N'},
+    ]
+    ag.consultar = lambda _c, sql, _p=(): (
+        inv_sem_id if sql == ag.CONSULTAS['inventario_sngpc'] else cadastro)
+    try:
+        grupos = ag.classificar_inventario_anvisa(None)
+        conferir('inventário sem PRODUTO_ID: controlado casa pelo M.S., inteiro ou 9 dígitos',
+                 [p for p, _ in grupos['entram']] == ['10', '10'], grupos['entram'])
+        conferir('inventário sem PRODUTO_ID: não controlado do cadastro fica de fora',
+                 [p for p, _ in grupos['fora']] == ['20'], grupos['fora'])
+        conferir('inventário sem PRODUTO_ID: M.S. desconhecido segue sem cadastro',
+                 len(grupos['semCadastro']) == 51, len(grupos['semCadastro']))
+        saldo, _, _, descartados = ag.ler_inventario_anvisa(None)
+        conferir('comparação: o não controlado sai também quando casa pelo M.S.',
+                 descartados == 1 and ('1023506630034', 'C') not in saldo, saldo)
+        ag.conectar_firebird, guardado_conectar = (lambda _cfg: None), ag.conectar_firebird
+        ag.fechar, guardado_fechar = (lambda _c: None), ag.fechar
+        try:
+            saida = ag.texto_do_modo(ag.modo_inventario, {})
+        finally:
+            ag.conectar_firebird, ag.fechar = guardado_conectar, guardado_fechar
+        conferir('relatório do inventário lista todas as linhas, sem "e mais"',
+                 'e mais' not in saida and saida.count('lote L') == 50
+                 and 'CLONAZEPAM' in saida, saida[-300:])
+    finally:
+        ag.consultar = guardado_consultar
     shutil.rmtree(pasta_ponteiros, ignore_errors=True)
 
     shutil.rmtree(pasta, ignore_errors=True)
