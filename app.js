@@ -1033,13 +1033,20 @@ function temSaldo(c) {
 
 /* Vendido hoje ou ontem e sem saldo: a venda levou a ultima caixa, ou o
    saldo esta errado. Some da lista era o pior dos dois - o remedio estava
-   na aba Vendas e nao aqui (Somalium, 29/10). Casa pelo M.S. */
+   na aba Vendas e nao aqui (Somalium, 29/10). Casa pelo M.S. e, com o
+   M.S. em branco no cadastro, pelo nome: 3 dos 5 cadastros de Somalium
+   estavam sem M.S., e a venda deles nao casava com nada. */
+function chavesDaVenda(v) {
+  return [v.ms && 'ms:' + v.ms, v.descricao && 'nome:' + normalizar(v.descricao).trim()];
+}
+
 function vendidoSemSaldo(c, vendidos) {
-  return !temSaldo(c) && !!c.ms && vendidos.has(String(c.ms));
+  if (temSaldo(c)) return false;
+  return chavesDaVenda(c).some((k) => k && vendidos.has(k));
 }
 
 function msVendidos() {
-  return new Set(lista('vendasRecentes').map((v) => String(v.ms || '')).filter(Boolean));
+  return new Set(lista('vendasRecentes').flatMap(chavesDaVenda).filter(Boolean));
 }
 
 function doGrupo(c, grupo) {
@@ -1102,7 +1109,8 @@ function pintarControlados() {
       ],
       tarja: [classeDoControlado(c),
         'saldo ' + saldo + (vendidoSemSaldo(c, vendidos) ? ' · vendido, sem saldo' : '')
-          + (c.inativo ? ' · cadastro inativo' : '')],
+          + (c.inativo ? ' · cadastro inativo' : '')
+          + (c.ms ? '' : ' · SEM M.S.: não vai ao SNGPC')],
       tarjaClasse: saldo > 0 ? 'sobra' : 'falta',
       detalhe: detalheDoControlado(c, saldo, outro)
     }));
@@ -2403,5 +2411,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasPorDia,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, vendidoSemSaldo, doGrupo, html };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, vendidoSemSaldo, msVendidos, doGrupo, html };
 }
