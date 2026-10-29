@@ -69,7 +69,11 @@ RESPOSTAS = {
          'PROD_SALDO': 12, 'SOMA_LOTES': 10},
         {'PRODUTO_ID': 102, 'PRODUTO': 'AMOXICILINA 500MG', 'REGISTRO_MS': '1.4444.0001.002-3',
          'COD_BARRAS': '790', 'PSICOTROPICO': 'N', 'ANTIMICROBIANO': 'S',
-         'PROD_SALDO': 5, 'SOMA_LOTES': 5},
+         'PROD_SALDO': 5, 'SOMA_LOTES': 5, 'PROD_ATIVO': 'S'},
+        # cadastro inativo, mas vendido: entra nas vendas, entra aqui (Somalium, 29/10)
+        {'PRODUTO_ID': 104, 'PRODUTO': 'SOMALIUM 3MG', 'REGISTRO_MS': '1.0974.0213.001-1',
+         'COD_BARRAS': '792', 'PSICOTROPICO': 'S', 'ANTIMICROBIANO': 'N',
+         'PROD_SALDO': 0, 'SOMA_LOTES': 0, 'PROD_ATIVO': 'N'},
         {'PRODUTO_ID': 103, 'PRODUTO': 'DIPIRONA 500MG', 'REGISTRO_MS': '1.0000.0000.000-0',
          'COD_BARRAS': '791', 'PSICOTROPICO': 'N', 'ANTIMICROBIANO': 'N',
          'PROD_SALDO': 99, 'SOMA_LOTES': 99},
@@ -114,6 +118,11 @@ def conferir(titulo, condicao, detalhe=''):
     else:
         falhas.append(titulo)
         print('  FALHA ' + titulo + ('\n        ' + str(detalhe) if detalhe else ''))
+
+
+def psico_ativo(controlados):
+    """Cadastro sem PROD_ATIVO (NULL) ou com 'S' não vira inativo."""
+    return all(not c.get('inativo') for c in controlados if c['codigo'] in ('101', '102'))
 
 
 def numero_ok(item):
@@ -2294,7 +2303,10 @@ def principal():
     controlados = dados.get('controlados') or []
     codigos = [c['codigo'] for c in controlados]
     conferir('lista os controlados do cadastro, com saldo',
-             len(controlados) == 2, codigos)
+             len(controlados) == 3, codigos)
+    somalium = next((c for c in controlados if c['codigo'] == '104'), {})
+    conferir('cadastro inativo entra na lista, marcado como inativo',
+             somalium.get('inativo') is True and psico_ativo(controlados), somalium)
     conferir('produto sem marca nenhuma fica de fora',
              '103' not in codigos, codigos)
     psico = next((c for c in controlados if c['codigo'] == '101'), {})
