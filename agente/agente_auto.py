@@ -4409,6 +4409,15 @@ def publicar_vendas_recentes(config, db):
         # hora em hora para ver uma recusa é uma hora a mais de venda sendo
         # escriturada em cima de um envio que não passou
         retorno = retorno_sngpc(conexao)
+        # A lista de controlados saía só de hora em hora. Remédio de nota
+        # lançada hoje aparecia na aba Vendas e não na aba Controlados até a
+        # sincronização seguinte (Somalium, 29/10). O "mudou" abaixo
+        # segura a escrita quando nada mudou.
+        try:
+            controlados = listar_controlados(conexao, detectar_coluna_saldo(conexao, config))
+        except Exception as e:
+            registrar('Não consegui listar os controlados do cadastro: %s' % e)
+            controlados = None
     finally:
         fechar(conexao)
     # o arquivo de retorno chega quando a ANVISA responde, a qualquer hora:
@@ -4431,6 +4440,7 @@ def publicar_vendas_recentes(config, db):
                            ('retornoSngpc', retorno),
                            ('retornoArquivos', retorno_arquivos),
                            ('vendasSemReceita', sem_receita),
+                           ('controlados', controlados),
                            ('diagnostico', diagnostico)):
         if valor is None:      # a consulta falhou: não apaga o que está lá
             continue

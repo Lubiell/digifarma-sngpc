@@ -655,6 +655,17 @@ if (exportado.temSaldo) {
   });
 }
 
+if (exportado.vendidoSemSaldo) {
+  conferir('controlado vendido e sem saldo continua na lista (Somalium, 29/10)', () => {
+    const vendidos = new Set(['1234567890123']);
+    igual(exportado.vendidoSemSaldo({ ms: '1234567890123', saldo: 0, saldoProduto: 0 }, vendidos), true, 'vendido e zerado');
+    igual(exportado.vendidoSemSaldo({ ms: '1234567890123', saldo: -1 }, vendidos), true, 'vendido e negativo');
+    igual(exportado.vendidoSemSaldo({ ms: '1234567890123', saldo: 2 }, vendidos), false, 'com saldo já aparece por si');
+    igual(exportado.vendidoSemSaldo({ ms: '9999999999999', saldo: 0 }, vendidos), false, 'zerado sem venda fica fora');
+    igual(exportado.vendidoSemSaldo({ ms: '', saldo: 0 }, new Set([''])), false, 'sem M.S. não casa');
+  });
+}
+
 if (exportado.doGrupo) {
   conferir('controlados: psicotrópico e antimicrobiano em listas separadas', () => {
     const ambos = { psicotropico: true, antimicrobiano: true };
