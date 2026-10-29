@@ -424,7 +424,8 @@ def principal():
 
     nomes = ('conectar_firebird', 'fechar', 'vendas_recentes', 'vendas_sem_receita_pendentes',
              'snapshot_diagnostico', 'entradas_recentes', 'retorno_sngpc', 'mudou',
-             'vendas_publicas', 'notas_publicas', 'atualizar_envios_publicos', 'registrar')
+             'vendas_publicas', 'notas_publicas', 'atualizar_envios_publicos', 'registrar',
+             'listar_controlados', 'detectar_coluna_saldo')
     guardadas = {n: getattr(ag, n) for n in nomes}
     try:
         ag.conectar_firebird = lambda _c: None
@@ -439,6 +440,8 @@ def principal():
         ag.notas_publicas = lambda e: e
         ag.atualizar_envios_publicos = lambda _db: False
         ag.registrar = lambda _t: None
+        ag.detectar_coluna_saldo = lambda _c, _cfg=None: {'coluna': 'SALDO', 'modo': 'saldo', 'campos': ()}
+        ag.listar_controlados = lambda _c, _info: [{'codigo': '7', 'descricao': 'SOMALIUM 3MG'}]
         ag.publicar_vendas_recentes({}, DbQuadro())
     finally:
         for n, f in guardadas.items():
@@ -447,6 +450,8 @@ def principal():
              'farmacia/inventario/vistoEm' in gravados, gravados)
     conferir('as vendas recentes continuam sendo publicadas',
              'farmacia/inventario/vendasRecentes' in gravados, gravados)
+    conferir('a lista de controlados sobe junto com as vendas, sem esperar a hora cheia',
+             'farmacia/inventario/controlados' in gravados, gravados)
 
     # --- busca nos XML: acha entrada por M.S., lote escrito diferente e outro M.S. ---
     pasta_busca = tempfile.mkdtemp()
