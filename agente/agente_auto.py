@@ -6839,6 +6839,7 @@ ARQUIVO_CACHE_API = os.path.join(PASTA, 'api_sngpc_cache.json')
 API_CONSULTA_MINUTOS = 50
 API_CONSULTAS_POR_VEZ = 25
 API_RECUO_HASH_HORAS = 24      # hash sem resposta válida espera um dia
+API_CACHE_GUARDA = 60          # envios fora dos alvos guardados no cache (o app recebe os 30 mais novos)
 API_RECUO_LOGIN_HORAS = 6      # login recusado: senha errada repetida trava a conta
 API_FOTO_JANELA_DIAS = 7       # envio de período mais antigo que isso não mexe no Saldo
 SITUACOES_FINAIS = ('validado', 'com_erro')
@@ -7046,8 +7047,18 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
                 alvos[hashes_do_arquivo(caminho)[formula]] = chave
             except (OSError, KeyError):
                 continue
-    # o cache guarda só o que ainda é alvo: sem isto ele cresceria um envio por dia
-    envios = {h: v for h, v in (cache.get('envios') or {}).items() if h in alvos}
+    # Envio já consultado continua no cache mesmo depois de sair dos alvos.
+    # 04/11: o Digifarma troca o HASH_ULT_ENVIO a cada envio (e o XML mais
+    # velho sai dos 20 arquivados); o envio de ontem, já validado, sumia do
+    # cache, do apiSngpc e da aba Aceites, que voltava a dizer "Pendente".
+    # O limite é por quantidade, os mais recentes, para não crescer sem fim.
+    guardados = {h: v for h, v in (cache.get('envios') or {}).items() if isinstance(v, dict)}
+    fora = sorted((h for h in guardados if h not in alvos),
+                  key=lambda h: (guardados[h].get('de') or '', guardados[h].get('transmissao') or ''),
+                  reverse=True)
+    for h in fora[:API_CACHE_GUARDA]:
+        alvos[h] = texto(guardados[h].get('arquivo'))
+    envios = {h: v for h, v in guardados.items() if h in alvos}
     cache['envios'] = envios
     falhas = {h: v for h, v in (cache.get('_falhas') or {}).items() if h in alvos}
     cache['_falhas'] = falhas

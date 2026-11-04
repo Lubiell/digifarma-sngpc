@@ -1908,6 +1908,36 @@ def principal():
                'validacao': '2026-10-15T20:00:00'}]
     conferir('Saldo: período antigo revalidado depois da foto não mexe na conta',
              ag.foto_sem_envio_validado('2026-10-15', foto_hora, antigo) is None)
+
+    # 04/11: o Digifarma troca o HASH_ULT_ENVIO a cada envio; o envio de
+    # ontem, já validado, saía do cache e o aceite voltava a "Pendente"
+    cache_antes, cred_antes = ag.ARQUIVO_CACHE_API, ag.credenciais_sngpc
+    ag.ARQUIVO_CACHE_API = os.path.join(pasta_api, 'cache_troca.json')
+    hash_ontem, hash_hoje = 'A' * 32, 'B' * 32
+    hash_atual = [hash_ontem]
+    ag.credenciais_sngpc = lambda conexao: (
+        {'email': EMAIL, 'senha': SENHA, 'cnpj': CNPJ, 'hashes': [('HASH_ULT_ENVIO', hash_atual[0])]},
+        ['HASH_ULT_ENVIO'])
+    respostas_api.clear()
+    respostas_api[hash_ontem] = resposta_real('20/10/2026 00:00:00', '20/10/2026 00:00:00',
+                                              '21/10/2026 07:00:00', '21/10/2026 08:00:00')
+    respostas_api[hash_hoje] = resposta_real('21/10/2026 00:00:00', '21/10/2026 00:00:00',
+                                             '22/10/2026 07:00:00', '22/10/2026 08:00:00')
+    sem_xml = dict(ag.CONFIG_PADRAO, pasta_xml=os.path.join(pasta_api, 'nao_existe'))
+    try:
+        ag.atualizar_api_sngpc(None, sem_xml, chamar=chamar_auto, agora=agora_api)
+        hash_atual[0] = hash_hoje
+        chamadas.clear()
+        ag.atualizar_api_sngpc(None, sem_xml, chamar=chamar_auto,
+                               agora=agora_api + datetime.timedelta(days=1))
+        trocado = ag.envios_da_api_em_cache()['envios']
+        conferir('API: envio validado continua publicado depois que o Digifarma troca o hash',
+                 [(e['de'], e['situacao']) for e in trocado]
+                 == [('2026-10-20', 'validado'), ('2026-10-21', 'validado')], trocado)
+        conferir('API: o envio que saiu dos alvos não é consultado de novo',
+                 not any(hash_ontem in u for u in chamadas), chamadas)
+    finally:
+        ag.ARQUIVO_CACHE_API, ag.credenciais_sngpc = cache_antes, cred_antes
     shutil.rmtree(pasta_api, ignore_errors=True)
 
     # conta do lote pelos XML: o caso do BQ37M006 (13/10)

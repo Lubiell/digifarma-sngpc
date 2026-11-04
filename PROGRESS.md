@@ -94,6 +94,12 @@ vez no servidor antes do primeiro módulo (`consultas.py`).
   que é 'vendas') e dizia "nada atrasado"; agora lista e aponta a venda que
   o último XML já levou, com o dia em que o próximo envio tem de começar.
   Envio de 19/10 (17 e 18/10): conferir que o período começa em 17/10.
+- 04/11: aceites que a API já tinha marcado voltavam a "Pendente": o cache
+  do agente só guardava os hashes ainda consultáveis (o último do Digifarma,
+  os colados e os 20 XML/zip mais novos); quando o hash mudava, o envio de
+  antes saía do cache e do apiSngpc. Agora o envio já consultado fica (até
+  60 fora dos alvos). Os que sumiram antes disto voltam colando de novo o
+  Relatório Status de Transmissão na aba Aceites.
 - 16/10: aviso no celular quando um envio é marcado como aceito/recusado no
   app (fila compara farmacia/aceites com farmacia/avisado/aceites pelo
   carimbo "em") e quando o arquivo de retorno traz resposta de verdade
