@@ -121,6 +121,12 @@ vez no servidor antes do primeiro módulo (`consultas.py`).
   automático, vigia `PonteCotacao_Vigia` que religa a ponte em até 5 min,
   gatilho de boot no AgenteSNGPC/Fila e Firebird automático. Falta: rodar
   no servidor; na BIOS, "Restore on AC Power Loss" = Power On.
+- 06/11: rodado no servidor (conta DrogariaHumanae, sem senha): energia,
+  Update, login automático e tarefas do agente OK; o vigia ficou para trás
+  (a ponte apareceu duas vezes, mesmo `ponte_digifarma.ps1`). Ninguém volta
+  ao servidor: o agente agora cria o vigia sozinho (`garantir_vigia_ponte`,
+  uma vez por dia, `SEMPRE_LIGADO.bat /vigia`). Conferir no log do agente a
+  linha "Vigia da ponte:". BIOS continua pendente: só no teclado.
 - 10/10: LIGAR_FIREWALL.bat ligou o firewall (estava desligado nos 3 perfis)
   com a rede local 192.168.100.0/24 e as duas placas TAP liberadas; o PC é
   cliente da VPN (faixa 12.4.29.0/24). Em seguida o ACESSO_REMOTO.bat ligou

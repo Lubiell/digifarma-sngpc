@@ -23,6 +23,10 @@ REM  Se ele nao achar a ponte sozinho, passe o arquivo dela:
 REM     SEMPRE_LIGADO.bat "C:\caminho\da\ponte.bat"
 REM
 REM  Para desfazer, os comandos saem no fim da tela.
+REM
+REM  SEMPRE_LIGADO.bat /vigia  faz so o item 4, sem perguntar nada e sem
+REM  pause: e como o agente cria o vigia sozinho, de longe. Na duvida, nao
+REM  cria e diz por que.
 
 echo ============================================================
 echo  SEMPRE LIGADO - ponte da cotacao e servidor das receitas
@@ -34,6 +38,9 @@ echo.
 set "FARM_ARQ=%~f0"
 set "FARM_PASTA=%~dp0"
 set "FARM_PONTE=%~1"
+set "FARM_SO_VIGIA="
+if /i "%~1"=="/vigia" set "FARM_SO_VIGIA=1"
+if /i "%~1"=="/vigia" set "FARM_PONTE="
 
 where powershell >nul 2>&1
 if errorlevel 1 goto SEM_POWERSHELL
@@ -58,7 +65,9 @@ goto FIM
 :FIM
 echo.
 echo ============================================================
+if defined FARM_SO_VIGIA goto SEM_PAUSA
 pause
+:SEM_PAUSA
 endlocal
 goto :eof
 
@@ -72,11 +81,16 @@ $log = New-Object System.Collections.Generic.List[string]
 $falta = New-Object System.Collections.Generic.List[string]
 $CASA = Join-Path $env:ProgramData 'SempreLigado'
 $VIGIA = 'PonteCotacao_Vigia'
+# /vigia: so o item 4, sem nenhuma pergunta - roda pelo agente, como SYSTEM
+$soVigia = [bool]$env:FARM_SO_VIGIA
 
 function Dizer([string]$t) { Write-Host $t; $log.Add($t) }
 function Secao([string]$t) { Dizer ''; Dizer ('-' * 60); Dizer (' ' + $t); Dizer ('-' * 60) }
 
 function Gravar {
+    # pelo agente, uma tentativa por dia: ele guarda a saida, e um
+    # relatorio por dia na pasta do agente so acumularia
+    if ($soVigia) { return }
     $nome = 'sempre_ligado_' + (Get-Date -Format 'yyyyMMdd_HHmm') + '.txt'
     $arq = Join-Path $env:FARM_PASTA $nome
     try { [IO.File]::WriteAllLines($arq, $log) }
@@ -95,6 +109,13 @@ if (-not $admin) {
 # A conta que esta no teclado deste PC, nao a conta do administrador
 # que abriu esta janela: e nela que a ponte roda.
 $usuario = (Get-CimInstance Win32_ComputerSystem).UserName
+if (-not $usuario -and $soVigia) {
+    # pelo agente, como SYSTEM: sem ninguem na conta, o vigia ficaria
+    # preso a conta do sistema, que nao abre ponte nenhuma
+    Dizer '  PULEI o vigia: ninguem esta com a conta aberta neste PC agora.'
+    Gravar
+    exit 0
+}
 if (-not $usuario) { $usuario = "$env:USERDOMAIN\$env:USERNAME" }
 $partes = $usuario.Split('\', 2)
 if ($partes.Count -eq 2) { $dominio = $partes[0]; $nome = $partes[1] } else { $dominio = $env:COMPUTERNAME; $nome = $usuario }
@@ -171,6 +192,7 @@ public static class SempreLigado {
 }
 '@
 
+if (-not $soVigia) {
 # ------------------------------------------------------------------
 Secao '1. Energia: nao suspender, nao hibernar'
 powercfg /change standby-timeout-ac 0 | Out-Null
@@ -238,6 +260,7 @@ if ($erro -ne 0 -and -not $semSenha) {
     if (Test-Path $pl) { Set-ItemProperty -Path $pl -Name 'DevicePasswordLessBuildVersion' -Value 0 -Type DWord }
 }
 $senha = $null
+}
 
 # ------------------------------------------------------------------
 Secao '4. A ponte da cotacao: achar e vigiar'
@@ -374,7 +397,8 @@ elseif ($achados.Count -gt 1) {
         Dizer ("   " + ($i + 1) + " - " + $achados[$i].comando)
         Dizer ("       " + $achados[$i].onde)
     }
-    $n = Read-Host '  Numero do certo (Enter pula)'
+    $n = ''
+    if (-not $soVigia) { $n = Read-Host '  Numero do certo (Enter pula)' }
     if ($n -match '^\d+$' -and [int]$n -ge 1 -and [int]$n -le $achados.Count) { $escolha = $achados[[int]$n - 1] }
     else { $pulou = $true }
 }
@@ -407,7 +431,14 @@ if (-not $escolha -and $pulou) {
         if ($viva.Count -gt 0) { Dizer '  ok: a ponte esta rodando agora e eu reconheco ela' }
         else {
             Dizer "  Nao vejo nada rodando com $marca agora."
-            $r = Read-Host '  A ponte esta ABERTA agora neste PC? Digite SIM se esta, Enter se nao'
+            if ($soVigia) {
+                # sem ninguem para dizer se ela esta aberta: nao arrisco abrir
+                # uma segunda. O agente tenta de novo amanha.
+                Dizer '  PULEI o vigia: sem ver a ponte rodando, nao sei se a reconheco.'
+                $falta.Add('Vigia da ponte: a ponte nao estava rodando agora; tento de novo depois.')
+                $seguir = $false
+            }
+            if ($seguir) { $r = Read-Host '  A ponte esta ABERTA agora neste PC? Digite SIM se esta, Enter se nao'
             if ($r -match '^\s*sim\s*$') {
                 # aberta e eu nao reconheco: o vigia abriria outra a cada 5 min
                 Dizer '  PULEI o vigia: ele nao reconheceria a ponte e abriria outra.'
@@ -415,7 +446,17 @@ if (-not $escolha -and $pulou) {
                 Dizer '     SEMPRE_LIGADO.bat "C:\caminho\da\ponte.py"'
                 $falta.Add('Vigia da ponte: rodar de novo com o arquivo que fica rodando - o informado so abre a ponte e sai.')
                 $seguir = $false
-            }
+            } }
+        }
+    }
+    # pelo agente: o vigia e da conta que roda a ponte. Quem esta no teclado
+    # agora pode ser outra - um tecnico - e o vigia nasceria preso a ela.
+    if ($soVigia -and $marca -and $seguir -and $viva.Count -gt 0) {
+        $dono = Invoke-CimMethod -InputObject $viva[0] -MethodName GetOwner -ErrorAction SilentlyContinue
+        if (-not $dono -or $dono.User -ne $nome) {
+            Dizer ("  PULEI o vigia: a ponte roda na conta " + $dono.User + ", e quem esta no teclado e " + $nome + ".")
+            $falta.Add('Vigia da ponte: a conta no teclado nao e a da ponte; tento de novo depois.')
+            $seguir = $false
         }
     }
     if ($marca -and $seguir) {
@@ -470,6 +511,7 @@ Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c start "" ' + $cfg.comando) 
     }
 }
 
+if (-not $soVigia) {
 # ------------------------------------------------------------------
 Secao '5. Servidor das receitas: agente SNGPC e Firebird'
 # As tarefas rodam como SYSTEM: nao dependem de ninguem entrar. Falta
@@ -522,6 +564,7 @@ foreach ($f in $fbs) {
         Start-Service -Name $f.Name -ErrorAction SilentlyContinue
         Dizer "  liguei $($f.DisplayName), que estava parado"
     }
+}
 }
 
 # ------------------------------------------------------------------
