@@ -378,6 +378,35 @@ if (exportado.pintarComando && exportado.pintarRelatorio) {
   });
 }
 
+if (exportado.pintarRelatorio) {
+  conferir('comparação: botão abre a folha numa aba, para imprimir ou salvar em PDF', () => {
+    const botao = documento.getElementById('folha-relatorio');
+    const abertos = [];
+    const originais = [contexto.URL, contexto.Blob, contexto.open];
+    contexto.Blob = function (partes, opcoes) { this.partes = partes; this.type = opcoes.type; };
+    contexto.URL = { createObjectURL: (b) => { abertos.push(b); return 'blob:folha'; }, revokeObjectURL() {} };
+    contexto.open = (url) => { abertos.push(url); return {}; };
+    try {
+      exportado.estado.relatorioPedido = 'comparacao';
+      exportado.estado.relatorios = { comparacao: { texto: '12 lote(s) na folha', em: '2026-10-29T10:00:00',
+        html: '<html><button onclick="window.print()">Imprimir</button></html>' } };
+      exportado.pintarRelatorio();
+      if (botao.hidden) throw new Error('botão da folha escondido com a folha pronta');
+      botao.onclick();
+      if (!abertos[0] || !String(abertos[0].partes[0]).includes('window.print()')) throw new Error('folha não foi aberta');
+      igual(abertos[1], 'blob:folha', 'aba aberta com a folha');
+
+      exportado.estado.relatorios = { comparacao: { texto: 'resumo', em: '2026-10-29T10:00:00' } };
+      exportado.pintarRelatorio();
+      if (!botao.hidden) throw new Error('sem folha, o botão devia sumir');
+    } finally {
+      [contexto.URL, contexto.Blob, contexto.open] = originais;
+      exportado.estado.relatorioPedido = null;
+      exportado.estado.relatorios = {};
+    }
+  });
+}
+
 if (exportado.retornoSemResposta) {
   conferir('retorno vazio do Digifarma (datas 30/12/1899) é reconhecido', () => {
     const vazio = 'HASH: \nDATA TRANSMISSÃO: 30/12/1899\nDATA VALIDAÇÃO: 30/12/1899\n'
@@ -531,6 +560,23 @@ if (exportado.detalheDoSaldo) {
       const restoDoAgente = textos({ codigo: '67751', ms: '1057304040109', lote: '2515965', saldoDigifarma: 1,
         saldoSngpc: 0, diferenca: 1, motivo: 'resto_no_lote', saldoProduto: 0 });
       if (!restoDoAgente.includes('Na tela do balcão o produto está zerado')) throw new Error('resto_no_lote do agente: ' + restoDoAgente);
+      // 06/11, bupropiona: ANVISA 10 + 4 = 14 = balcão; a tabela de lotes soma 13
+      exportado.estado.inventario = { controlados: [{ codigo: '6466', saldo: 13, saldoProduto: 14 }] };
+      const bupropiona = textos({ codigo: '6466', ms: '1677305850050', lote: '507408', saldoDigifarma: 9,
+        saldoSngpc: 5, movimentoDesdeEnvio: 5, esperadoSngpc: 10, diferenca: -1, motivo: 'quantidade',
+        saldoDigifarmaMs: 13, classe: 'psicotropico',
+        lotesDoMs: [{ lote: '507408', digifarma: 9, sngpc: 5, pendente: 5 },
+          { lote: '5J2215', digifarma: 4, sngpc: 5, pendente: -1 },
+          { lote: '4L6842', digifarma: 0, sngpc: 0, pendente: 0 }] });
+      if (!bupropiona.includes('A ANVISA está certa: o total dela hoje (14)')) throw new Error('balcão = ANVISA: ' + bupropiona);
+      if (!bupropiona.includes('soma 13, 1 a menos')) throw new Error('sem a falta na tabela de lotes: ' + bupropiona);
+      if (!bupropiona.includes('SNGPC 5 (esperado hoje 4)')) throw new Error('irmão sem o esperado: ' + bupropiona);
+      // agente antigo (sem pendente nos irmãos): não dá para somar, segue o motivo
+      const antigo = textos({ codigo: '6466', ms: '1677305850050', lote: '507408', saldoDigifarma: 9,
+        saldoSngpc: 5, movimentoDesdeEnvio: 5, esperadoSngpc: 10, diferenca: -1, motivo: 'quantidade',
+        saldoDigifarmaMs: 13,
+        lotesDoMs: [{ lote: '507408', digifarma: 9, sngpc: 5 }, { lote: '5J2215', digifarma: 4, sngpc: 5 }] });
+      if (antigo.includes('A ANVISA está certa')) throw new Error('somou sem o pendente: ' + antigo);
     } finally {
       exportado.estado.inventario = inv;
     }
@@ -623,6 +669,27 @@ if (exportado.temSaldo) {
     igual(exportado.temSaldo({ saldo: 0, saldoProduto: 0 }), false, 'zerado');
     igual(exportado.temSaldo({}), false, 'sem saldo informado');
     igual(exportado.temSaldo({ saldo: -1 }), false, 'negativo');
+  });
+}
+
+if (exportado.pintarControlados) {
+  conferir('aba Controlados não mostra estoque zerado, nem o vendido hoje (pedido de 29/10)', () => {
+    const selo = documento.getElementById('selo-controlados');
+    try {
+      exportado.estado.grupoControlados = 'psicotropico';
+      exportado.estado.buscaControlados = '';
+      exportado.estado.inventario = {
+        controlados: [
+          { codigo: '8181', descricao: 'ALPRAZOLAM 1 MG GERMED', ms: '1058308540082', psicotropico: true, saldo: 0, saldoProduto: 0 },
+          { codigo: '6925', descricao: 'ALPRAZOLAM 1MG', ms: '1181902900089', psicotropico: true, saldo: 31, saldoProduto: 31 }
+        ],
+        vendasRecentes: [{ ms: '1058308540082', descricao: 'ALPRAZOLAM 1 MG GERMED' }]
+      };
+      exportado.pintarControlados();
+      igual(selo.textContent, 1, 'só o que tem saldo entra na conta');
+    } finally {
+      exportado.estado.inventario = {};
+    }
   });
 }
 

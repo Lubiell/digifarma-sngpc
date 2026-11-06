@@ -437,12 +437,11 @@ CONSULTAS = {
     # os dois evita decidir desmarcar olhando o número errado.
     "controlados_em_estoque": """
         SELECT P.PRODUTO_ID, P.PRODUTO, P.REGISTRO_MS, P.COD_BARRAS,
-               P.PSICOTROPICO, P.ANTIMICROBIANO, P.PROD_SALDO,
+               P.PSICOTROPICO, P.ANTIMICROBIANO, P.PROD_SALDO, P.PROD_ATIVO,
                (SELECT SUM({EXPRESSAO}) FROM LOTES L
                  WHERE L.PRODUTO_ID = P.PRODUTO_ID) AS SOMA_LOTES
           FROM PRODUTOS P
          WHERE {CONTROLADO}
-           AND ((P.PROD_ATIVO = 'S') OR (P.PROD_ATIVO IS NULL))
          ORDER BY P.PRODUTO
     """,
 
@@ -1530,19 +1529,41 @@ def escolher_campo(campos, regras):
 def classes_dos_produtos(conexao):
     """Quem é controlado, pelo mesmo critério das vendas.
 
-    Devolve (controlados, conhecidos). O segundo conjunto existe para separar
-    "produto marcado como não controlado" de "produto que não está no
-    cadastro" — descartar os dois é diferente, e só o primeiro é seguro."""
-    controlados, conhecidos = set(), set()
+    Devolve (controlados, conhecidos, por_ms). O segundo conjunto existe para
+    separar "produto marcado como não controlado" de "produto que não está no
+    cadastro" — descartar os dois é diferente, e só o primeiro é seguro. O
+    terceiro acha o produto pelo M.S. quando o inventário vem sem PRODUTO_ID."""
+    controlados, conhecidos, nomes, por_ms = set(), set(), {}, {}
     for linha in consultar(conexao, CONSULTAS['produtos_controlados']):
         produto = texto(linha.get('PRODUTO_ID'))
         if not produto:
             continue
         conhecidos.add(produto)
-        if (texto(linha.get('PSICOTROPICO')).upper() == 'S'
-                or texto(linha.get('ANTIMICROBIANO')).upper() == 'S'):
+        nomes[produto] = texto(linha.get('PRODUTO'))
+        controlado = (texto(linha.get('PSICOTROPICO')).upper() == 'S'
+                      or texto(linha.get('ANTIMICROBIANO')).upper() == 'S')
+        if controlado:
             controlados.add(produto)
-    return controlados, conhecidos
+        # pelo M.S. inteiro e pelos 9 primeiros dígitos (empresa + produto,
+        # sem a apresentação): o cadastro guarda uma caixa e o SNGPC traz
+        # outra do mesmo remédio. Havendo dois, vale o controlado.
+        ms = so_digitos(linha.get('REGISTRO_MS'))
+        for chave in {ms, ms[:9]} if len(ms) >= 9 else ():
+            if controlado or chave not in por_ms:
+                por_ms[chave] = produto
+    return controlados, conhecidos, por_ms, nomes
+
+
+def produto_da_linha(linha, campo_produto, campo_ms, por_ms):
+    """PRODUTO_ID da linha do inventário; vindo vazio, o do cadastro pelo M.S.
+    O Anvisa.exe regrava a INVENTARIO_SNGPC e pode deixar o PRODUTO_ID em
+    branco — em 29/10 as 372 linhas vieram sem, e todas caíam em "sem
+    produto no cadastro", inclusive os controlados que o cadastro tem."""
+    produto = texto(linha.get(campo_produto)) if campo_produto else ''
+    if produto or not campo_ms:
+        return produto
+    ms = so_digitos(linha.get(campo_ms))
+    return (por_ms.get(ms) or por_ms.get(ms[:9]) or '') if ms else ''
 
 
 CLASSES = ('psicotropico', 'antimicrobiano')
@@ -1716,17 +1737,19 @@ def ler_inventario_anvisa(conexao):
     # fica: pode ser produto que o SNGPC tem e a farmácia não, que é
     # divergência de verdade e precisa aparecer.
     campo_produto = next((c for c in campos if c.strip().upper() == 'PRODUTO_ID'), None)
+    usados = {chave: escolher_campo(campos, regras)
+              for chave, regras in CAMPOS_INVENTARIO.items()}
     descartados = 0
     if campo_produto:
         try:
-            controlados, conhecidos = classes_dos_produtos(conexao)
+            controlados, conhecidos, por_ms, _ = classes_dos_produtos(conexao)
         except Exception as e:
             registrar('Não consegui ler as marcações de controlado: %s' % e)
-            controlados, conhecidos = set(), set()
+            controlados, conhecidos, por_ms = set(), set(), {}
         if conhecidos:
             mantidas = []
             for linha in linhas:
-                produto = texto(linha.get(campo_produto))
+                produto = produto_da_linha(linha, campo_produto, usados['ms'], por_ms)
                 if produto in conhecidos and produto not in controlados:
                     descartados += 1
                     continue
@@ -1738,8 +1761,6 @@ def ler_inventario_anvisa(conexao):
     else:
         registrar('INVENTARIO_SNGPC não tem PRODUTO_ID: não dá para filtrar por '
                   'controlado, o inventário entra inteiro.')
-    usados = {chave: escolher_campo(campos, regras)
-              for chave, regras in CAMPOS_INVENTARIO.items()}
     campo_ms, campo_lote = usados['ms'], usados['lote']
     campo_qtd, campo_desc, campo_data = usados['quantidade'], usados['descricao'], usados['data']
 
@@ -2671,6 +2692,10 @@ def listar_controlados(conexao, info):
             'antimicrobiano': anti,
             'saldo': round(numero(linha.get('SOMA_LOTES')), 3),
             'saldoProduto': round(numero(linha.get('PROD_SALDO')), 3),
+            # Cadastro inativo entrava nas vendas e não nesta lista: o
+            # Somalium vendido em 29/10 não aparecia aqui. Fica na lista,
+            # marcado, porque a venda dele vai para o SNGPC do mesmo jeito.
+            'inativo': texto(linha.get('PROD_ATIVO')).strip().upper() not in ('', 'S'),
         })
     return itens
 
@@ -2986,6 +3011,13 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
             irmao = lotes_por_ms.setdefault(ms_lote, {}).setdefault(
                 num_lote, {'lote': num_lote, 'digifarma': 0.0, 'sngpc': 0.0})
             irmao['sngpc'] = round(quantidade, 3)
+        # o movimento que ainda falta subir, por lote irmão: sem ele a tela
+        # mostra a foto (5) de um lote que hoje está em 4 na ANVISA e não
+        # consegue ver que o total da ANVISA bate com o saldo do balcão
+        for ms_lote, lotes in lotes_por_ms.items():
+            for num_lote, irmao in lotes.items():
+                # sempre presente (mesmo 0): é como a tela sabe que pode somar
+                irmao['pendente'] = round(movimento_pendente.get((ms_lote, num_lote), 0.0), 3)
 
         ja_na_anvisa = 0
         lotes_ja_na_anvisa = []
@@ -4387,6 +4419,15 @@ def publicar_vendas_recentes(config, db):
         # hora em hora para ver uma recusa é uma hora a mais de venda sendo
         # escriturada em cima de um envio que não passou
         retorno = retorno_sngpc(conexao)
+        # A lista de controlados saía só de hora em hora. Remédio de nota
+        # lançada hoje aparecia na aba Vendas e não na aba Controlados até a
+        # sincronização seguinte (Somalium, 29/10). O "mudou" abaixo
+        # segura a escrita quando nada mudou.
+        try:
+            controlados = listar_controlados(conexao, detectar_coluna_saldo(conexao, config))
+        except Exception as e:
+            registrar('Não consegui listar os controlados do cadastro: %s' % e)
+            controlados = None
     finally:
         fechar(conexao)
     # o arquivo de retorno chega quando a ANVISA responde, a qualquer hora:
@@ -4409,6 +4450,7 @@ def publicar_vendas_recentes(config, db):
                            ('retornoSngpc', retorno),
                            ('retornoArquivos', retorno_arquivos),
                            ('vendasSemReceita', sem_receita),
+                           ('controlados', controlados),
                            ('diagnostico', diagnostico)):
         if valor is None:      # a consulta falhou: não apaga o que está lá
             continue
@@ -6804,6 +6846,7 @@ ARQUIVO_CACHE_API = os.path.join(PASTA, 'api_sngpc_cache.json')
 API_CONSULTA_MINUTOS = 50
 API_CONSULTAS_POR_VEZ = 25
 API_RECUO_HASH_HORAS = 24      # hash sem resposta válida espera um dia
+API_CACHE_GUARDA = 60          # envios fora dos alvos guardados no cache (o app recebe os 30 mais novos)
 API_RECUO_LOGIN_HORAS = 6      # login recusado: senha errada repetida trava a conta
 API_FOTO_JANELA_DIAS = 7       # envio de período mais antigo que isso não mexe no Saldo
 SITUACOES_FINAIS = ('validado', 'com_erro')
@@ -7011,8 +7054,18 @@ def atualizar_api_sngpc(conexao, config, chamar=None, agora=None):
                 alvos[hashes_do_arquivo(caminho)[formula]] = chave
             except (OSError, KeyError):
                 continue
-    # o cache guarda só o que ainda é alvo: sem isto ele cresceria um envio por dia
-    envios = {h: v for h, v in (cache.get('envios') or {}).items() if h in alvos}
+    # Envio já consultado continua no cache mesmo depois de sair dos alvos.
+    # 04/11: o Digifarma troca o HASH_ULT_ENVIO a cada envio (e o XML mais
+    # velho sai dos 20 arquivados); o envio de ontem, já validado, sumia do
+    # cache, do apiSngpc e da aba Aceites, que voltava a dizer "Pendente".
+    # O limite é por quantidade, os mais recentes, para não crescer sem fim.
+    guardados = {h: v for h, v in (cache.get('envios') or {}).items() if isinstance(v, dict)}
+    fora = sorted((h for h in guardados if h not in alvos),
+                  key=lambda h: (guardados[h].get('de') or '', guardados[h].get('transmissao') or ''),
+                  reverse=True)
+    for h in fora[:API_CACHE_GUARDA]:
+        alvos[h] = texto(guardados[h].get('arquivo'))
+    envios = {h: v for h, v in guardados.items() if h in alvos}
     cache['envios'] = envios
     falhas = {h: v for h, v in (cache.get('_falhas') or {}).items() if h in alvos}
     cache['_falhas'] = falhas
@@ -8602,6 +8655,21 @@ FOLHA_ESTILO = """
 """
 
 
+def resumo_vendas_do_dia(movimentos):
+    """Uma linha no topo da folha: as vendas de hoje já estão na conta.
+    Quem confere de manhã precisa ver isso antes de marcar falta na
+    prateleira por uma caixa que saiu no balcão há uma hora."""
+    hoje = datetime.date.today().isoformat()
+    vendas = [m for m in movimentos if m.get('tipo') == 'vendas']
+    de_hoje = [m for m in vendas if texto(m.get('data'))[:10] == hoje]
+    if not vendas:
+        return 'Nenhuma venda desde o último envio: a foto do SNGPC vale como está.'
+    return ('Vendas já descontadas no Esperado: %d lançamento(s) desde o último '
+            'envio, %d de hoje (%g unidade(s) hoje).' % (
+                len(vendas), len(de_hoje),
+                sum(numero(m.get('quantidade')) for m in de_hoje)))
+
+
 def escapar_html(valor):
     return (texto(valor).replace('&', '&amp;').replace('<', '&lt;')
             .replace('>', '&gt;').replace('"', '&quot;'))
@@ -8910,9 +8978,13 @@ def modo_comparacao(config, filtro=''):
 <html lang="pt-BR"><head><meta charset="utf-8">
 <title>Conferência Digifarma × SNGPC</title>
 <style>%s</style></head><body>
+<p class="naoimprime"><button type="button" onclick="window.print()"
+style="font-size:15px;padding:10px 16px">Imprimir ou salvar em PDF</button>
+<span class="sub">No celular: Imprimir &rarr; Salvar como PDF.</span></p>
 <h1>Conferência Digifarma &times; SNGPC</h1>
 <p class="sub">Inventário do SNGPC de %s &middot; último envio em %s &middot;
 saldo por LOTES.%s &middot; gerado em %s</p>
+<p class="sub"><strong>%s</strong></p>
 %s
 %s
 <p class="aviso"><strong>Medicamento com lote negativo &mdash; o que fazer com a
@@ -8944,6 +9016,7 @@ de conferir a prateleira.</p>
         br(envio.get('data')) if envio.get('data') else '(sem data)',
         escapar_html(inventario.get('colunaSaldo', '?')),
         datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
+        escapar_html(resumo_vendas_do_dia(movimentos)),
         ('<p class="aviso"><strong>Fora desta folha:</strong> %s. '
          'Não são divergência de estoque e nenhuma contagem os resolve — '
          'são acerto no cadastro do Digifarma. Use --negativos e --tarefas.</p>'
@@ -9502,21 +9575,13 @@ def classificar_inventario_anvisa(conexao):
               for chave, regras in CAMPOS_INVENTARIO.items()}
     campo_produto = next((c for c in campos if c.strip().upper() == 'PRODUTO_ID'), None)
 
-    nomes, controlados, conhecidos = {}, set(), set()
+    nomes, controlados, conhecidos, por_ms = {}, set(), set(), {}
     if campo_produto:
-        for linha in consultar(conexao, CONSULTAS['produtos_controlados']):
-            produto = texto(linha.get('PRODUTO_ID'))
-            if not produto:
-                continue
-            conhecidos.add(produto)
-            nomes[produto] = texto(linha.get('PRODUTO'))
-            if (texto(linha.get('PSICOTROPICO')).upper() == 'S'
-                    or texto(linha.get('ANTIMICROBIANO')).upper() == 'S'):
-                controlados.add(produto)
+        controlados, conhecidos, por_ms, nomes = classes_dos_produtos(conexao)
 
     grupos = {'entram': [], 'fora': [], 'semCadastro': []}
     for linha in linhas:
-        produto = texto(linha.get(campo_produto)) if campo_produto else ''
+        produto = produto_da_linha(linha, campo_produto, usados['ms'], por_ms)
         if not campo_produto:
             nome = 'entram'
         elif produto in controlados:
@@ -9674,15 +9739,13 @@ def modo_inventario(config):
     def mostrar(titulo, grupo, explicacao):
         print('%s: %d' % (titulo, len(grupo)))
         print('  %s' % explicacao)
-        for produto, linha in grupo[:40]:
+        for produto, linha in grupo:
             print('     cód %-8s %-38s M.S. %-18s lote %-14s %g' % (
                 produto or '—',
                 (nomes.get(produto) or texto(linha.get(usados['descricao'])) or '—')[:38],
                 formatar_ms(linha.get(usados['ms'])),
                 texto(linha.get(usados['lote'])) or '—',
                 numero(linha.get(usados['quantidade']))))
-        if len(grupo) > 40:
-            print('     ... e mais %d' % (len(grupo) - 40))
         print('')
 
     mostrar('ENTRAM na comparação (controlados)', entram,

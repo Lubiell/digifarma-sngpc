@@ -860,6 +860,26 @@ function saldoDoProduto(i) {
     ? Number(c.saldoProduto) : null;
 }
 
+/* Total da ANVISA hoje para o M.S. inteiro: foto + movimento pendente de
+   cada lote. So da para somar quando o agente manda o pendente dos irmaos
+   (agente novo) ou quando nenhum irmao tem saldo; senao, null. 06/11:
+   bupropiona 5O7408 10 + 5J2215 4 = 14 = balcao, e o app culpava a ANVISA. */
+function anvisaHojeDoMs(i) {
+  const lotes = comoLista(i.lotesDoMs);
+  if (!lotes.length) return null;
+  const temPendente = lotes.some((l) => l.pendente !== undefined);
+  let total = 0;
+  for (const l of lotes) {
+    if (l.lote === i.lote) {
+      total += Number(i.esperadoSngpc ?? i.saldoSngpc ?? 0);
+    } else {
+      if (!temPendente && Number(l.sngpc || 0)) return null;
+      total += Number(l.sngpc || 0) + Number(l.pendente || 0);
+    }
+  }
+  return Math.round(total * 1000) / 1000;
+}
+
 function detalheDoSaldo(i, dif) {
   const movimento = Number(i.movimentoDesdeEnvio || 0);
   const produto = saldoDoProduto(i) ?? (i.saldoProduto !== undefined ? Number(i.saldoProduto) : null);
@@ -884,10 +904,19 @@ function detalheDoSaldo(i, dif) {
   ];
   comoLista(i.lotesDoMs).forEach((l) => {
     if (l.lote !== i.lote) {
+      const pend = Number(l.pendente || 0);
       pares.push(['Outro lote deste M.S.: ' + l.lote, 'Digifarma ' + Number(l.digifarma || 0)
-        + ' · SNGPC ' + Number(l.sngpc || 0)]);
+        + ' · SNGPC ' + Number(l.sngpc || 0)
+        + (pend ? ' (esperado hoje ' + (Number(l.sngpc || 0) + pend) + ')' : '')]);
     }
   });
+  const anvisaHoje = anvisaHojeDoMs(i);
+  if (anvisaHoje !== null && produto !== null && produto !== totalLotes) {
+    pares.push(['Total do M.S. na ANVISA hoje (todos os lotes)', anvisaHoje]);
+    pares.push(['Soma dos lotes no Digifarma', totalLotes]);
+  }
+  const balcaoBateAnvisa = anvisaHoje !== null && produto !== null
+    && produto === anvisaHoje && produto !== totalLotes;
   if (i.motivo === 'lote_em_dois_ms') {
     pares.push(['Outro M.S. com este lote', i.outroMs]);
     pares.push(['Total do lote no Digifarma', i.totalDigifarmaLote]);
@@ -906,6 +935,13 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = 'Na tela do balcão o produto está zerado, e na ANVISA também: os dois batem. '
       + 'O saldo ' + totalLotes + ' é resto na tabela de lotes do Digifarma, que não acompanhou a baixa. '
       + 'Não é divergência com a ANVISA: não mexa na escrituração.';
+  } else if (balcaoBateAnvisa) {
+    const falta = produto - totalLotes;
+    nota.textContent = 'A ANVISA está certa: o total dela hoje (' + anvisaHoje + ') é igual ao saldo do '
+      + 'produto no balcão (' + produto + '). A diferença está dentro do Digifarma: a tabela de lotes '
+      + 'soma ' + totalLotes + ', ' + Math.abs(falta) + (falta > 0 ? ' a menos' : ' a mais')
+      + ' que o saldo do produto. Acerte o saldo do lote no Digifarma; não mexa na escrituração '
+      + 'nem desmarque o controlado.';
   } else if (trocado) {
     const q = Number(i.saldoDigifarma || 0) || Number(i.saldoSngpc || 0);
     const [noDigi, naAnvisa] = Number(i.saldoDigifarma || 0) ? [i.lote, trocado.lote] : [trocado.lote, i.lote];
@@ -1012,7 +1048,8 @@ function pedirDesmarcar(i, sugerido) {
    Espelha a aba Saldo na forma: mesma linha expansivel, mesma busca,
    mesmo detalhe. Muda o que lista — ali e quem DIVERGE da ANVISA,
    aqui e todo controlado do cadastro que tem saldo no Digifarma,
-   divergindo ou nao. Os de saldo zero ficam de fora (temSaldo).
+   divergindo ou nao. Os de saldo zero ficam de fora (temSaldo): a
+   farmacia pediu assim em 29/10, mesmo o vendido hoje que zerou.
 
    Duas listas separadas, escolhidas pelos botoes: Controlados
    (PSICOTROPICO='S') e Antimicrobianos (ANTIMICROBIANO='S'). Produto
@@ -1087,7 +1124,9 @@ function pintarControlados() {
         c.ms && 'M.S. ' + c.ms,
         c.ean && 'EAN ' + c.ean
       ],
-      tarja: [classeDoControlado(c), 'saldo ' + saldo],
+      tarja: [classeDoControlado(c),
+        'saldo ' + saldo + (c.inativo ? ' · cadastro inativo' : '')
+          + (c.ms ? '' : ' · SEM M.S.: não vai ao SNGPC')],
       tarjaClasse: saldo > 0 ? 'sobra' : 'falta',
       detalhe: detalheDoControlado(c, saldo, outro)
     }));
@@ -1107,6 +1146,7 @@ function detalheDoControlado(c, saldo, outro) {
     ['Código de barras', c.ean],
     ['Psicotrópico', c.psicotropico ? 'SIM' : 'não'],
     ['Antimicrobiano', c.antimicrobiano ? 'SIM' : 'não'],
+    ['Cadastro', c.inativo ? 'INATIVO no Digifarma' : 'ativo'],
     ['Saldo pela soma dos lotes', saldo],
     ['Saldo do produto (PROD_SALDO)', outro]
   ]);
@@ -1591,6 +1631,7 @@ const ACOES_SERVIDOR = [
 ];
 
 const RELATORIOS_SERVIDOR = [
+  ['comparacao', 'Comparação (folha e PDF)'],
   ['resumo', 'Resumo'], ['pendentes', 'Pendentes'], ['ponteiro', 'Ponteiro'],
   ['tarefas', 'Tarefas'], ['negativos', 'Negativos'], ['inventario', 'Inventario'],
   ['login_sngpc', 'Login SNGPC'], ['retorno_anvisa', 'Retorno ANVISA'],
@@ -1791,7 +1832,27 @@ function pintarRelatorio() {
   $('relatorio').textContent = r.texto;
   const copiar = $('copiar-relatorio');
   if (copiar) copiar.onclick = () => copiarTexto(r.texto);
+  pintarFolha(r);
   bloco.hidden = false;
+}
+
+/* A folha de conferencia chega pronta do agente, em HTML. Abre numa aba
+   propria, onde o botao do topo dela chama a impressao do aparelho - e e
+   ali que o celular oferece "Salvar como PDF". */
+function pintarFolha(r) {
+  const botao = $('folha-relatorio');
+  if (!botao) return;
+  botao.hidden = !(r.html || r.htmlGrande);
+  botao.onclick = () => {
+    if (!r.html) {
+      avisar('A folha ficou grande demais para o app. Filtre por um medicamento ou abra o arquivo comparacao_*.html no servidor.', 6000);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([r.html], { type: 'text/html;charset=utf-8' }));
+    const aba = window.open(url, '_blank');
+    if (!aba) avisar('O navegador bloqueou a nova aba. Permita pop-ups para este site e toque de novo.', 6000);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
 }
 
 /* No celular a caixa do relatorio corta o texto e rolar dentro dela para
@@ -2366,5 +2427,5 @@ if (location.protocol === 'file:') {
 /* exposto para o teste de fumaça */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { normalizar, combina, dataBR, estado, pintarPonteiroSugerido, vendasPorDia,
-    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo, html };
+    pintarComando, pintarRelatorio, retornoSemResposta, detalheDoSaldo, pintarConfiancaDoSaldo, gravarPedido, pintarSaldo, envioDaApi, linhaDaApi, textoDaAtualizacao, textoXmlRede, hashesDoTexto, envioDaApiPelaData, reenvioAceito, pintarAceites, datasDeEnvio, pintarRetornos, chaveDoPedido, envioDaApi, avisarDadoVelho, pintarRelatorio, comoLista, datasBR, temSaldo, doGrupo, pintarControlados, html };
 }

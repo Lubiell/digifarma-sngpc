@@ -69,7 +69,11 @@ RESPOSTAS = {
          'PROD_SALDO': 12, 'SOMA_LOTES': 10},
         {'PRODUTO_ID': 102, 'PRODUTO': 'AMOXICILINA 500MG', 'REGISTRO_MS': '1.4444.0001.002-3',
          'COD_BARRAS': '790', 'PSICOTROPICO': 'N', 'ANTIMICROBIANO': 'S',
-         'PROD_SALDO': 5, 'SOMA_LOTES': 5},
+         'PROD_SALDO': 5, 'SOMA_LOTES': 5, 'PROD_ATIVO': 'S'},
+        # cadastro inativo, mas vendido: entra nas vendas, entra aqui (Somalium, 29/10)
+        {'PRODUTO_ID': 104, 'PRODUTO': 'SOMALIUM 3MG', 'REGISTRO_MS': '1.0974.0213.001-1',
+         'COD_BARRAS': '792', 'PSICOTROPICO': 'S', 'ANTIMICROBIANO': 'N',
+         'PROD_SALDO': 0, 'SOMA_LOTES': 0, 'PROD_ATIVO': 'N'},
         {'PRODUTO_ID': 103, 'PRODUTO': 'DIPIRONA 500MG', 'REGISTRO_MS': '1.0000.0000.000-0',
          'COD_BARRAS': '791', 'PSICOTROPICO': 'N', 'ANTIMICROBIANO': 'N',
          'PROD_SALDO': 99, 'SOMA_LOTES': 99},
@@ -114,6 +118,11 @@ def conferir(titulo, condicao, detalhe=''):
     else:
         falhas.append(titulo)
         print('  FALHA ' + titulo + ('\n        ' + str(detalhe) if detalhe else ''))
+
+
+def psico_ativo(controlados):
+    """Cadastro sem PROD_ATIVO (NULL) ou com 'S' não vira inativo."""
+    return all(not c.get('inativo') for c in controlados if c['codigo'] in ('101', '102'))
 
 
 def numero_ok(item):
@@ -424,7 +433,8 @@ def principal():
 
     nomes = ('conectar_firebird', 'fechar', 'vendas_recentes', 'vendas_sem_receita_pendentes',
              'snapshot_diagnostico', 'entradas_recentes', 'retorno_sngpc', 'mudou',
-             'vendas_publicas', 'notas_publicas', 'atualizar_envios_publicos', 'registrar')
+             'vendas_publicas', 'notas_publicas', 'atualizar_envios_publicos', 'registrar',
+             'listar_controlados', 'detectar_coluna_saldo')
     guardadas = {n: getattr(ag, n) for n in nomes}
     try:
         ag.conectar_firebird = lambda _c: None
@@ -439,6 +449,8 @@ def principal():
         ag.notas_publicas = lambda e: e
         ag.atualizar_envios_publicos = lambda _db: False
         ag.registrar = lambda _t: None
+        ag.detectar_coluna_saldo = lambda _c, _cfg=None: {'coluna': 'SALDO', 'modo': 'saldo', 'campos': ()}
+        ag.listar_controlados = lambda _c, _info: [{'codigo': '7', 'descricao': 'SOMALIUM 3MG'}]
         ag.publicar_vendas_recentes({}, DbQuadro())
     finally:
         for n, f in guardadas.items():
@@ -447,6 +459,8 @@ def principal():
              'farmacia/inventario/vistoEm' in gravados, gravados)
     conferir('as vendas recentes continuam sendo publicadas',
              'farmacia/inventario/vendasRecentes' in gravados, gravados)
+    conferir('a lista de controlados sobe junto com as vendas, sem esperar a hora cheia',
+             'farmacia/inventario/controlados' in gravados, gravados)
 
     # --- busca nos XML: acha entrada por M.S., lote escrito diferente e outro M.S. ---
     pasta_busca = tempfile.mkdtemp()
@@ -1894,6 +1908,36 @@ def principal():
                'validacao': '2026-10-15T20:00:00'}]
     conferir('Saldo: período antigo revalidado depois da foto não mexe na conta',
              ag.foto_sem_envio_validado('2026-10-15', foto_hora, antigo) is None)
+
+    # 04/11: o Digifarma troca o HASH_ULT_ENVIO a cada envio; o envio de
+    # ontem, já validado, saía do cache e o aceite voltava a "Pendente"
+    cache_antes, cred_antes = ag.ARQUIVO_CACHE_API, ag.credenciais_sngpc
+    ag.ARQUIVO_CACHE_API = os.path.join(pasta_api, 'cache_troca.json')
+    hash_ontem, hash_hoje = 'A' * 32, 'B' * 32
+    hash_atual = [hash_ontem]
+    ag.credenciais_sngpc = lambda conexao: (
+        {'email': EMAIL, 'senha': SENHA, 'cnpj': CNPJ, 'hashes': [('HASH_ULT_ENVIO', hash_atual[0])]},
+        ['HASH_ULT_ENVIO'])
+    respostas_api.clear()
+    respostas_api[hash_ontem] = resposta_real('20/10/2026 00:00:00', '20/10/2026 00:00:00',
+                                              '21/10/2026 07:00:00', '21/10/2026 08:00:00')
+    respostas_api[hash_hoje] = resposta_real('21/10/2026 00:00:00', '21/10/2026 00:00:00',
+                                             '22/10/2026 07:00:00', '22/10/2026 08:00:00')
+    sem_xml = dict(ag.CONFIG_PADRAO, pasta_xml=os.path.join(pasta_api, 'nao_existe'))
+    try:
+        ag.atualizar_api_sngpc(None, sem_xml, chamar=chamar_auto, agora=agora_api)
+        hash_atual[0] = hash_hoje
+        chamadas.clear()
+        ag.atualizar_api_sngpc(None, sem_xml, chamar=chamar_auto,
+                               agora=agora_api + datetime.timedelta(days=1))
+        trocado = ag.envios_da_api_em_cache()['envios']
+        conferir('API: envio validado continua publicado depois que o Digifarma troca o hash',
+                 [(e['de'], e['situacao']) for e in trocado]
+                 == [('2026-10-20', 'validado'), ('2026-10-21', 'validado')], trocado)
+        conferir('API: o envio que saiu dos alvos não é consultado de novo',
+                 not any(hash_ontem in u for u in chamadas), chamadas)
+    finally:
+        ag.ARQUIVO_CACHE_API, ag.credenciais_sngpc = cache_antes, cred_antes
     shutil.rmtree(pasta_api, ignore_errors=True)
 
     # conta do lote pelos XML: o caso do BQ37M006 (13/10)
@@ -2289,7 +2333,10 @@ def principal():
     controlados = dados.get('controlados') or []
     codigos = [c['codigo'] for c in controlados]
     conferir('lista os controlados do cadastro, com saldo',
-             len(controlados) == 2, codigos)
+             len(controlados) == 3, codigos)
+    somalium = next((c for c in controlados if c['codigo'] == '104'), {})
+    conferir('cadastro inativo entra na lista, marcado como inativo',
+             somalium.get('inativo') is True and psico_ativo(controlados), somalium)
     conferir('produto sem marca nenhuma fica de fora',
              '103' not in codigos, codigos)
     psico = next((c for c in controlados if c['codigo'] == '101'), {})
@@ -2469,6 +2516,94 @@ def principal():
                  ag.fila_desde_a_foto(None, None, 48720, 900, atuais) is None)
     finally:
         ag.consultar = guardado_consultar
+
+    # --- inventário com PRODUTO_ID em branco: casa pelo M.S. (29/10) ---
+    guardado_consultar = ag.consultar
+    inv_sem_id = [
+        # mesmo M.S. do cadastro
+        {'PRODUTO_ID': None, 'REGISTRO_MS': '1.0573.0551.017-6', 'NUM_LOTE': 'A',
+         'SALDO_LOTE': 7, 'DATA_INVENTARIO': '2026-10-29'},
+        # outra apresentação do mesmo remédio: casa pelos 9 primeiros dígitos
+        {'PRODUTO_ID': '', 'REGISTRO_MS': '1057305510999', 'NUM_LOTE': 'B',
+         'SALDO_LOTE': 1, 'DATA_INVENTARIO': '2026-10-29'},
+        {'PRODUTO_ID': None, 'REGISTRO_MS': '1023506630034', 'NUM_LOTE': 'C',
+         'SALDO_LOTE': 10, 'DATA_INVENTARIO': '2026-10-29'},
+        {'PRODUTO_ID': None, 'REGISTRO_MS': '1999999990001', 'NUM_LOTE': 'D',
+         'SALDO_LOTE': 2, 'DATA_INVENTARIO': '2026-10-29'},
+    ] + [{'PRODUTO_ID': None, 'REGISTRO_MS': '1888888880001', 'NUM_LOTE': 'L%d' % i,
+          'SALDO_LOTE': 1, 'DATA_INVENTARIO': '2026-10-29'} for i in range(50)]
+    cadastro = [
+        {'PRODUTO_ID': 10, 'PRODUTO': 'CLONAZEPAM', 'REGISTRO_MS': '1057305510176',
+         'PSICOTROPICO': 'S', 'ANTIMICROBIANO': 'N'},
+        {'PRODUTO_ID': 20, 'PRODUTO': 'DIPIRONA', 'REGISTRO_MS': '1023506630034',
+         'PSICOTROPICO': 'N', 'ANTIMICROBIANO': 'N'},
+    ]
+    ag.consultar = lambda _c, sql, _p=(): (
+        inv_sem_id if sql == ag.CONSULTAS['inventario_sngpc'] else cadastro)
+    try:
+        grupos = ag.classificar_inventario_anvisa(None)
+        conferir('inventário sem PRODUTO_ID: controlado casa pelo M.S., inteiro ou 9 dígitos',
+                 [p for p, _ in grupos['entram']] == ['10', '10'], grupos['entram'])
+        conferir('inventário sem PRODUTO_ID: não controlado do cadastro fica de fora',
+                 [p for p, _ in grupos['fora']] == ['20'], grupos['fora'])
+        conferir('inventário sem PRODUTO_ID: M.S. desconhecido segue sem cadastro',
+                 len(grupos['semCadastro']) == 51, len(grupos['semCadastro']))
+        saldo, _, _, descartados = ag.ler_inventario_anvisa(None)
+        conferir('comparação: o não controlado sai também quando casa pelo M.S.',
+                 descartados == 1 and ('1023506630034', 'C') not in saldo, saldo)
+        ag.conectar_firebird, guardado_conectar = (lambda _cfg: None), ag.conectar_firebird
+        ag.fechar, guardado_fechar = (lambda _c: None), ag.fechar
+        try:
+            saida = ag.texto_do_modo(ag.modo_inventario, {})
+        finally:
+            ag.conectar_firebird, ag.fechar = guardado_conectar, guardado_fechar
+        conferir('relatório do inventário lista todas as linhas, sem "e mais"',
+                 'e mais' not in saida and saida.count('lote L') == 50
+                 and 'CLONAZEPAM' in saida, saida[-300:])
+    finally:
+        ag.consultar = guardado_consultar
+
+    # --- folha de comparação: vendas de hoje na conta e botão de PDF (29/10) ---
+    hoje_iso = datetime.date.today().isoformat()
+    dados_folha = {
+        'inventario': {'data': hoje_iso, 'colunaSaldo': 'SALDO'},
+        'envio': {'data': hoje_iso},
+        'itens': [{'ms': '1057305510176', 'descricao': 'ALPRAZOLAM 2MG', 'lote': 'A1',
+                   'validade': '', 'classe': 'psicotropico', 'saldoDigifarma': 5,
+                   'saldoSngpc': 7, 'movimentoDesdeEnvio': -2, 'esperadoSngpc': 5,
+                   'diferenca': 0, 'motivo': ''},
+                  {'ms': '1057305510176', 'descricao': 'ALPRAZOLAM 2MG', 'lote': 'A2',
+                   'validade': '', 'classe': 'psicotropico', 'saldoDigifarma': 3,
+                   'saldoSngpc': 4, 'diferenca': -1, 'motivo': 'quantidade'}],
+        'pendentes': {'vendas': [
+            {'id': 9001, 'data': hoje_iso, 'hora': '10:15', 'descricao': 'ALPRAZOLAM 2MG',
+             'ms': '1057305510176', 'lote': 'A1', 'quantidade': 2},
+            {'id': 8999, 'data': '2026-01-02', 'hora': '18:00', 'descricao': 'ALPRAZOLAM 2MG',
+             'ms': '1057305510176', 'lote': 'A1', 'quantidade': 1}]},
+    }
+    pasta_folha = tempfile.mkdtemp()
+    guardados_f = (ag.conectar_firebird, ag.fechar, ag.montar_inventario, ag.PASTA)
+    ag.conectar_firebird, ag.fechar = (lambda _cfg: None), (lambda _c: None)
+    ag.montar_inventario = lambda _c, _cfg: dados_folha
+    ag.PASTA = pasta_folha
+    try:
+        ag.texto_do_modo(ag.modo_comparacao, {})
+        with open(os.path.join(pasta_folha, 'comparacao_%s.html' % hoje_iso),
+                  encoding='utf-8') as f:
+            folha = f.read()
+    finally:
+        ag.conectar_firebird, ag.fechar, ag.montar_inventario, ag.PASTA = guardados_f
+        shutil.rmtree(pasta_folha, ignore_errors=True)
+    conferir('folha: diz quantas vendas de hoje já estão descontadas no Esperado',
+             '2 lançamento(s) desde o último envio, 1 de hoje (2 unidade(s) hoje)' in folha,
+             folha[:600])
+    conferir('folha: tem o botão de imprimir/salvar PDF, que some na impressão',
+             'onclick="window.print()"' in folha and 'class="naoimprime"' in folha
+             and '.naoimprime { display: none; }' in folha)
+    conferir('folha: a venda de hoje aparece no movimento, com hora',
+             '9001' in folha and '10:15' in folha)
+    conferir('folha: sem venda pendente, diz que a foto vale como está',
+             ag.resumo_vendas_do_dia([]).startswith('Nenhuma venda'))
     shutil.rmtree(pasta_ponteiros, ignore_errors=True)
 
     shutil.rmtree(pasta, ignore_errors=True)
