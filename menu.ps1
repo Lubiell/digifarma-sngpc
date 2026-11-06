@@ -112,6 +112,7 @@ while ($true) {
     Write-Host '   R - Acesso remoto: testar e ligar SSH/RDP (administrador)'
     Write-Host '   F - Ligar o firewall com a rede local e a VPN liberadas (administrador)'
     Write-Host '   K - Instalar a chave SSH do celular neste servidor (administrador)'
+    Write-Host '   S - Sempre ligado: ponte da cotacao e receitas voltam sozinhas (administrador)'
     Write-Host '   L - Apagar os .bat que sobraram na pasta do agente'
     Write-Host '   A - Criar atalho na area de trabalho'
     Write-Host '   0 - Sair'
@@ -148,6 +149,7 @@ while ($true) {
         'R' { Rodar-Bat 'ACESSO_REMOTO.bat'       'agente' $pasta }
         'F' { Rodar-Bat 'LIGAR_FIREWALL.bat'      'agente' $pasta }
         'K' { Rodar-Bat 'INSTALAR_CHAVE_SSH.bat' 'agente' $pasta }
+        'S' { Rodar-Bat 'SEMPRE_LIGADO.bat'      'agente' $pasta }
         'L' { Limpar-Bats $pasta }
         'A' { Criar-Atalho }
         '0' { break }
