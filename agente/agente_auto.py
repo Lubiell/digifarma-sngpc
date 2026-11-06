@@ -4598,6 +4598,63 @@ CONFIG_REMOTO = {
 }
 
 
+# O vigia que religa a ponte da cotação se ela cair. O SEMPRE_LIGADO.bat cria,
+# mas pede alguém no servidor. Em 06/11 a primeira rodada lá deixou o vigia
+# para depois, e ninguém volta ao servidor; o agente, que roda lá como
+# SYSTEM, cria sozinho com o modo /vigia, que não pergunta nada e, na
+# dúvida, não cria.
+VIGIA_PONTE = 'PonteCotacao_Vigia'
+URL_SEMPRE_LIGADO = REPO_CRU + '/SEMPRE_LIGADO.bat'
+
+
+def garantir_vigia_ponte(pasta=None, rodar=None, baixar=None, hoje=None):
+    """Cria o vigia da ponte se ainda não existe. Uma tentativa por dia.
+
+    Devolve o recado para o log, ou None quando não havia o que fazer.
+    Fora do Windows não faz nada (o teste injeta `rodar`)."""
+    if rodar is None and os.name != 'nt':
+        return None
+    import subprocess
+    rodar = rodar or subprocess.run
+    baixar = baixar or baixar_texto
+    pasta = pasta or PASTA
+    hoje = hoje or datetime.date.today().isoformat()
+    carimbo = os.path.join(pasta, 'vigia_ponte_tentado.txt')
+    try:
+        with open(carimbo, encoding='utf-8') as f:
+            if f.read().strip() == hoje:
+                return None
+    except OSError:
+        pass
+    # o carimbo vem antes de tudo: falha que se repete vira uma tentativa
+    # por dia, não uma por minuto
+    with open(carimbo, 'w', encoding='utf-8') as f:
+        f.write(hoje)
+    sem_janela = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    r = rodar(['schtasks', '/Query', '/TN', VIGIA_PONTE], capture_output=True,
+              timeout=30, stdin=subprocess.DEVNULL, creationflags=sem_janela)
+    if r.returncode == 0:
+        return None
+    bruto = baixar(URL_SEMPRE_LIGADO)
+    if '@echo off' not in bruto or '#== POWERSHELL ==' not in bruto:
+        raise RuntimeError('o SEMPRE_LIGADO.bat baixado não parece o arquivo certo')
+    bat = os.path.join(pasta, 'SEMPRE_LIGADO.bat')
+    # o cmd perde rótulo de goto com LF sozinho
+    with open(bat, 'w', encoding='cp1252', newline='') as f:
+        f.write(bruto.replace('\r\n', '\n').replace('\n', '\r\n'))
+    try:
+        r = rodar(['cmd', '/c', bat, '/vigia'], capture_output=True, timeout=300,
+                  cwd=pasta, stdin=subprocess.DEVNULL, creationflags=sem_janela)
+    finally:
+        try:
+            os.remove(bat)
+        except OSError:
+            pass
+    saida = r.stdout.decode('cp1252', errors='replace') if isinstance(r.stdout, bytes) else (r.stdout or '')
+    ditas = [l.strip() for l in saida.splitlines()
+             if re.search(r'ok: tarefa|PULEI|FALHOU|Nao achei|Escolha pulada|ponte:', l)]
+    return 'Vigia da ponte: ' + (' | '.join(ditas) if ditas else 'rodei, sem recado (código %s)' % r.returncode)
+
 def identidade_da_chave(config):
     """QUAL chave o agente está usando — o identificador dela, não ela.
 
@@ -8043,6 +8100,14 @@ def modo_fila(config):
         avisar_aceites(db)
     except Exception as e:
         registrar('Não consegui avisar os aceites: %s' % e)
+
+    # a ponte da cotação mora no mesmo servidor: o vigia dela, uma vez
+    try:
+        recado = garantir_vigia_ponte()
+        if recado:
+            registrar(recado)
+    except Exception as e:
+        registrar('Não consegui criar o vigia da ponte: %s' % e)
 
     ref = db.reference('farmacia/comando')
     pedido = ref.get()

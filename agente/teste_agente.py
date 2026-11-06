@@ -2640,6 +2640,43 @@ def principal():
     conferir('--saldo: a grafia com zero aparece separada, não some',
              'lote 507408' in texto_s and 'LOTE_ID=12' in texto_s, texto_s)
 
+    # --- vigia da ponte: criado pelo agente, uma vez por dia ---
+    import types
+    pv = tempfile.mkdtemp()
+    chamadas = []
+
+    def rodar_vigia(existe, saida=b'  ok: tarefa PonteCotacao_Vigia - ao entrar e de 5 em 5 minutos\r\n'):
+        def rodar(cmd, **kw):
+            chamadas.append(list(cmd))
+            if cmd[0] == 'schtasks':
+                return types.SimpleNamespace(returncode=0 if existe else 1, stdout=b'', stderr=b'')
+            conferir('vigia: o .bat existe na hora de rodar, com CRLF',
+                     open(cmd[2], 'rb').read().count(b'\r\n') > 0
+                     and b'\n' not in open(cmd[2], 'rb').read().replace(b'\r\n', b''))
+            return types.SimpleNamespace(returncode=0, stdout=saida, stderr=b'')
+        return rodar
+    bat_falso = '@echo off\nrem x\n#== POWERSHELL ==\nWrite-Host oi\n'
+    r1 = ag.garantir_vigia_ponte(pasta=pv, rodar=rodar_vigia(False), baixar=lambda u: bat_falso, hoje='2026-11-06')
+    conferir('vigia: sem a tarefa, baixa e roda o SEMPRE_LIGADO.bat /vigia',
+             any(c[:2] == ['cmd', '/c'] and c[-1] == '/vigia' for c in chamadas), chamadas)
+    conferir('vigia: o recado traz o que o .bat disse', r1 and 'ok: tarefa PonteCotacao_Vigia' in r1, r1)
+    conferir('vigia: o .bat baixado é apagado depois', not os.path.exists(os.path.join(pv, 'SEMPRE_LIGADO.bat')))
+    del chamadas[:]
+    r2 = ag.garantir_vigia_ponte(pasta=pv, rodar=rodar_vigia(False), baixar=lambda u: bat_falso, hoje='2026-11-06')
+    conferir('vigia: no mesmo dia não tenta de novo', r2 is None and not chamadas, chamadas)
+    r3 = ag.garantir_vigia_ponte(pasta=pv, rodar=rodar_vigia(True), baixar=lambda u: 1 / 0, hoje='2026-11-07')
+    conferir('vigia: com a tarefa já criada, não baixa nada', r3 is None and chamadas == [['schtasks', '/Query', '/TN', 'PonteCotacao_Vigia']], chamadas)
+    try:
+        ag.garantir_vigia_ponte(pasta=pv, rodar=rodar_vigia(False), baixar=lambda u: '<html>404</html>', hoje='2026-11-08')
+        conferir('vigia: página de erro no lugar do .bat é recusada', False)
+    except RuntimeError:
+        conferir('vigia: página de erro no lugar do .bat é recusada', True)
+    conferir('vigia: fora do Windows, sem rodar injetado, não faz nada',
+             os.name == 'nt' or ag.garantir_vigia_ponte(pasta=pv) is None)
+    conferir('vigia: a URL é a do SEMPRE_LIGADO.bat do repositório',
+             ag.URL_SEMPRE_LIGADO.endswith('/agente/SEMPRE_LIGADO.bat'), ag.URL_SEMPRE_LIGADO)
+    shutil.rmtree(pv, ignore_errors=True)
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0
