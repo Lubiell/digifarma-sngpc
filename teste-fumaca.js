@@ -560,6 +560,23 @@ if (exportado.detalheDoSaldo) {
       const restoDoAgente = textos({ codigo: '67751', ms: '1057304040109', lote: '2515965', saldoDigifarma: 1,
         saldoSngpc: 0, diferenca: 1, motivo: 'resto_no_lote', saldoProduto: 0 });
       if (!restoDoAgente.includes('Na tela do balcão o produto está zerado')) throw new Error('resto_no_lote do agente: ' + restoDoAgente);
+      // 06/11, bupropiona: ANVISA 10 + 4 = 14 = balcão; a tabela de lotes soma 13
+      exportado.estado.inventario = { controlados: [{ codigo: '6466', saldo: 13, saldoProduto: 14 }] };
+      const bupropiona = textos({ codigo: '6466', ms: '1677305850050', lote: '507408', saldoDigifarma: 9,
+        saldoSngpc: 5, movimentoDesdeEnvio: 5, esperadoSngpc: 10, diferenca: -1, motivo: 'quantidade',
+        saldoDigifarmaMs: 13, classe: 'psicotropico',
+        lotesDoMs: [{ lote: '507408', digifarma: 9, sngpc: 5, pendente: 5 },
+          { lote: '5J2215', digifarma: 4, sngpc: 5, pendente: -1 },
+          { lote: '4L6842', digifarma: 0, sngpc: 0, pendente: 0 }] });
+      if (!bupropiona.includes('A ANVISA está certa: o total dela hoje (14)')) throw new Error('balcão = ANVISA: ' + bupropiona);
+      if (!bupropiona.includes('soma 13, 1 a menos')) throw new Error('sem a falta na tabela de lotes: ' + bupropiona);
+      if (!bupropiona.includes('SNGPC 5 (esperado hoje 4)')) throw new Error('irmão sem o esperado: ' + bupropiona);
+      // agente antigo (sem pendente nos irmãos): não dá para somar, segue o motivo
+      const antigo = textos({ codigo: '6466', ms: '1677305850050', lote: '507408', saldoDigifarma: 9,
+        saldoSngpc: 5, movimentoDesdeEnvio: 5, esperadoSngpc: 10, diferenca: -1, motivo: 'quantidade',
+        saldoDigifarmaMs: 13,
+        lotesDoMs: [{ lote: '507408', digifarma: 9, sngpc: 5 }, { lote: '5J2215', digifarma: 4, sngpc: 5 }] });
+      if (antigo.includes('A ANVISA está certa')) throw new Error('somou sem o pendente: ' + antigo);
     } finally {
       exportado.estado.inventario = inv;
     }

@@ -3011,6 +3011,13 @@ def montar_inventario(conexao, config, data_inventario=None, usar_envio=False):
             irmao = lotes_por_ms.setdefault(ms_lote, {}).setdefault(
                 num_lote, {'lote': num_lote, 'digifarma': 0.0, 'sngpc': 0.0})
             irmao['sngpc'] = round(quantidade, 3)
+        # o movimento que ainda falta subir, por lote irmão: sem ele a tela
+        # mostra a foto (5) de um lote que hoje está em 4 na ANVISA e não
+        # consegue ver que o total da ANVISA bate com o saldo do balcão
+        for ms_lote, lotes in lotes_por_ms.items():
+            for num_lote, irmao in lotes.items():
+                # sempre presente (mesmo 0): é como a tela sabe que pode somar
+                irmao['pendente'] = round(movimento_pendente.get((ms_lote, num_lote), 0.0), 3)
 
         ja_na_anvisa = 0
         lotes_ja_na_anvisa = []
