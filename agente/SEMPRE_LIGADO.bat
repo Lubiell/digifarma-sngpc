@@ -343,8 +343,31 @@ if ($achados.Count -eq 0) {
     }
 }
 
+# o que identifica a ponte na lista de processos: o arquivo dela, nao
+# o python/node/cmd/powershell que a roda
+function Marca([string]$comando) {
+    $interp = '^(python|pythonw|py|pyw|node|cmd|wscript|cscript|powershell|pwsh|java|javaw)\.exe$'
+    $arqs = @([regex]::Matches($comando, '"[^"]+"|\S+') | ForEach-Object { $_.Value.Trim('"') } |
+        Where-Object { $_ -match '\.(py|pyw|js|mjs|cjs|bat|cmd|vbs|ps1|exe|jar)$' } |
+        ForEach-Object { Split-Path -Leaf $_ })
+    $m = $arqs | Where-Object { $_ -match 'ponte' } | Select-Object -First 1
+    if (-not $m) { $m = $arqs | Where-Object { $_ -notmatch $interp } | Select-Object -First 1 }
+    if (-not $m) { $m = $arqs | Select-Object -First 1 }
+    return $m
+}
+
 $escolha = $null
+$pulou = $false
+$marcas = @($achados | ForEach-Object { Marca $_.comando } | Where-Object { $_ } | Sort-Object -Unique)
 if ($achados.Count -eq 1) { $escolha = $achados[0] }
+elseif ($achados.Count -gt 1 -and $marcas.Count -eq 1) {
+    # o mesmo arquivo achado em lugares diferentes (atalho e processo
+    # rodando): e uma ponte so. Fico com o comando que esta rodando agora,
+    # que e o que comprovadamente funciona.
+    $escolha = $achados | Where-Object { $_.onde -like 'rodando agora*' } | Select-Object -First 1
+    if (-not $escolha) { $escolha = $achados[0] }
+    Dizer ("  Achei a ponte em " + $achados.Count + " lugares, todos o mesmo arquivo: " + $marcas[0])
+}
 elseif ($achados.Count -gt 1) {
     Dizer '  Achei mais de um jeito de abrir a ponte:'
     for ($i = 0; $i -lt $achados.Count; $i++) {
@@ -353,9 +376,13 @@ elseif ($achados.Count -gt 1) {
     }
     $n = Read-Host '  Numero do certo (Enter pula)'
     if ($n -match '^\d+$' -and [int]$n -ge 1 -and [int]$n -le $achados.Count) { $escolha = $achados[[int]$n - 1] }
+    else { $pulou = $true }
 }
 
-if (-not $escolha) {
+if (-not $escolha -and $pulou) {
+    Dizer '  Escolha pulada. O vigia NAO foi criado: rode de novo e digite o numero.'
+    $falta.Add('Vigia da ponte: rodar de novo e escolher o numero da ponte na lista.')
+} elseif (-not $escolha) {
     Dizer '  Nao achei a ponte neste PC. O vigia NAO foi criado.'
     Dizer '  Se ela abre sozinha quando a conta entra, o item 3 ja resolve'
     Dizer '  o reinicio. Para ela voltar tambem quando cair, rode de novo'
@@ -363,16 +390,7 @@ if (-not $escolha) {
     Dizer '     SEMPRE_LIGADO.bat "C:\caminho\da\ponte.bat"'
     $falta.Add('Vigia da ponte: rodar de novo com o caminho da ponte - nao achei sozinho.')
 } else {
-    # o que identifica a ponte na lista de processos: o arquivo dela, nao
-    # o python/node/cmd que a roda
-    $marca = $null
-    $interp = '^(python|pythonw|py|pyw|node|cmd|wscript|cscript|powershell|pwsh|java|javaw)\.exe$'
-    $arqs = @([regex]::Matches($escolha.comando, '"[^"]+"|\S+') | ForEach-Object { $_.Value.Trim('"') } |
-        Where-Object { $_ -match '\.(py|pyw|js|mjs|cjs|bat|cmd|vbs|ps1|exe|jar)$' } |
-        ForEach-Object { Split-Path -Leaf $_ })
-    $marca = $arqs | Where-Object { $_ -match 'ponte' } | Select-Object -First 1
-    if (-not $marca) { $marca = $arqs | Where-Object { $_ -notmatch $interp } | Select-Object -First 1 }
-    if (-not $marca) { $marca = $arqs | Select-Object -First 1 }
+    $marca = Marca $escolha.comando
 
     if (-not $marca) {
         Dizer "  Nao entendi qual arquivo e a ponte em: $($escolha.comando)"
