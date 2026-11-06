@@ -938,9 +938,11 @@ function detalheDoSaldo(i, dif) {
   } else if (balcaoBateAnvisa) {
     const falta = produto - totalLotes;
     nota.textContent = 'A ANVISA está certa: o total dela hoje (' + anvisaHoje + ') é igual ao saldo do '
-      + 'produto no balcão (' + produto + '). A diferença está dentro do Digifarma: a tabela de lotes '
-      + 'soma ' + totalLotes + ', ' + Math.abs(falta) + (falta > 0 ? ' a menos' : ' a mais')
-      + ' que o saldo do produto. Acerte o saldo do lote no Digifarma; não mexa na escrituração '
+      + 'produto no balcão (' + produto + '). A diferença está no saldo por lote que o agente lê da '
+      + 'tabela LOTES: soma ' + totalLotes + ', ' + Math.abs(falta) + (falta > 0 ? ' a menos' : ' a mais')
+      + ' que o saldo do produto. Abra o Controle de Lotes do produto no Digifarma: se ele mostrar '
+      + 'os lotes somando ' + produto + ', o estoque está certo e o erro é da leitura do agente; '
+      + 'use "Investigar este lote no servidor" para ver as linhas cruas. Não mexa na escrituração '
       + 'nem desmarque o controlado.';
   } else if (trocado) {
     const q = Number(i.saldoDigifarma || 0) || Number(i.saldoSngpc || 0);

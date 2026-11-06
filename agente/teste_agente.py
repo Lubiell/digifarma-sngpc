@@ -2606,6 +2606,40 @@ def principal():
              ag.resumo_vendas_do_dia([]).startswith('Nenhuma venda'))
     shutil.rmtree(pasta_ponteiros, ignore_errors=True)
 
+    # --- relatório --saldo lista as linhas cruas e acha as duas grafias (06/11) ---
+    conferir('filtro: procura 5O7408 também como 507408',
+             ag.variantes_do_filtro('5o7408') == ['5O7408', '507408', '5O74O8'],
+             ag.variantes_do_filtro('5o7408'))
+    linhas_s = {
+        '%5O7408%': [{'PRODUTO': 'BUPROPIONA', 'REGISTRO_MS': '1677305850050', 'NUM_LOTE': '5O7408',
+                      'LOTE_QUANTIDADE': 3, 'QUANTIDADE_COMPRA': 8, 'ENTRADA_SAIDA': 'E',
+                      'LOTE_ID': 11, 'PRODUTO_ID': 6466, 'CANCELADO': None}],
+        '%507408%': [{'PRODUTO': 'BUPROPIONA', 'REGISTRO_MS': '1677305850050', 'NUM_LOTE': '507408',
+                      'LOTE_QUANTIDADE': 6, 'QUANTIDADE_COMPRA': 6, 'ENTRADA_SAIDA': 'E',
+                      'LOTE_ID': 12, 'PRODUTO_ID': 6466, 'CANCELADO': 'N'}],
+    }
+    guardados_s = (ag.conectar_firebird, ag.fechar, ag.consultar, ag.colunas_da_tabela,
+                   ag.baixas_por_lote, ag.ler_inventario_anvisa)
+    try:
+        ag.conectar_firebird = lambda _c: None
+        ag.fechar = lambda _c: None
+        ag.colunas_da_tabela = lambda _c, _t: ['LOTE_ID', 'PRODUTO_ID', 'NUM_LOTE', 'LOTE_QUANTIDADE',
+                                                'QUANTIDADE_COMPRA', 'ENTRADA_SAIDA', 'CANCELADO']
+        ag.consultar = lambda _c, _sql, p=(): [dict(l) for l in linhas_s.get(p[0], [])]
+        ag.baixas_por_lote = lambda _c: {}
+        ag.ler_inventario_anvisa = lambda _c: ({}, '2026-11-06', {}, 0)
+        saida_s = io.StringIO()
+        with contextlib.redirect_stdout(saida_s):
+            ag.modo_conferir_saldo({}, '5O7408')
+        texto_s = saida_s.getvalue()
+    finally:
+        (ag.conectar_firebird, ag.fechar, ag.consultar, ag.colunas_da_tabela,
+         ag.baixas_por_lote, ag.ler_inventario_anvisa) = guardados_s
+    conferir('--saldo: mostra cada linha crua de LOTES com o LOTE_ID',
+             'LOTE_ID=11' in texto_s and 'LOTE_QUANTIDADE=3' in texto_s, texto_s)
+    conferir('--saldo: a grafia com zero aparece separada, não some',
+             'lote 507408' in texto_s and 'LOTE_ID=12' in texto_s, texto_s)
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0

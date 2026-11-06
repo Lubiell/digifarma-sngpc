@@ -8282,6 +8282,24 @@ def modo_colunas(config, tabela):
         fechar(conexao)
 
 
+# colunas de LOTES que ajudam a ler uma linha crua no relatório --saldo,
+# quando existem nesta instalação
+COLUNAS_LINHA_CRUA = ('LOTE_ID', 'PRODUTO_ID', 'CAB_NOTA_ID', 'LOTE_FABRICACAO',
+                      'LOTE_VENCIMENTO', 'CANCELADO')
+
+
+def variantes_do_filtro(filtro):
+    """O texto procurado e as grafias com O trocado por 0 e vice-versa.
+    A ANVISA tem 5O7408 (letra O) e a tela do Digifarma mostra 507408:
+    procurar só uma grafia esconderia as linhas da outra."""
+    alvo = str(filtro or '').strip().upper()
+    variantes = [alvo]
+    for trocado in (alvo.replace('O', '0'), alvo.replace('0', 'O')):
+        if trocado not in variantes:
+            variantes.append(trocado)
+    return variantes
+
+
 def modo_conferir_saldo(config, filtro):
     """Mostra, para os lotes que casam com o texto, COMO o saldo foi apurado:
     as linhas cruas de LOTES, a soma de cada coluna candidata, as baixas e o
@@ -8297,11 +8315,25 @@ def modo_conferir_saldo(config, filtro):
         colunas = ['NUM_LOTE'] + candidatas
         if 'ENTRADA_SAIDA' in info['campos']:
             colunas.append('ENTRADA_SAIDA')
+        # para listar as linhas cruas: com a soma só, não dá para ver QUAL
+        # linha deixa o lote 1 abaixo da tela (bupropiona 5O7408, 06/11:
+        # 3 linhas somando 9, a tela Controle de Lotes mostrando 10)
+        extras = [c for c in COLUNAS_LINHA_CRUA if c in info['campos'] and c not in colunas]
+        colunas += extras
         sql = CONSULTAS['lotes_detalhe'].replace(
             '{COLUNAS}', ', '.join('L.%s' % c for c in colunas))
 
-        alvo = '%' + str(filtro or '').strip().upper() + '%'
-        linhas = consultar(conexao, sql, (alvo, alvo, alvo))
+        linhas, vistos = [], set()
+        for variante in variantes_do_filtro(filtro):
+            alvo = '%' + variante + '%'
+            for linha in consultar(conexao, sql, (alvo, alvo, alvo)):
+                marca = linha.get('LOTE_ID')
+                if marca is None:
+                    marca = tuple(sorted((k, str(v)) for k, v in linha.items()))
+                if marca in vistos:
+                    continue
+                vistos.add(marca)
+                linhas.append(linha)
         if not linhas:
             print('Nenhum lote casa com "%s".' % filtro)
             return False
@@ -8314,8 +8346,10 @@ def modo_conferir_saldo(config, filtro):
                 'produto': texto(linha.get('PRODUTO')), 'linhas': 0,
                 'entradas': 0.0, 'saidas': 0.0,
                 'colunas': dict.fromkeys(candidatas, 0.0),
+                'cruas': [],
             })
             grupo['linhas'] += 1
+            grupo['cruas'].append(linha)
             saida = texto(linha.get('ENTRADA_SAIDA')).upper() == 'S'
             for c in candidatas:
                 grupo['colunas'][c] += numero(linha.get(c))
@@ -8343,6 +8377,12 @@ def modo_conferir_saldo(config, filtro):
                   % (g['linhas'], g['entradas'], g['saidas']))
             print('  somas por coluna: %s'
                   % ', '.join('%s=%g' % (c, v) for c, v in g['colunas'].items()))
+            mostrar = [c for c in colunas if c != 'NUM_LOTE']
+            for crua in g['cruas'][:30]:
+                print('    linha: lote %s  %s' % (
+                    texto(crua.get('NUM_LOTE')) or '—',
+                    '  '.join('%s=%s' % (c, '—' if crua.get(c) is None else texto(crua.get(c)))
+                              for c in mostrar)))
             baixado = baixas.get(chave, 0.0)
             # a conta aqui tem que ser a MESMA de montar_expressao_saldo:
             # no modo 'saldo' a linha de saída não é saldo e fica de fora
