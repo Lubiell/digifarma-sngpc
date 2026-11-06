@@ -2653,7 +2653,10 @@ def principal():
             conferir('vigia: o .bat existe na hora de rodar, com CRLF',
                      open(cmd[2], 'rb').read().count(b'\r\n') > 0
                      and b'\n' not in open(cmd[2], 'rb').read().replace(b'\r\n', b''))
-            return types.SimpleNamespace(returncode=0, stdout=saida, stderr=b'')
+            conferir('vigia: a saída vai para arquivo, sem pipe que trave o agente',
+                     hasattr(kw.get('stdout'), 'write') and 'capture_output' not in kw, kw)
+            kw['stdout'].write(saida)
+            return types.SimpleNamespace(returncode=0, stdout=None, stderr=None)
         return rodar
     bat_falso = '@echo off\nrem x\n#== POWERSHELL ==\nWrite-Host oi\n'
     r1 = ag.garantir_vigia_ponte(pasta=pv, rodar=rodar_vigia(False), baixar=lambda u: bat_falso, hoje='2026-11-06')
@@ -2671,6 +2674,9 @@ def principal():
         conferir('vigia: página de erro no lugar do .bat é recusada', False)
     except RuntimeError:
         conferir('vigia: página de erro no lugar do .bat é recusada', True)
+    r_seg = ag.garantir_vigia_ponte(pasta=pv, rodar=rodar_vigia(False, b'  ponte: "x.exe" --token SEGREDO\r\n  ok: tarefa PonteCotacao_Vigia\r\n'),
+                                    baixar=lambda u: bat_falso, hoje='2026-11-09')
+    conferir('vigia: o comando da ponte, que pode ter chave, não vai para o log', r_seg and 'SEGREDO' not in r_seg, r_seg)
     conferir('vigia: fora do Windows, sem rodar injetado, não faz nada',
              os.name == 'nt' or ag.garantir_vigia_ponte(pasta=pv) is None)
     conferir('vigia: a URL é a do SEMPRE_LIGADO.bat do repositório',

@@ -4642,17 +4642,27 @@ def garantir_vigia_ponte(pasta=None, rodar=None, baixar=None, hoje=None):
     # o cmd perde rótulo de goto com LF sozinho
     with open(bat, 'w', encoding='cp1252', newline='') as f:
         f.write(bruto.replace('\r\n', '\n').replace('\n', '\r\n'))
+    # saída para arquivo, não para pipe: se o PowerShell neto travar, o
+    # timeout mata o cmd e o run volta. Com pipe, o neto seguraria o pipe
+    # aberto e o run esperaria para sempre - e a fila pararia junto.
+    saida_arq = os.path.join(pasta, 'vigia_ponte_saida.txt')
     try:
-        r = rodar(['cmd', '/c', bat, '/vigia'], capture_output=True, timeout=300,
-                  cwd=pasta, stdin=subprocess.DEVNULL, creationflags=sem_janela)
+        with open(saida_arq, 'wb') as saida_f:
+            r = rodar(['cmd', '/c', bat, '/vigia'], stdout=saida_f, stderr=subprocess.STDOUT,
+                      timeout=300, cwd=pasta, stdin=subprocess.DEVNULL, creationflags=sem_janela)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError('o SEMPRE_LIGADO.bat /vigia passou de 5 minutos') from None
     finally:
         try:
             os.remove(bat)
         except OSError:
             pass
-    saida = r.stdout.decode('cp1252', errors='replace') if isinstance(r.stdout, bytes) else (r.stdout or '')
+    with open(saida_arq, 'rb') as f:
+        saida = f.read().decode('cp1252', errors='replace')
+    # só as linhas de veredito: a linha "ponte: <comando>" pode trazer
+    # argumento com chave, e não vai para o log
     ditas = [l.strip() for l in saida.splitlines()
-             if re.search(r'ok: tarefa|PULEI|FALHOU|Nao achei|Escolha pulada|ponte:', l)]
+             if re.search(r'ok: tarefa|PULEI|FALHOU|Nao achei|Escolha pulada|Vigia da ponte', l)]
     return 'Vigia da ponte: ' + (' | '.join(ditas) if ditas else 'rodei, sem recado (código %s)' % r.returncode)
 
 def identidade_da_chave(config):

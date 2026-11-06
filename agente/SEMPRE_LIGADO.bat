@@ -88,6 +88,9 @@ function Dizer([string]$t) { Write-Host $t; $log.Add($t) }
 function Secao([string]$t) { Dizer ''; Dizer ('-' * 60); Dizer (' ' + $t); Dizer ('-' * 60) }
 
 function Gravar {
+    # pelo agente, uma tentativa por dia: ele guarda a saida, e um
+    # relatorio por dia na pasta do agente so acumularia
+    if ($soVigia) { return }
     $nome = 'sempre_ligado_' + (Get-Date -Format 'yyyyMMdd_HHmm') + '.txt'
     $arq = Join-Path $env:FARM_PASTA $nome
     try { [IO.File]::WriteAllLines($arq, $log) }
@@ -444,6 +447,16 @@ if (-not $escolha -and $pulou) {
                 $falta.Add('Vigia da ponte: rodar de novo com o arquivo que fica rodando - o informado so abre a ponte e sai.')
                 $seguir = $false
             } }
+        }
+    }
+    # pelo agente: o vigia e da conta que roda a ponte. Quem esta no teclado
+    # agora pode ser outra - um tecnico - e o vigia nasceria preso a ela.
+    if ($soVigia -and $marca -and $seguir -and $viva.Count -gt 0) {
+        $dono = Invoke-CimMethod -InputObject $viva[0] -MethodName GetOwner -ErrorAction SilentlyContinue
+        if (-not $dono -or $dono.User -ne $nome) {
+            Dizer ("  PULEI o vigia: a ponte roda na conta " + $dono.User + ", e quem esta no teclado e " + $nome + ".")
+            $falta.Add('Vigia da ponte: a conta no teclado nao e a da ponte; tento de novo depois.')
+            $seguir = $false
         }
     }
     if ($marca -and $seguir) {
