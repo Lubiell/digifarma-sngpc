@@ -114,6 +114,13 @@ vez no servidor antes do primeiro módulo (`consultas.py`).
   Opção `R` no FARMACIA.bat e no menu.ps1.
 
 ## Em andamento
+- 06/11: a ponte da cotação ficou sem sinal desde 02:51 — o servidor
+  reiniciou de madrugada e parou na tela de entrada do Windows. Novo
+  `agente/SEMPRE_LIGADO.bat` (opção `S` do menu, administrador): sem
+  suspender/hibernar, Update sem reiniciar com a conta aberta, login
+  automático, vigia `PonteCotacao_Vigia` que religa a ponte em até 5 min,
+  gatilho de boot no AgenteSNGPC/Fila e Firebird automático. Falta: rodar
+  no servidor; na BIOS, "Restore on AC Power Loss" = Power On.
 - 10/10: LIGAR_FIREWALL.bat ligou o firewall (estava desligado nos 3 perfis)
   com a rede local 192.168.100.0/24 e as duas placas TAP liberadas; o PC é
   cliente da VPN (faixa 12.4.29.0/24). Em seguida o ACESSO_REMOTO.bat ligou
