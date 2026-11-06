@@ -860,6 +860,26 @@ function saldoDoProduto(i) {
     ? Number(c.saldoProduto) : null;
 }
 
+/* Total da ANVISA hoje para o M.S. inteiro: foto + movimento pendente de
+   cada lote. So da para somar quando o agente manda o pendente dos irmaos
+   (agente novo) ou quando nenhum irmao tem saldo; senao, null. 06/11:
+   bupropiona 5O7408 10 + 5J2215 4 = 14 = balcao, e o app culpava a ANVISA. */
+function anvisaHojeDoMs(i) {
+  const lotes = comoLista(i.lotesDoMs);
+  if (!lotes.length) return null;
+  const temPendente = lotes.some((l) => l.pendente !== undefined);
+  let total = 0;
+  for (const l of lotes) {
+    if (l.lote === i.lote) {
+      total += Number(i.esperadoSngpc ?? i.saldoSngpc ?? 0);
+    } else {
+      if (!temPendente && Number(l.sngpc || 0)) return null;
+      total += Number(l.sngpc || 0) + Number(l.pendente || 0);
+    }
+  }
+  return Math.round(total * 1000) / 1000;
+}
+
 function detalheDoSaldo(i, dif) {
   const movimento = Number(i.movimentoDesdeEnvio || 0);
   const produto = saldoDoProduto(i) ?? (i.saldoProduto !== undefined ? Number(i.saldoProduto) : null);
@@ -884,10 +904,19 @@ function detalheDoSaldo(i, dif) {
   ];
   comoLista(i.lotesDoMs).forEach((l) => {
     if (l.lote !== i.lote) {
+      const pend = Number(l.pendente || 0);
       pares.push(['Outro lote deste M.S.: ' + l.lote, 'Digifarma ' + Number(l.digifarma || 0)
-        + ' · SNGPC ' + Number(l.sngpc || 0)]);
+        + ' · SNGPC ' + Number(l.sngpc || 0)
+        + (pend ? ' (esperado hoje ' + (Number(l.sngpc || 0) + pend) + ')' : '')]);
     }
   });
+  const anvisaHoje = anvisaHojeDoMs(i);
+  if (anvisaHoje !== null && produto !== null && produto !== totalLotes) {
+    pares.push(['Total do M.S. na ANVISA hoje (todos os lotes)', anvisaHoje]);
+    pares.push(['Soma dos lotes no Digifarma', totalLotes]);
+  }
+  const balcaoBateAnvisa = anvisaHoje !== null && produto !== null
+    && produto === anvisaHoje && produto !== totalLotes;
   if (i.motivo === 'lote_em_dois_ms') {
     pares.push(['Outro M.S. com este lote', i.outroMs]);
     pares.push(['Total do lote no Digifarma', i.totalDigifarmaLote]);
@@ -906,6 +935,13 @@ function detalheDoSaldo(i, dif) {
     nota.textContent = 'Na tela do balcão o produto está zerado, e na ANVISA também: os dois batem. '
       + 'O saldo ' + totalLotes + ' é resto na tabela de lotes do Digifarma, que não acompanhou a baixa. '
       + 'Não é divergência com a ANVISA: não mexa na escrituração.';
+  } else if (balcaoBateAnvisa) {
+    const falta = produto - totalLotes;
+    nota.textContent = 'A ANVISA está certa: o total dela hoje (' + anvisaHoje + ') é igual ao saldo do '
+      + 'produto no balcão (' + produto + '). A diferença está dentro do Digifarma: a tabela de lotes '
+      + 'soma ' + totalLotes + ', ' + Math.abs(falta) + (falta > 0 ? ' a menos' : ' a mais')
+      + ' que o saldo do produto. Acerte o saldo do lote no Digifarma; não mexa na escrituração '
+      + 'nem desmarque o controlado.';
   } else if (trocado) {
     const q = Number(i.saldoDigifarma || 0) || Number(i.saldoSngpc || 0);
     const [noDigi, naAnvisa] = Number(i.saldoDigifarma || 0) ? [i.lote, trocado.lote] : [trocado.lote, i.lote];
