@@ -7403,8 +7403,19 @@ def zerar_negativos(config, db, pedido):
     É a única escrita com valor que não se escolhe: saldo negativo nunca é
     estoque, é lançamento errado, e o destino certo é sempre zero. Por isso
     ela é segura de fazer em lote — e por isso não aceita um valor vindo do
-    celular, que é onde um dedo errado viraria estoque inventado."""
+    celular, que é onde um dedo errado viraria estoque inventado.
+
+    Com `lote` (e `ms`), zera só as linhas daquele lote, com a grafia
+    exata: é o botão do detalhe do lote no app. O caso do 5O7408 (07/11):
+    três linhas em LOTES, uma em -1, e o total 9 contra 10 na prateleira.
+    O filtro por `texto` casa pedaço do nome ou do lote, e pegaria lote
+    alheio com número parecido."""
     alvo = texto(pedido.get('texto'))
+    lote_exato = texto(pedido.get('lote')).strip().upper()
+    ms_exato = so_digitos(pedido.get('ms'))
+    if lote_exato and not ms_exato:
+        # sem o M.S., o mesmo número de lote de outro produto entraria junto
+        raise RuntimeError('diga o M.S. do lote %s' % lote_exato)
     conexao = conectar_firebird(config)
     try:
         info = detectar_coluna_saldo(conexao, config)
@@ -7415,7 +7426,12 @@ def zerar_negativos(config, db, pedido):
                "JOIN PRODUTOS P ON (P.PRODUTO_ID = L.PRODUTO_ID) "
                "WHERE L.%s < 0" % (info['coluna'], info['coluna']))
         negativos = consultar(conexao, sql)
-        if alvo:
+        if lote_exato:
+            negativos = [l for l in negativos
+                         if texto(l.get('NUM_LOTE')).strip().upper() == lote_exato
+                         and so_digitos(l.get('REGISTRO_MS')) == ms_exato]
+            alvo = 'lote %s' % texto(pedido.get('lote')).strip()
+        elif alvo:
             chave = normalizar_texto(alvo)
             negativos = [l for l in negativos
                          if chave in normalizar_texto(l.get('PRODUTO'))

@@ -1494,6 +1494,26 @@ def principal():
 
         escritos.clear()
         ajustes.clear()
+        guardado_neg = negativos[:]
+        negativos.append({'LOTE_ID': 13, 'PRODUTO_ID': 4, 'PRODUTO': 'BUPROPIONA 150MG',
+                          'REGISTRO_MS': '1.6773.0585.005-0', 'NUM_LOTE': '5O7408', 'SALDO': -1})
+        negativos.append({'LOTE_ID': 14, 'PRODUTO_ID': 5, 'PRODUTO': 'OUTRO',
+                          'REGISTRO_MS': '1.0000.0005.001-1', 'NUM_LOTE': '5O74081', 'SALDO': -2})
+        recado = ag.zerar_negativos(ligada, None, dict(pedido, ms='1677305850050', lote='5o7408 '))
+        conferir('pelo lote, zera só a linha daquele M.S. + lote, sem pegar lote parecido',
+                 [p for _s, p in escritos] == [(13,)] and ajustes[0]['filtro'] == 'lote 5o7408'
+                 and '1 lote(s)' in recado, (escritos, ajustes, recado))
+        escritos.clear()
+        ajustes.clear()
+        recado = ag.zerar_negativos(ligada, None, dict(pedido, ms='1000000010011', lote='5O7408'))
+        conferir('pelo lote, M.S. diferente não zera nada',
+                 escritos == [] and 'Nenhum lote negativo' in recado, (escritos, recado))
+        recusa('pelo lote, sem M.S. é recusado (zeraria o lote de outro produto)',
+               lambda: ag.zerar_negativos(ligada, None, dict(pedido, lote='5O7408')), 'M.S.')
+        negativos[:] = guardado_neg
+
+        escritos.clear()
+        ajustes.clear()
         ag.executar = lambda _c, sql, p=(): escritos.append((sql, p)) or 0
         ag.zerar_negativos(ligada, None, pedido)
         conferir('lote que deixou de ser negativo no meio não entra no registro',
