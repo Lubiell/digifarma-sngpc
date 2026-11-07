@@ -443,6 +443,30 @@ if (exportado.detalheDoSaldo && exportado.pintarConfiancaDoSaldo) {
       if (!pedido || pedido[1].acao !== 'saldo' || pedido[1].texto !== '1234567890123|AB12')
         throw new Error('pedido de investigação errado: ' + JSON.stringify(pedido));
 
+      const zerar = criados.find((e) => e.textContent === 'Zerar linha negativa deste lote no Digifarma');
+      if (!zerar) throw new Error('sem o botão de zerar a linha negativa do lote');
+      gravados.length = 0;
+      exportado.estado.inventario = { escrita: { ligada: false } };
+      zerar.onclick();
+      if (gravados.some(([c]) => c === 'farmacia/comando')) throw new Error('zerou com a escrita desligada');
+      exportado.estado.inventario = { escrita: { ligada: true } };
+      criados.length = 0;
+      zerar.onclick();
+      const confirmaZerar = criados.find((e) => e.textContent === 'Zerar');
+      if (!confirmaZerar) throw new Error('zerar sem pedir confirmação');
+      if (gravados.some(([c]) => c === 'farmacia/comando')) throw new Error('zerou antes de confirmar');
+      confirmaZerar.onclick();
+      const pz = gravados.find(([c]) => c === 'farmacia/comando');
+      if (!pz || pz[1].acao !== 'zerar_negativos' || pz[1].ms !== '1234567890123' || pz[1].lote !== 'AB12'
+          || pz[1].texto !== undefined)
+        throw new Error('pedido de zerar errado: ' + JSON.stringify(pz));
+      criados.length = 0;
+      exportado.detalheDoSaldo({ codigo: '1', saldoDigifarma: 7, saldoSngpc: 5, diferenca: 2,
+        motivo: 'quantidade', ms: '', lote: 'AB12' }, 2);
+      if (criados.some((e) => e.textContent === 'Zerar linha negativa deste lote no Digifarma'))
+        throw new Error('botão de zerar sem M.S. pegaria o lote de outro produto');
+      exportado.estado.inventario = {};
+
       criados.length = 0;
       exportado.detalheDoSaldo({ codigo: '1', saldoDigifarma: 7, saldoSngpc: 5, diferenca: 2,
         motivo: 'quantidade', ms: '1', lote: 'X' }, 2);

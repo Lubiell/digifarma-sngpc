@@ -972,6 +972,17 @@ function detalheDoSaldo(i, dif) {
     b.onclick = () => pedirDesmarcar(i);
     d.appendChild(b);
   }
+  // Linha negativa escondida num lote de total positivo (5O7408, 07/11:
+  // linhas -1, 10 e 0 somando 9 com 10 na prateleira). A lista nao sabe
+  // das linhas, entao o botao fica em todo lote do cadastro; sem linha
+  // negativa o agente responde que nao havia o que zerar. Sem M.S. nao:
+  // o mesmo numero de lote de outro produto seria zerado junto.
+  if (i.codigo && i.lote && i.ms) {
+    const b = criar('button', 'botao botao-perigo');
+    b.textContent = 'Zerar linha negativa deste lote no Digifarma';
+    b.onclick = () => pedirZerarNegativo(i);
+    d.appendChild(b);
+  }
   return d;
 }
 
@@ -994,23 +1005,54 @@ function investigarLote(i) {
 /* Desmarcar psicotropico/antimicrobiano de UM produto, pelo agente. E a
    caixa do cadastro do Digifarma, feita do celular: o produto sai do SNGPC.
    So com a escrita liberada (aba Servidor), que se fecha sozinha. */
+function escritaDesligada(paraQue) {
+  if (estado.inventario?.escrita?.ligada) return false;
+  abrirModal({
+    titulo: 'Escrita no Digifarma desligada',
+    corpo: (() => {
+      const p = criar('p', 'sublinha');
+      p.textContent = 'Para ' + paraQue + ', ligue a escrita na aba Servidor, bloco "Escrita no '
+        + 'Digifarma". Ela vale 60 minutos e depois se fecha sozinha.';
+      return p;
+    })(),
+    acoes: [
+      { texto: 'Fechar', aoClicar: fecharModal },
+      { texto: 'Ir para Servidor', estilo: 'botao-principal', aoClicar: () => { fecharModal(); irPara('servidor'); } }
+    ]
+  });
+  return true;
+}
+
+/* Zerar a linha negativa de UM lote (M.S. + lote exatos), pelo agente.
+   Saldo negativo nunca e estoque: o destino e sempre zero, entao nao se
+   digita valor. O acerto e interno e NAO sobe ao SNGPC: serve quando a
+   prateleira bate com o esperado da ANVISA e o errado e o Digifarma. */
+function pedirZerarNegativo(i) {
+  if (escritaDesligada('zerar')) return;
+  const p = criar('p', 'sublinha');
+  p.textContent = 'Lote ' + i.lote + ' de ' + (i.descricao || 'produto') + ': o agente põe em zero '
+    + 'só as linhas deste lote que estão abaixo de zero na tabela de lotes. O acerto é interno e '
+    + 'não vai ao SNGPC. Use quando a prateleira bate com o esperado da ANVISA e o Digifarma '
+    + 'mostra a menos. Se a prateleira tem menos, o certo é lançar perda, que é transmitida.';
+  abrirModal({
+    titulo: 'Zerar linha negativa no Digifarma',
+    corpo: p,
+    acoes: [
+      { texto: 'Cancelar', aoClicar: fecharModal },
+      { texto: 'Zerar', estilo: 'botao-perigo', aoClicar: () => {
+        fecharModal();
+        gravarPedido({
+          acao: 'zerar_negativos', ms: String(i.ms), lote: String(i.lote),
+          pedidoEm: agora(), pedidoPor: estado.operador, estado: 'pendente'
+        }).then((ok) => ok && avisar('Pedido enviado. O agente zera na próxima passagem dele; a resposta aparece na aba Servidor.'))
+          .catch((e) => avisar('O Firebase recusou o pedido: ' + (e.message || e)));
+      } }
+    ]
+  });
+}
+
 function pedirDesmarcar(i, sugerido) {
-  if (!estado.inventario?.escrita?.ligada) {
-    abrirModal({
-      titulo: 'Escrita no Digifarma desligada',
-      corpo: (() => {
-        const p = criar('p', 'sublinha');
-        p.textContent = 'Para desmarcar, ligue a escrita na aba Servidor, bloco "Escrita no '
-          + 'Digifarma". Ela vale 60 minutos e depois se fecha sozinha.';
-        return p;
-      })(),
-      acoes: [
-        { texto: 'Fechar', aoClicar: fecharModal },
-        { texto: 'Ir para Servidor', estilo: 'botao-principal', aoClicar: () => { fecharModal(); irPara('servidor'); } }
-      ]
-    });
-    return;
-  }
+  if (escritaDesligada('desmarcar')) return;
   const corpo = criar('div');
   const p = criar('p', 'sublinha');
   p.textContent = (i.descricao || 'Produto') + ' (código ' + i.codigo + '). Desmarcado, o produto '
