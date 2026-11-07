@@ -6031,7 +6031,7 @@ def modo_buscar_xml(config, alvo='', so_lote=False):
         for l in outros:
             print(l)
         if p['lote'] and conta:
-            imprimir_conta_do_lote(conta)
+            imprimir_conta_do_lote(conta, cobertos)
         if p['lote'] and ficha is not None:
             imprimir_ficha_do_lote(ficha, conta, cobertos)
     return True
@@ -6140,15 +6140,23 @@ def imprimir_ficha_do_lote(ficha, conta_xml, cobertos):
         print('  para comparar daqui — confira esses no Relatório do site da ANVISA.')
 
 
-def conta_do_lote(movimentos):
+def conta_do_lote(movimentos, periodos=None):
     """Saldo do lote período a período, como a ANVISA soma: entrada entra,
     venda/perda/transferência sai. O mesmo período em dois XML (o arquivado e
-    o SNGPC.XML do último envio, ou um reenvio) conta uma vez só. Devolve
+    o SNGPC.XML do último envio, ou um reenvio) conta uma vez só. Período
+    que cabe dentro de outro maior também sai: é envio que não validou e o
+    Digifarma refez esticando o fim (30/10 a 02/11, depois 30/10 a 03/11...),
+    e o maior já leva o movimento do menor. `periodos` são todos os períodos
+    dos XML lidos, mesmo os em que o lote não se mexeu. Devolve
     ([(de, ate, entra, sai, saldo)], quantos repetidos saíram)."""
+    todos = set(periodos or ()) | {(de, ate) for de, ate, _, _, _ in movimentos}
+    cobertos = {(de, ate) for de, ate in todos
+                if any(d2 <= de and ate <= a2 and (d2, a2) != (de, ate)
+                       for d2, a2 in todos)}
     vistos, unicos = set(), []
     for de, ate, tipo, ms, qtd in movimentos:
         chave = (de, ate, tipo, ms, qtd)
-        if chave in vistos:
+        if chave in vistos or (de, ate) in cobertos:
             continue
         vistos.add(chave)
         unicos.append((de, ate, tipo, qtd))
@@ -6168,12 +6176,13 @@ def conta_do_lote(movimentos):
     return linhas, len(movimentos) - len(unicos)
 
 
-def imprimir_conta_do_lote(movimentos):
-    linhas, repetidos = conta_do_lote(movimentos)
+def imprimir_conta_do_lote(movimentos, periodos=None):
+    linhas, repetidos = conta_do_lote(movimentos, periodos)
     print()
     print('  CONTA DO LOTE PELOS XML (como a ANVISA soma: entrada entra, o resto sai)')
     print('  começa em 0 no primeiro XML lido: estoque de antes dele, do inventário,')
-    print('  não entra. Período repetido em dois XML conta uma vez.%s' % (
+    print('  não entra. Período repetido em dois XML conta uma vez, e período que')
+    print('  cabe dentro de um reenvio maior fica só no maior.%s' % (
         ' (%d repetido(s) tirado(s))' % repetidos if repetidos else ''))
     print('  %-25s %8s %8s %8s' % ('período', 'entrada', 'saída', 'saldo'))
     avisado = False

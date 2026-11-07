@@ -1906,6 +1906,31 @@ def principal():
     linhas_c, repetidos_c = ag.conta_do_lote(movs)
     conferir('conta do lote: soma em ordem, tira o período repetido e chega ao saldo',
              [l[4] for l in linhas_c] == [18, 15, 1, -2] and repetidos_c == 1, (linhas_c, repetidos_c))
+    # o caso do 5O7408 (06/11): o envio de 30/10 não validou e o Digifarma
+    # refez o período esticando o fim; cada reenvio leva o mesmo movimento
+    movs_r = [('2026-08-20', '2026-08-21', 'entrada', 'M', 8),
+              ('2026-09-03', '2026-09-03', 'venda', 'M', 2),
+              ('2026-09-04', '2026-09-08', 'venda', 'M', 1),
+              ('2026-10-19', '2026-10-19', 'entrada', 'M', 6),
+              ('2026-10-23', '2026-10-25', 'venda', 'M', 3),
+              ('2026-10-30', '2026-11-02', 'entrada', 'M', 6),
+              ('2026-10-30', '2026-11-03', 'entrada', 'M', 6),
+              ('2026-10-30', '2026-11-03', 'venda', 'M', 1),
+              ('2026-10-30', '2026-11-04', 'entrada', 'M', 6),
+              ('2026-10-30', '2026-11-04', 'venda', 'M', 1),
+              ('2026-10-30', '2026-11-05', 'entrada', 'M', 6),
+              ('2026-10-30', '2026-11-05', 'venda', 'M', 1),
+              ('2026-10-30', '2026-11-05', 'entrada', 'M', 6),  # SNGPC.XML
+              ('2026-10-30', '2026-11-05', 'venda', 'M', 1)]
+    linhas_r, repetidos_r = ag.conta_do_lote(movs_r)
+    conferir('conta do lote: reenvio que estica o fim substitui o menor, não soma de novo',
+             [l[4] for l in linhas_r] == [8, 6, 5, 11, 8, 13] and linhas_r[-1][:2] == ('2026-10-30', '2026-11-05')
+             and repetidos_r == 7, (linhas_r, repetidos_r))
+    # o reenvio maior sem o lote (venda cancelada antes de refazer) também manda
+    linhas_v, _ = ag.conta_do_lote([('2026-10-30', '2026-11-02', 'venda', 'M', 1)],
+                                   [('2026-10-30', '2026-11-02'), ('2026-10-30', '2026-11-05')])
+    conferir('conta do lote: período coberto por reenvio maior em que o lote não aparece sai',
+             linhas_v == [], linhas_v)
     balde_c = io.StringIO()
     with contextlib.redirect_stdout(balde_c):
         ag.imprimir_conta_do_lote(movs)
