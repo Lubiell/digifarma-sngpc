@@ -459,7 +459,7 @@ CONSULTAS = {
     # quem é controlado, para filtrar o inventário do SNGPC pelo mesmo
     # critério das vendas: PSICOTROPICO='S' OU ANTIMICROBIANO='S'
     "produtos_controlados": """
-        SELECT PRODUTO_ID, PRODUTO, REGISTRO_MS, PSICOTROPICO, ANTIMICROBIANO
+        SELECT PRODUTO_ID, PRODUTO, REGISTRO_MS, COD_BARRAS, PSICOTROPICO, ANTIMICROBIANO
           FROM PRODUTOS
     """,
 
@@ -1526,13 +1526,14 @@ def escolher_campo(campos, regras):
     return None
 
 
-def classes_dos_produtos(conexao):
+def classes_dos_produtos(conexao, barras=None):
     """Quem é controlado, pelo mesmo critério das vendas.
 
     Devolve (controlados, conhecidos, por_ms). O segundo conjunto existe para
     separar "produto marcado como não controlado" de "produto que não está no
     cadastro" — descartar os dois é diferente, e só o primeiro é seguro. O
-    terceiro acha o produto pelo M.S. quando o inventário vem sem PRODUTO_ID."""
+    terceiro acha o produto pelo M.S. quando o inventário vem sem PRODUTO_ID.
+    Recebendo o dicionário barras, preenche com o código de barras de cada um."""
     controlados, conhecidos, nomes, por_ms = set(), set(), {}, {}
     for linha in consultar(conexao, CONSULTAS['produtos_controlados']):
         produto = texto(linha.get('PRODUTO_ID'))
@@ -1540,6 +1541,8 @@ def classes_dos_produtos(conexao):
             continue
         conhecidos.add(produto)
         nomes[produto] = texto(linha.get('PRODUTO'))
+        if barras is not None:
+            barras[produto] = texto(linha.get('COD_BARRAS'))
         controlado = (texto(linha.get('PSICOTROPICO')).upper() == 'S'
                       or texto(linha.get('ANTIMICROBIANO')).upper() == 'S')
         if controlado:
@@ -9715,9 +9718,9 @@ def classificar_inventario_anvisa(conexao):
               for chave, regras in CAMPOS_INVENTARIO.items()}
     campo_produto = next((c for c in campos if c.strip().upper() == 'PRODUTO_ID'), None)
 
-    nomes, controlados, conhecidos, por_ms = {}, set(), set(), {}
+    nomes, controlados, conhecidos, por_ms, barras = {}, set(), set(), {}, {}
     if campo_produto:
-        controlados, conhecidos, por_ms, nomes = classes_dos_produtos(conexao)
+        controlados, conhecidos, por_ms, nomes = classes_dos_produtos(conexao, barras)
 
     grupos = {'entram': [], 'fora': [], 'semCadastro': []}
     for linha in linhas:
@@ -9732,7 +9735,7 @@ def classificar_inventario_anvisa(conexao):
             nome = 'semCadastro'
         grupos[nome].append((produto, linha))
 
-    return dict(grupos, total=len(linhas), usados=usados, nomes=nomes,
+    return dict(grupos, total=len(linhas), usados=usados, nomes=nomes, barras=barras,
                 temProdutoId=bool(campo_produto))
 
 
@@ -9866,6 +9869,7 @@ def modo_inventario(config):
         return False
 
     usados, nomes = grupos['usados'], grupos.get('nomes', {})
+    barras = grupos.get('barras', {})
     print('INVENTARIO_SNGPC — %d linha(s)' % grupos['total'])
     print('colunas usadas: %s\n' % ', '.join(
         '%s=%s' % (k, v) for k, v in sorted(usados.items()) if v))
@@ -9880,9 +9884,10 @@ def modo_inventario(config):
         print('%s: %d' % (titulo, len(grupo)))
         print('  %s' % explicacao)
         for produto, linha in grupo:
-            print('     cód %-8s %-38s M.S. %-18s lote %-14s %g' % (
+            print('     cód %-8s %-38s EAN %-14s M.S. %-18s lote %-14s %g' % (
                 produto or '—',
                 (nomes.get(produto) or texto(linha.get(usados['descricao'])) or '—')[:38],
+                barras.get(produto) or '—',
                 formatar_ms(linha.get(usados['ms'])),
                 texto(linha.get(usados['lote'])) or '—',
                 numero(linha.get(usados['quantidade']))))
