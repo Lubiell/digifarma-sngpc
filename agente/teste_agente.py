@@ -2728,6 +2728,29 @@ def principal():
              ag.URL_SEMPRE_LIGADO.endswith('/agente/SEMPRE_LIGADO.bat'), ag.URL_SEMPRE_LIGADO)
     shutil.rmtree(pv, ignore_errors=True)
 
+    # --- relatório --inventario mostra o código de barras de cada linha ---
+    def banco_inventario(_conexao, sql, parametros=()):
+        if sql == ag.CONSULTAS['inventario_sngpc']:
+            return [{'PRODUTO_ID': 13139, 'REGISTRO_MS': '1057306420030',
+                     'NUM_LOTE': 'L1', 'QUANTIDADE': 3}]
+        if sql == ag.CONSULTAS['produtos_controlados']:
+            return [{'PRODUTO_ID': 13139, 'PRODUTO': 'OLANZAPINA 2,5MG',
+                     'COD_BARRAS': '7896004700151', 'PSICOTROPICO': 'S',
+                     'ANTIMICROBIANO': 'N'}]
+        raise AssertionError('consulta não simulada:\n' + sql[:120])
+    guardados_inv = (ag.consultar, ag.conectar_firebird, ag.fechar)
+    try:
+        ag.consultar = banco_inventario
+        ag.conectar_firebird = lambda _config: None
+        ag.fechar = lambda _c: None
+        saida = io.StringIO()
+        with contextlib.redirect_stdout(saida):
+            ag.modo_inventario({})
+        conferir('--inventario mostra o EAN de cada produto',
+                 'EAN 7896004700151' in saida.getvalue(), saida.getvalue())
+    finally:
+        ag.consultar, ag.conectar_firebird, ag.fechar = guardados_inv
+
     shutil.rmtree(pasta, ignore_errors=True)
     print('\n%s\n' % ('%d falha(s)' % len(falhas) if falhas else 'Tudo passou.'))
     return 1 if falhas else 0
